@@ -10,6 +10,7 @@
 - 2026-08-13：完整 Git bundle 备份：`C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-baseline-4de9b8e.bundle`；SHA-256 `4C43A9572CF8DE906777DB5B04748168A0A1482CFFE452DA55380AB3F3CF1721`。
 - 2026-08-13：已将原任务源与后续用户裁定合并到 `PRODUCT_CONTRACT.md`。
 - 2026-08-13：用户最终指定支付服务商为 Kaipay，并已完成支付申请；后续以 `https://app.kaipay.cn/api-debugger` 的正式接入参数为准，不再开发直连支付宝。
+- 2026-08-13：已从 Codex 原始会话工具输出精确恢复 2026-08-02 版 `7个动作视频提示词.txt` 正文，保存于 `docs/prompts/7个动作视频提示词.original-20260802.txt`；该版实际含 6 段，最终七段老版稳定版继续追溯。
 
 ## In progress
 
