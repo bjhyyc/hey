@@ -34,6 +34,7 @@ const translations = {
     // Panel tabs
     "panel.title": "Desktop Pet Control Panel",
     "panel.tabs.overview": "Overview",
+    "panel.tabs.settings": "Settings",
     "panel.tabs.assets": "Assets",
     "panel.tabs.animations": "Animations",
     "panel.tabs.interaction": "Interaction",
@@ -44,6 +45,9 @@ const translations = {
     // Overview tab
     "overview.title": "Overview",
     "overview.description": "Current package, animations, trigger rules, assets, and display state.",
+    "overview.importPetpackTitle": "Import PetPack",
+    "overview.importPetpackDescription": "Choose the .petpack file you downloaded.",
+    "overview.importPetpackAction": "Choose PetPack",
     "overview.package": "Package",
     "overview.animations": "Animations",
     "overview.rules": "Rules",
@@ -632,6 +636,7 @@ const translations = {
     // 面板标签
     "panel.title": "桌面宠物控制面板",
     "panel.tabs.overview": "概览",
+    "panel.tabs.settings": "设置",
     "panel.tabs.assets": "资源",
     "panel.tabs.animations": "动画",
     "panel.tabs.interaction": "交互",
@@ -734,6 +739,9 @@ const translations = {
     // 概览标签
     "overview.title": "概览",
     "overview.description": "当前宠物包、动画、触发规则、资源和显示状态。",
+    "overview.importPetpackTitle": "导入 PetPack",
+    "overview.importPetpackDescription": "选择已下载的 .petpack 素材包。",
+    "overview.importPetpackAction": "选择 PetPack",
     "overview.package": "宠物包",
     "overview.animations": "动画",
     "overview.rules": "规则",

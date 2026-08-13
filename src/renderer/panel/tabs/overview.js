@@ -271,9 +271,20 @@ function renderRuntimeStatus(runtimeState, config) {
 export function renderOverview(config, runtimeState = null, uiState = {}) {
   const display = getDisplay(config);
   const stats = getPanelOverviewStats(config);
+  const importingPetpack = uiState.savingKey === "petpack-import";
 
   return `
     ${renderHeader(t("overview.title"), t("overview.description"))}
+    <section class="petpack-import-card" aria-labelledby="petpack-import-title">
+      <div class="petpack-import-copy">
+        <span class="petpack-import-kicker">PetPack</span>
+        <h3 id="petpack-import-title">${t("overview.importPetpackTitle")}</h3>
+        <p>${t("overview.importPetpackDescription")}</p>
+      </div>
+      <button type="button" class="button-primary petpack-import-action" data-action="import-petpack" ${importingPetpack ? "disabled" : ""}>
+        ${importingPetpack ? t("common.importing") : t("overview.importPetpackAction")}
+      </button>
+    </section>
     ${renderOnboarding(config, uiState)}
     <div class="metric-grid">
       <div class="metric"><span>${t("overview.package")}</span><strong>${escapeHtml(stats.packageId)}</strong></div>

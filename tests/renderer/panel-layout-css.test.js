@@ -43,4 +43,11 @@ describe("panel asset browser layout css", () => {
     expect(css).toMatch(/\.rule-menu-panel\s*\{[^}]*top:\s*100%/s);
     expect(css).not.toMatch(/\.rule-menu-panel\s*\{[^}]*top:\s*calc\(100% \+ 4px\)/s);
   });
+
+  it("keeps the primary PetPack action usable at narrow panel widths", () => {
+    const narrowPanelBlock = getMediaBlock(720);
+
+    expect(css).toMatch(/\.petpack-import-card\s*\{[^}]*flex-wrap:\s*wrap/s);
+    expect(narrowPanelBlock).toMatch(/\.petpack-import-action\s*\{[^}]*width:\s*100%/s);
+  });
 });

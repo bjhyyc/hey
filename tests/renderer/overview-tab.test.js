@@ -2,6 +2,31 @@ import { describe, expect, it } from "vitest";
 import { renderOverview } from "../../src/renderer/panel/tabs/overview";
 
 describe("overview tab", () => {
+  it("always shows the primary PetPack import action", () => {
+    const html = renderOverview({
+      currentPackageId: "pet",
+      system: { onboardingVersion: 1 },
+      animations: { default: { id: "idle", asset: "assets/idle.webm" }, clips: [] },
+      triggerRules: []
+    });
+
+    expect(html).toContain("Import PetPack");
+    expect(html).toContain('data-action="import-petpack"');
+    expect(html).toContain("Choose PetPack");
+  });
+
+  it("disables the primary PetPack action while import is active", () => {
+    const html = renderOverview({
+      currentPackageId: "pet",
+      system: { onboardingVersion: 1 },
+      animations: { default: { id: "idle", asset: "assets/idle.webm" }, clips: [] },
+      triggerRules: []
+    }, null, { savingKey: "petpack-import" });
+
+    expect(html).toContain('data-action="import-petpack" disabled');
+    expect(html).toContain("Importing...");
+  });
+
   it("shows the first-run sample petpack path until onboarding is completed", () => {
     const pendingHtml = renderOverview({
       currentPackageId: "default-pet",

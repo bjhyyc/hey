@@ -116,6 +116,55 @@ textarea:disabled {
   gap: 4px;
 }
 
+.settings-menu {
+  margin-top: 4px;
+}
+
+.settings-menu summary {
+  position: relative;
+  list-style: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 30px 7px 11px;
+  color: #324157;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-menu summary::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-65%) rotate(45deg);
+  transition: transform 120ms ease;
+}
+
+.settings-menu[open] summary::after {
+  transform: translateY(-35%) rotate(225deg);
+}
+
+.settings-menu summary:hover {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.settings-menu-items {
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-strong);
+}
+
 .tab-button {
   justify-content: flex-start;
   width: 100%;
@@ -169,6 +218,49 @@ textarea:disabled {
 .view-header p {
   margin: 4px 0 0;
   color: var(--muted);
+}
+
+.petpack-import-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 14px;
+  border: 1px solid #b8c9ea;
+  border-radius: 10px;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, #ffffff 0%, #eef4ff 100%);
+  box-shadow: var(--shadow);
+}
+
+.petpack-import-copy h3,
+.petpack-import-copy p {
+  margin: 0;
+}
+
+.petpack-import-copy h3 {
+  margin-top: 2px;
+  font-size: 18px;
+}
+
+.petpack-import-copy p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.petpack-import-kicker {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.petpack-import-action {
+  min-width: 142px;
+  min-height: 40px;
+  flex: 0 0 auto;
 }
 
 .panel-section {
@@ -1964,6 +2056,14 @@ button.item-row {
 }
 
 @media (max-width: 720px) {
+  .petpack-import-card {
+    align-items: stretch;
+  }
+
+  .petpack-import-action {
+    width: 100%;
+  }
+
   .animation-editor-compact-grid {
     grid-template-columns: 1fr;
   }
