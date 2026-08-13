@@ -1,0 +1,101 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#pet-root {
+  --pet-sprite-size: min(var(--pet-scaled-sprite-size, 232px), 78vw, calc(100vh - var(--pet-vertical-padding, 92px)));
+  --pet-drag-visual-x: 0px;
+  --pet-drag-visual-y: 0px;
+  --message-bubble-gap: 10px;
+  --message-bubble-max-width: 236px;
+
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: var(--pet-padding-top, 64px) var(--pet-padding-x, 34px) var(--pet-padding-bottom, 28px);
+  background: transparent;
+  transform: translate(var(--pet-drag-visual-x), var(--pet-drag-visual-y));
+}
+
+#pet-sprite {
+  display: block;
+  width: var(--pet-sprite-size);
+  height: var(--pet-sprite-size);
+  cursor: grab;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 18px 20px rgb(14 25 39 / 22%));
+  touch-action: none;
+}
+
+.pet-sprite-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.pet-sprite-media[hidden] {
+  display: none;
+}
+
+#pet-sprite.dragging {
+  cursor: grabbing;
+}
+
+#message-bubble {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--pet-padding-bottom, 28px) + var(--pet-sprite-size) + var(--message-bubble-gap));
+  width: max-content;
+  max-width: min(var(--message-bubble-max-width), calc(100vw - 84px));
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 92%);
+  color: #1f2937;
+  font: 600 14px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-align: center;
+  overflow-wrap: anywhere;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 18%);
+}
+
+#message-bubble[hidden] {
+  display: none;
+}
+
+#pomodoro-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--pet-padding-bottom, 28px) + 6px);
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  min-width: 74px;
+  max-width: calc(100vw - 56px);
+  padding: 5px 8px;
+  border: 1px solid rgb(15 23 42 / 10%);
+  border-radius: 8px;
+  background: rgb(17 24 39 / 88%);
+  color: #fff;
+  font: 700 13px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: center;
+  overflow-wrap: anywhere;
+  box-shadow: 0 8px 18px rgb(15 23 42 / 18%);
+}
+
+#pomodoro-overlay[hidden] {
+  display: none;
+}

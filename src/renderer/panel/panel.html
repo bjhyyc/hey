@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; media-src 'self' file: data:; connect-src 'none';">
+    <title id="page-title">Desktop Pet Control Panel</title>
+    <link rel="stylesheet" href="./panel.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>Desktop Pet</h1>
+          <span id="panel-version"></span>
+        </div>
+        <nav id="tabs" class="tabs" aria-label="Control panel sections"></nav>
+      </aside>
+      <section class="workspace">
+        <div id="banner" class="banner" hidden></div>
+        <section id="panel-root" class="panel-root" aria-live="polite"></section>
+      </section>
+    </main>
+    <script type="module" src="./panel.js"></script>
+  </body>
+</html>

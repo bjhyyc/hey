@@ -1,0 +1,100 @@
+const path = require("path");
+const { app, BrowserWindow } = require("electron");
+const { createLogger } = require("./services/logger");
+
+let petWindow;
+let panelWindow;
+const logger = createLogger("windows");
+const PET_BASE_WINDOW_SIZE = 320;
+const APP_VERSION_ARGUMENT_PREFIX = "--desktop-pet-version=";
+
+function appVersionArgument() {
+  return `${APP_VERSION_ARGUMENT_PREFIX}${app.getVersion()}`;
+}
+
+function rendererPath(name) {
+  if (app.isPackaged) {
+    return path.join(__dirname, "..", "..", "dist", "renderer", name, `${name}.html`);
+  }
+
+  return path.join(__dirname, "..", "renderer", name, `${name}.html`);
+}
+
+function attachDebugConsole(window, label) {
+  if (!window || process.env.DESKTOP_PET_DEBUG_RULES !== "1") return;
+  window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    logger.debug(`renderer:${label}:console:${level}`, message, `${sourceId}:${line}`);
+  });
+}
+
+function getDisplayScale(display = {}) {
+  const scale = Number(display && display.scale);
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function getPetWindowSize(display = {}) {
+  return Math.max(1, Math.round(PET_BASE_WINDOW_SIZE * getDisplayScale(display)));
+}
+
+async function createPetWindow({ display = {} } = {}) {
+  const size = getPetWindowSize(display);
+  logger.info("Creating pet window", { scale: display.scale, size });
+  petWindow = new BrowserWindow({
+    width: size,
+    height: size,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, "..", "preload", "pet-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      additionalArguments: [appVersionArgument()]
+    }
+  });
+
+  attachDebugConsole(petWindow, "pet");
+
+  petWindow.on("closed", () => {
+    logger.info("Pet window closed");
+    petWindow = null;
+  });
+
+  await petWindow.loadFile(rendererPath("pet"));
+  logger.info("Pet window loaded");
+  return petWindow;
+}
+
+async function createPanelWindow({ show = true } = {}) {
+  logger.info("Creating panel window", { show });
+  panelWindow = new BrowserWindow({
+    width: 960,
+    height: 680,
+    show,
+    skipTaskbar: process.platform === "win32",
+    webPreferences: {
+      preload: path.join(__dirname, "..", "preload", "panel-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      additionalArguments: [appVersionArgument()]
+    }
+  });
+
+  panelWindow.on("closed", () => {
+    logger.info("Panel window closed");
+    panelWindow = null;
+  });
+
+  await panelWindow.loadFile(rendererPath("panel"));
+  logger.info("Panel window loaded");
+  return panelWindow;
+}
+
+function getWindows() {
+  return { pet: petWindow, panel: panelWindow };
+}
+
+module.exports = { createPetWindow, createPanelWindow, getWindows, getPetWindowSize };

@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="用照片和视频，把你家的宠物带到屏幕上。Desktop Pet 支持点击、光标靠近、拖拽和专注互动。"
+    />
+    <meta name="theme-color" content="#f3f3f3" />
+    <title>Desktop Pet - 把你家的宠物带到屏幕上</title>
+    <link rel="icon" type="image/png" href="./icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@500;600;700;800&family=Noto+Sans+SC:wght@700;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <div class="page-frame">
+      <header class="site-header" aria-label="Desktop Pet navigation">
+        <a class="brand" href="#home">Desktop Pet</a>
+        <div class="nav-links">
+          <a class="manual-link" href="./manual.html">使用手册</a>
+          <a class="login-link" href="https://github.com/duzexu/desktop-pet">GitHub</a>
+        </div>
+      </header>
+
+      <main>
+        <section
+          id="home"
+          class="story-section layout-left-copy is-active"
+          data-section="Home"
+          data-tab="Desktop Home"
+        >
+          <div class="copy-block">
+            <p class="section-count">01 / NEW HOME</p>
+            <h1>把你家的宠物<br />带到屏幕上</h1>
+            <p class="english-line">Bring your own pet to life on your desktop.</p>
+            <p class="description">
+              用照片和视频，把熟悉的它做成会回应点击、追随光标、陪你专注的桌面宠物。
+            </p>
+          </div>
+          <div class="media-block video-block" aria-label="Desktop Pet loop preview">
+            <video autoplay muted loop playsinline preload="auto">
+              <source src="assets/hero-loop-small.webm" type="video/webm" media="(max-width: 980px)" />
+              <source src="assets/hero-loop.webm" type="video/webm" />
+              <source src="assets/hero-loop.mp4" type="video/mp4" />
+            </video>
+          </div>
+          <aside class="stat-block">
+            <strong>YOUR PET / ON SCREEN</strong>
+            <span>The face, gestures, and little habits you already know.</span>
+          </aside>
+        </section>
+
+        <section
+          id="response"
+          class="story-section layout-left-copy"
+          data-section="Response"
+          data-tab="Click Response"
+        >
+          <div class="copy-block">
+            <p class="section-count">02 / CLICK</p>
+            <h2>一点回应，<br />足够治愈一整天</h2>
+            <p class="english-line">A tiny response can soften the whole day.</p>
+            <p class="description">
+              轻轻点一下，它会给你一个小小的反应。像是在说：我在呢。
+            </p>
+          </div>
+          <div class="media-block subject-right">
+            <picture>
+              <source media="(max-width: 980px)" srcset="assets/pet-click-small.webp" type="image/webp" />
+              <source srcset="assets/pet-click.webp" type="image/webp" />
+              <img src="assets/pet-click.png" alt="橘猫抬起爪子回应点击" loading="lazy" />
+            </picture>
+          </div>
+          <aside class="stat-block">
+            <strong>TAP / REPLY</strong>
+            <span>Clicks become small moments instead of empty input.</span>
+          </aside>
+        </section>
+
+        <section
+          id="cursor"
+          class="story-section layout-right-copy"
+          data-section="Cursor"
+          data-tab="Cursor Sense"
+        >
+          <div class="copy-block">
+            <p class="section-count">03 / CURSOR</p>
+            <h2>它认得你的光标，<br />像认得脚步声</h2>
+            <p class="english-line">It knows your cursor like footsteps.</p>
+            <p class="description">
+              你靠近时，它会察觉；你停下来时，它也会停一停。像熟悉了你的习惯。
+            </p>
+          </div>
+          <div class="media-block subject-left">
+            <picture>
+              <source media="(max-width: 980px)" srcset="assets/pet-cursor-small.webp" type="image/webp" />
+              <source srcset="assets/pet-cursor.webp" type="image/webp" />
+              <img src="assets/pet-cursor.png" alt="橘猫靠近毛线球，像在追随光标" loading="lazy" />
+            </picture>
+          </div>
+          <aside class="stat-block">
+            <strong>MOTION AWARE</strong>
+            <span>Near, still, away - every cursor habit can have a mood.</span>
+          </aside>
+        </section>
+
+        <section
+          id="drag"
+          class="story-section layout-split-copy"
+          data-section="Drag"
+          data-tab="Drag Anywhere"
+        >
+          <div class="copy-block">
+            <p class="section-count">04 / PLACE</p>
+            <h2>拖住它，<br />放在你想要的<br />角落</h2>
+            <p class="english-line">Hold it, then place it where it belongs.</p>
+            <p class="description">
+              想让它待在哪里，就把它放在哪里。屏幕边缘、窗口旁边、空白处，都可以。
+            </p>
+          </div>
+          <div class="media-block subject-center">
+            <picture>
+              <source media="(max-width: 980px)" srcset="assets/pet-drag-small.webp" type="image/webp" />
+              <source srcset="assets/pet-drag.webp" type="image/webp" />
+              <img src="assets/pet-drag.png" alt="橘猫站在空白背景前，旁边有毛线球" loading="lazy" />
+            </picture>
+          </div>
+          <aside class="stat-block">
+            <strong>DRAG / SETTLE</strong>
+            <span>The desktop corner you choose becomes its little spot.</span>
+          </aside>
+        </section>
+
+        <section
+          id="ritual"
+          class="story-section layout-top-copy"
+          data-section="Ritual"
+          data-tab="Little Rituals"
+        >
+          <div class="copy-block">
+            <p class="section-count">05 / RITUAL</p>
+            <h2>藏着只有你懂的<br />小细节</h2>
+            <p class="english-line">Little rituals only you understand.</p>
+            <p class="description">
+              有些反应不用解释。一次点击、一次停留、一个固定的小动作，久了就变成你们之间的默契。
+            </p>
+          </div>
+          <div class="media-block subject-right-low">
+            <picture>
+              <source media="(max-width: 980px)" srcset="assets/pet-ritual-small.webp" type="image/webp" />
+              <source srcset="assets/pet-ritual.webp" type="image/webp" />
+              <img src="assets/pet-ritual.png" alt="橘猫伸爪碰逗猫棒" loading="lazy" />
+            </picture>
+          </div>
+          <aside class="stat-block">
+            <strong>PRIVATE CUES</strong>
+            <span>Small rules, small gestures, and tiny habits that feel yours.</span>
+          </aside>
+        </section>
+
+        <section
+          id="focus"
+          class="story-section layout-low-subject"
+          data-section="Focus"
+          data-tab="Quiet Focus"
+        >
+          <div class="copy-block">
+            <p class="section-count">06 / FOCUS</p>
+            <h2>有它在，<br />安静也是一种陪伴</h2>
+            <p class="english-line">Quiet can still feel like company.</p>
+            <p class="description">
+              专注的时候，它安安静静地待着。时间到了，再轻轻提醒你一下。
+            </p>
+          </div>
+          <div class="media-block subject-low">
+            <picture>
+              <source media="(max-width: 980px)" srcset="assets/pet-quiet-small.webp" type="image/webp" />
+              <source srcset="assets/pet-quiet.webp" type="image/webp" />
+              <img src="assets/pet-quiet.png" alt="橘猫安静趴在靠垫旁" loading="lazy" />
+            </picture>
+          </div>
+          <aside class="stat-block">
+            <strong>QUIET TIMER</strong>
+            <span>A gentle companion for work sessions and tiny breaks.</span>
+          </aside>
+        </section>
+
+        <section
+          id="new-home"
+          class="story-section layout-right-copy final-section"
+          data-section="New Home"
+          data-tab="Open Source"
+        >
+          <div class="copy-block">
+            <p class="section-count">07 / OPEN SOURCE</p>
+            <h2>你的桌面就是<br />它的新家</h2>
+            <p class="english-line">Your desktop is its new home.</p>
+            <p class="description">
+              把它带回桌面吧。让每天打开电脑的那一刻，多一点熟悉的小动静。
+            </p>
+            <div class="download-actions" aria-label="下载 Desktop Pet">
+              <a
+                class="primary-cta js-app-download"
+                href="https://github.com/duzexu/desktop-pet/releases/latest/download/Desktop-Pet-mac.dmg"
+                data-platform="macOS"
+              >
+                <span>下载 macOS</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 12h12m-5-5 5 5-5 5" />
+                </svg>
+              </a>
+              <a
+                class="primary-cta js-app-download"
+                href="https://github.com/duzexu/desktop-pet/releases/latest/download/Desktop-Pet-windows.exe"
+                data-platform="Windows"
+              >
+                <span>下载 Windows</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 12h12m-5-5 5 5-5 5" />
+                </svg>
+              </a>
+            </div>
+            <a class="github-cta" href="https://github.com/duzexu/desktop-pet">查看 GitHub</a>
+          </div>
+          <div class="media-block subject-center home-cat">
+            <picture>
+              <source media="(max-width: 980px)" srcset="assets/pet-home-small.webp" type="image/webp" />
+              <source srcset="assets/pet-home.webp" type="image/webp" />
+              <img src="assets/pet-home.png" alt="橘猫坐在柔软垫子上" loading="lazy" />
+            </picture>
+          </div>
+          <aside class="stat-block">
+            <strong>DESKTOP READY</strong>
+            <span>Open, configurable, and small enough to live beside your work.</span>
+          </aside>
+        </section>
+      </main>
+
+      <nav class="section-tabs" aria-label="Story progress">
+        <span class="tab-paw" aria-hidden="true">
+          <svg viewBox="0 0 736 736" fill="currentColor">
+            <g transform="translate(0,736) scale(0.1,-0.1)">
+              <path d="M3051 5305 c-62 -19 -144 -79 -192 -139 -185 -231 -198 -647 -29 -899 27 -40 67 -87 89 -105 148 -119 327 -117 461 4 212 192 268 597 123 894 -49 101 -154 206 -236 238 -67 25 -149 28 -216 7z"/>
+              <path d="M4091 5295 c-76 -36 -126 -79 -173 -147 -159 -235 -185 -527 -69 -782 116 -256 316 -355 517 -256 143 70 261 263 284 466 9 88 -3 266 -25 349 -40 154 -151 307 -262 362 -83 40 -198 44 -272 8z"/>
+              <path d="M2245 4327 c-68 -23 -100 -44 -152 -101 -92 -101 -133 -223 -133 -403 0 -220 69 -397 207 -530 110 -105 243 -139 364 -94 110 41 210 185 245 351 45 213 -41 517 -189 662 -102 100 -243 148 -342 115z"/>
+              <path d="M4940 4327 c-63 -18 -108 -47 -168 -110 -136 -144 -205 -317 -206 -512 0 -231 89 -423 231 -495 40 -21 62 -25 133 -25 113 0 177 29 269 123 161 163 232 419 183 655 -49 233 -160 357 -333 371 -38 4 -82 1 -109 -7z"/>
+              <path d="M3585 3884 c-126 -31 -286 -139 -527 -357 -193 -175 -518 -544 -571 -650 -41 -81 -57 -151 -57 -258 0 -178 49 -308 155 -414 95 -94 204 -138 374 -151 152 -11 399 35 585 110 136 55 143 55 287 -2 228 -91 362 -122 533 -122 242 0 411 97 505 292 109 225 94 440 -41 623 -246 331 -797 823 -1014 905 -57 21 -185 35 -229 24z"/>
+            </g>
+          </svg>
+        </span>        <a href="#response" data-tab-target="Response">
+          <span class="tab-mark ring"></span>
+          <span class="tab-copy"><strong>回应</strong><em>Click Response</em></span>
+        </a>
+        <a href="#cursor" data-tab-target="Cursor">
+          <span class="tab-mark dots"></span>
+          <span class="tab-copy"><strong>感知</strong><em>Cursor Sense</em></span>
+        </a>
+        <a href="#drag" data-tab-target="Drag">
+          <span class="tab-mark bars"></span>
+          <span class="tab-copy"><strong>安放</strong><em>Drag Anywhere</em></span>
+        </a>
+        <a href="#ritual" data-tab-target="Ritual">
+          <span class="tab-mark slash"></span>
+          <span class="tab-copy"><strong>默契</strong><em>Little Rituals</em></span>
+        </a>
+        <a href="#focus" data-tab-target="Focus">
+          <span class="tab-mark blocks"></span>
+          <span class="tab-copy"><strong>陪伴</strong><em>Quiet Focus</em></span>
+        </a>
+      </nav>
+    </div>
+
+    <dialog class="download-guide" id="download-guide" aria-labelledby="download-guide-title">
+      <form method="dialog" class="download-guide-card">
+        <button class="download-guide-close" value="close" aria-label="关闭下载引导">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+        <p class="download-guide-index">NEXT / 下一步</p>
+        <h2 id="download-guide-title">应用开始下载了</h2>
+        <p class="download-guide-description">
+          安装后首次打开应用，点击“导入体验包”，1 分钟看到桌宠动起来。
+        </p>
+        <ol class="download-guide-steps">
+          <li><span>01</span><strong>安装 Desktop Pet</strong></li>
+          <li><span>02</span><strong>首次启动会自动打开控制面板</strong></li>
+          <li><span>03</span><strong>点击“导入体验包”，应用会自动下载并导入</strong></li>
+        </ol>
+        <div class="download-guide-actions">
+          <button class="download-guide-primary" value="close">
+            知道了，安装后体验
+          </button>
+          <a class="download-guide-secondary" href="./manual.html#start">查看快速开始</a>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

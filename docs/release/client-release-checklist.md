@@ -1,0 +1,27 @@
+# Client Release Checklist
+
+- [ ] `package.json` version matches the `v*` release tag
+- [ ] `npm test` passes
+- [ ] `npm run build` passes
+- [ ] `npm run test:e2e` passes with zero skipped tests on a machine that can launch Electron
+- [ ] `npm run pack` passes
+- [ ] `release/` contains the expected unpacked app output
+- [ ] Tag-triggered GitHub Actions release workflow completes successfully
+- [ ] GitHub Release contains `Desktop-Pet-mac.dmg`
+- [ ] GitHub Release contains `Desktop-Pet-windows.exe`
+- [ ] Landing page and README macOS download links resolve successfully
+- [ ] Landing page and README Windows download links resolve successfully
+- [ ] macOS app starts and shows transparent pet window
+- [ ] Windows app starts and shows transparent pet window
+- [ ] Pet can be dragged and position persists after restart
+- [ ] Click action plays and returns idle
+- [ ] Control panel opens from hover button, tray, and right-click menu
+- [ ] Asset import accepts GIF, WebP, WebM, MP4, MOV, PNG, and SVG
+- [ ] Invalid asset formats show clear error
+- [ ] Valid petpack imports
+- [ ] Invalid petpack is rejected without changing current package
+- [ ] Exported petpack can be re-imported
+- [ ] Mouse passthrough toggle works
+- [ ] Always-on-top toggle works
+- [ ] Startup toggle works
+- [ ] App can quit from tray and right-click menu

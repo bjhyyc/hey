@@ -1,0 +1,120 @@
+import { describe, expect, it } from "vitest";
+import { renderOverview } from "../../src/renderer/panel/tabs/overview";
+
+describe("overview tab", () => {
+  it("shows the first-run sample petpack path until onboarding is completed", () => {
+    const pendingHtml = renderOverview({
+      currentPackageId: "default-pet",
+      system: { onboardingVersion: 0 },
+      animations: { default: { id: "idle", asset: "assets/idle.svg" }, clips: [] },
+      triggerRules: []
+    });
+
+    expect(pendingHtml).toContain("Get your desktop pet moving");
+    expect(pendingHtml).toContain('data-action="install-sample-petpack"');
+    expect(pendingHtml).toContain("Import sample petpack");
+    expect(pendingHtml).toContain('data-action="skip-onboarding"');
+
+    const completedHtml = renderOverview({
+      currentPackageId: "default-pet",
+      system: { onboardingVersion: 1 },
+      animations: { default: { id: "idle", asset: "assets/idle.svg" }, clips: [] },
+      triggerRules: []
+    });
+
+    expect(completedHtml).not.toContain('data-action="install-sample-petpack"');
+  });
+
+  it("shows a disabled progress action while the sample petpack is installing", () => {
+    const html = renderOverview({
+      currentPackageId: "default-pet",
+      system: { onboardingVersion: 0 },
+      animations: { default: { id: "idle", asset: "assets/idle.svg" }, clips: [] },
+      triggerRules: []
+    }, null, { savingKey: "onboarding-sample-install" });
+
+    expect(html).toContain("Downloading and importing...");
+    expect(html).toContain('data-action="install-sample-petpack" disabled');
+  });
+
+  it("shows the immediate success state after the sample petpack is imported", () => {
+    const html = renderOverview({
+      currentPackageId: "taotao",
+      system: { onboardingVersion: 1 },
+      animations: { default: { id: "idle", asset: "assets/idle.svg" }, clips: [] },
+      triggerRules: []
+    }, null, { onboardingJustCompleted: true });
+
+    expect(html).toContain("Taotao is now on your desktop");
+    expect(html).toContain('data-action="dismiss-onboarding-success"');
+  });
+
+  it("shows recently triggered rule action summaries including blank and delay actions", () => {
+    const html = renderOverview({
+      currentPackageId: "pet",
+      animations: {
+        default: { id: "idle", name: "Idle", asset: "assets/idle.svg" },
+        clips: []
+      },
+      triggerRules: [{
+        id: "rule-wait",
+        name: "Wait before wave",
+        conditions: [{ type: "click", filters: [] }],
+        actions: [{ type: "blank", durationMs: 1500 }, { type: "delay", durationMs: 1500 }]
+      }]
+    }, {
+      currentState: {
+        animation: "idle",
+        sprite: "",
+        position: { x: 10, y: 20 },
+        display: { scale: 1, opacity: 1 }
+      },
+      recentEvents: [],
+      ruleStates: { "rule-wait": Date.now() },
+      timers: [],
+      interactionsPaused: false
+    });
+
+    expect(html).toContain("Wait before wave");
+    expect(html).toContain("Blank action");
+    expect(html).not.toContain("Blank action · 1500ms");
+    expect(html).toContain("Delay · 1500ms");
+  });
+
+  it("omits system status and expands recent triggered rules", () => {
+    const triggerRules = Array.from({ length: 7 }, (_, index) => ({
+      id: `rule-${index}`,
+      name: `Rule ${index}`,
+      conditions: [{ type: "click", filters: [] }],
+      actions: [{ type: "showMessage", text: `Rule ${index}` }]
+    }));
+    const now = Date.now();
+    const ruleStates = Object.fromEntries(triggerRules.map((rule, index) => [rule.id, now - index]));
+
+    const html = renderOverview({
+      currentPackageId: "pet",
+      animations: {
+        default: { id: "idle", name: "Idle", asset: "assets/idle.svg" },
+        clips: []
+      },
+      triggerRules
+    }, {
+      currentState: {
+        animation: "idle",
+        sprite: "",
+        position: { x: 10, y: 20 },
+        display: { scale: 1, opacity: 1 }
+      },
+      recentEvents: [],
+      ruleStates,
+      timers: [],
+      interactionsPaused: true
+    });
+
+    expect(html).not.toContain("System Status");
+    expect(html).toContain("recent-rules-card");
+    expect(html).toContain("Rule 0");
+    expect(html).toContain("Rule 5");
+    expect(html).not.toContain("Rule 6");
+  });
+});
