@@ -5,6 +5,7 @@ const {
   SUPPORTED_OPERATORS,
   TRIGGER_PARAMETER_FIELDS
 } = require("./schema");
+const { validateStudioBehavior } = require("./studio-behavior");
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -293,6 +294,8 @@ function validateManifest(manifest, availableFiles = new Set()) {
       validateAction(action, `${ruleLabel}.state.exitActions[${actionIndex}]`, animationIds, errors);
     });
   }
+
+  validateStudioBehavior(manifest.studioBehavior, animations, triggerRules, errors);
 
   return { ok: errors.length === 0, errors };
 }

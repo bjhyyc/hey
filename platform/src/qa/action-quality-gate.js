@@ -1,0 +1,194 @@
+const { ACTION_ENDPOINTS, assertActionId } = require("../domain/action-catalog");
+const {
+  CHARACTER_CANVAS_V1,
+  requireQaPolicy,
+  validateActionEndpoints,
+  validateCanvasFrame
+} = require("./character-canvas-v1");
+const { validateActionMediaProbe } = require("./media-inspector");
+
+const REQUIRED_CONTENT_CHECKS = Object.freeze([
+  "cameraFixed",
+  "noText",
+  "noProps",
+  "noPeople",
+  "noOtherAnimals",
+  "petFullyVisible",
+  "identityConsistent",
+  "noDeformation",
+  "matteComplete",
+  "matteEdgesStable",
+  "greenBackgroundUniform",
+  "noGreenSpill"
+]);
+
+function appendErrors(target, prefix, result) {
+  if (!result || result.ok) return;
+  for (const error of result.errors || ["failed"]) target.push(`${prefix}: ${error}`);
+}
+
+function getFrameCenterX(frame) {
+  const bounds = frame && frame.visibleBounds;
+  if (!bounds) return NaN;
+  return (Number(bounds.left) + Number(bounds.right)) / 2;
+}
+
+function calculateContinuity(sampledFrames, policy) {
+  if (!Array.isArray(sampledFrames) || sampledFrames.length === 0) {
+    return { ok: false, errors: ["At least one sampled frame metric is required"] };
+  }
+  const baseline = sampledFrames[0];
+  const baselineCenterX = getFrameCenterX(baseline);
+  const baselineGroundY = Number(baseline.groundBaselineY);
+  const baselineTorso = Number(baseline.torsoHeightPx);
+  const errors = [];
+  for (const [index, frame] of sampledFrames.entries()) {
+    const centerX = getFrameCenterX(frame);
+    const groundY = Number(frame.groundBaselineY);
+    const torso = Number(frame.torsoHeightPx);
+    if (!Number.isFinite(centerX) || !Number.isFinite(groundY) || !Number.isFinite(torso)) {
+      errors.push(`sampledFrames[${index}] continuity metrics are incomplete`);
+      continue;
+    }
+    if (Math.abs(centerX - baselineCenterX) > policy.maxHorizontalOffsetPx) {
+      errors.push(`sampledFrames[${index}] horizontal drift exceeds tolerance`);
+    }
+    if (Math.abs(groundY - baselineGroundY) > policy.maxGroundJitterPx) {
+      errors.push(`sampledFrames[${index}] ground jitter exceeds tolerance`);
+    }
+    if (Math.abs(torso - baselineTorso) / Math.max(1, baselineTorso) > policy.maxRelativeFrameScaleJitter) {
+      errors.push(`sampledFrames[${index}] torso scale jitter exceeds tolerance`);
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+function frameEvidence(frame) {
+  const visible = frame && frame.visibleBounds || {};
+  return {
+    width: Number(frame?.width),
+    height: Number(frame?.height),
+    visibleBounds: {
+      left: Number(visible.left),
+      top: Number(visible.top),
+      right: Number(visible.right),
+      bottom: Number(visible.bottom)
+    },
+    groundBaselineY: Number(frame?.groundBaselineY),
+    torsoHeightPx: Number(frame?.torsoHeightPx),
+    headHeightPx: Number(frame?.headHeightPx),
+    shoulderWidthPx: Number(frame?.shoulderWidthPx),
+    identityScore: Number(frame?.identityScore)
+  };
+}
+
+function validateContentInspection(inspection, actionId) {
+  const errors = [];
+  if (!inspection || typeof inspection !== "object") {
+    return { ok: false, errors: ["Content inspection is required"] };
+  }
+  for (const field of REQUIRED_CONTENT_CHECKS) {
+    if (inspection[field] !== true) errors.push(`Content check failed: ${field}`);
+  }
+  if (actionId === "sleep-loop" && inspection.loopSeamAcceptable !== true) {
+    errors.push("Content check failed: loopSeamAcceptable");
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Combines immutable technical gates. Frame segmentation and content analysis
+ * are performed by a worker and supplied as metrics; unknown or omitted checks
+ * always fail closed rather than entering a PetPack.
+ */
+function validateVideoAction({
+  actionId,
+  mediaProbe,
+  sampledFrames,
+  firstFrame,
+  lastFrame,
+  expectedFirstMasterHash,
+  expectedLastMasterHash,
+  referenceMetrics,
+  contentInspection,
+  expectedDuration,
+  policy,
+  production = false
+} = {}) {
+  assertActionId(actionId);
+  const resolvedPolicy = requireQaPolicy(policy, { production });
+  const errors = [];
+  const media = validateActionMediaProbe(mediaProbe, {
+    allowedVideoCodecs: ["vp9"],
+    allowedFormatNames: ["webm", "matroska"],
+    expectedDuration
+  });
+  appendErrors(errors, "media", media);
+
+  const endpoints = validateActionEndpoints({
+    firstFrame,
+    lastFrame,
+    expectedFirstMasterHash,
+    expectedLastMasterHash
+  });
+  appendErrors(errors, "endpoints", endpoints);
+
+  const frames = Array.isArray(sampledFrames) ? sampledFrames : [];
+  const frameResults = frames.map((frame) => validateCanvasFrame(frame, {
+    canvas: CHARACTER_CANVAS_V1,
+    policy: resolvedPolicy,
+    production,
+    expectedIdentityScore: true,
+    referenceMetrics
+  }));
+  if (frameResults.length === 0) errors.push("canvas: sampled frame metrics are required");
+  frameResults.forEach((result, index) => appendErrors(errors, `canvas frame ${index}`, result));
+
+  const continuity = calculateContinuity(frames, resolvedPolicy);
+  appendErrors(errors, "continuity", continuity);
+  const content = validateContentInspection(contentInspection, actionId);
+  appendErrors(errors, "content", content);
+  const canvas = {
+    ok: frameResults.length > 0 && frameResults.every((result) => result.ok),
+    errors: frameResults.flatMap((result) => result.errors || [])
+  };
+
+  const expectedEndpoints = ACTION_ENDPOINTS[actionId];
+  const contentEvidence = Object.fromEntries(
+    REQUIRED_CONTENT_CHECKS.map((field) => [field, contentInspection?.[field] === true])
+  );
+  if (actionId === "sleep-loop") {
+    contentEvidence.loopSeamAcceptable = contentInspection?.loopSeamAcceptable === true;
+  }
+  return {
+    actionId,
+    expectedEndpoints: { ...expectedEndpoints },
+    ok: errors.length === 0,
+    errors,
+    media,
+    endpoints,
+    canvas,
+    continuity,
+    content,
+    frameResults,
+    evidence: {
+      contentInspection: contentEvidence,
+      endpoints: {
+        firstMasterHash: String(firstFrame?.masterHash || ""),
+        lastMasterHash: String(lastFrame?.masterHash || "")
+      },
+      continuity: {
+        sampledFrameCount: frames.length,
+        firstFrame: frames.length > 0 ? frameEvidence(frames[0]) : null,
+        lastFrame: frames.length > 0 ? frameEvidence(frames[frames.length - 1]) : null
+      }
+    }
+  };
+}
+
+module.exports = {
+  REQUIRED_CONTENT_CHECKS,
+  calculateContinuity,
+  validateContentInspection,
+  validateVideoAction
+};

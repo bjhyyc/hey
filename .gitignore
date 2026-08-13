@@ -17,4 +17,7 @@ playwright-report/
 test-results/
 
 generated-assets/
+recovery-inputs/
+.npm-cache/
+.runtime-tmp/
 docs/superpowers/

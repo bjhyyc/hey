@@ -5,6 +5,7 @@ import {
   getCooldownRulesForEvent,
   isContinuousMouseMoveRule
 } from "../../shared/rule-engine.js";
+import studioProfile from "../../shared/studio-behavior-profile.browser.mjs";
 import { createDebugLogger } from "./debug-utils.js";
 
 const debugRulesLog = createDebugLogger("[desktop-pet:rules]", {
@@ -75,6 +76,98 @@ function mergeRulesById(manifestRules, configRules) {
   return [...merged.values()];
 }
 
+function createStudioCondition(type, elapsedMs) {
+  return {
+    type,
+    required: true,
+    filters: Number.isSafeInteger(elapsedMs)
+      ? [{ field: "elapsedMs", operator: ">=", value: elapsedMs, unit: "ms" }]
+      : []
+  };
+}
+
+function createStudioRule({ id, name, type, animationIds, priority, cooldownMs = 0, cooldownScope, elapsedMs }) {
+  return {
+    id,
+    name,
+    enabled: true,
+    conditions: [createStudioCondition(type, elapsedMs)],
+    priority,
+    cooldownMs,
+    ...(cooldownScope ? { cooldownScope } : {}),
+    stopOnMatch: true,
+    actionStrategy: "sequence",
+    actions: animationIds.map((animation) => ({ type: "playAnimation", animation }))
+  };
+}
+
+/**
+ * PetPack Studio keeps its product interaction contract in studioBehavior so
+ * users cannot accidentally import arbitrary rules. Convert that trusted,
+ * validator-checked profile into the generic rule runtime at load time.
+ */
+export function createStudioBehaviorRules(manifest) {
+  const behavior = manifest && manifest.studioBehavior;
+  if (!behavior || behavior.profile !== studioProfile.profile || !behavior.actionClipIds) return [];
+
+  const clips = behavior.actionClipIds;
+  const timing = {
+    ...studioProfile.defaultTiming,
+    ...(behavior.timing || {})
+  };
+  const requiredKeys = studioProfile.actionKeys;
+  if (requiredKeys.some((key) => typeof clips[key] !== "string" || clips[key] === "")) return [];
+
+  return [
+    createStudioRule({
+      id: "studio-startup-stretch",
+      name: "Startup stretch and yawn",
+      type: "appLaunch",
+      animationIds: [clips.stretch],
+      priority: 500
+    }),
+    createStudioRule({
+      id: "studio-click-sneeze",
+      name: "Single click sneeze",
+      type: "click",
+      animationIds: [clips.sneeze],
+      priority: 400
+    }),
+    createStudioRule({
+      id: "studio-double-click-roll",
+      name: "Double click roll",
+      type: "doubleClick",
+      animationIds: [clips.roll],
+      priority: 400
+    }),
+    createStudioRule({
+      id: "studio-right-click-wake",
+      name: "Right click wake and stretch",
+      type: "rightClick",
+      animationIds: [clips.stretch],
+      priority: 400
+    }),
+    createStudioRule({
+      id: "studio-idle-sleep",
+      name: "Sleep after idle",
+      type: "idleDuration",
+      elapsedMs: Number(timing.idleTimeoutMs),
+      animationIds: [clips.sleepTransition, clips.sleepLoop],
+      priority: 300
+    }),
+    createStudioRule({
+      id: "studio-hover-attention",
+      name: "Hover attention",
+      type: "hoverDuration",
+      elapsedMs: Number(timing.hoverDelayMs),
+      animationIds: [clips.hoverAttention],
+      priority: 200,
+      cooldownMs: Number(timing.hoverCooldownMs),
+      cooldownScope: "eventType"
+    })
+  ];
+}
+
 export function buildRuntimeModel({
   config = {},
   activePackage = null
@@ -84,7 +177,10 @@ export function buildRuntimeModel({
   const animations = getAnimations(config, manifest);
   const defaultClip = animations.default || { id: "idle", asset: "" };
   const clips = Array.isArray(animations.clips) ? animations.clips : [];
-  const manifestRules = Array.isArray(manifest && manifest.triggerRules) ? manifest.triggerRules : [];
+  const genericManifestRules = Array.isArray(manifest && manifest.triggerRules) ? manifest.triggerRules : [];
+  const manifestRules = genericManifestRules.length > 0
+    ? genericManifestRules
+    : createStudioBehaviorRules(manifest);
   const configRules = Array.isArray(config.triggerRules) ? config.triggerRules : [];
 
   const resolveClip = (clip) => ({

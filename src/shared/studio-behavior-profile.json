@@ -1,0 +1,30 @@
+{
+  "profile": "petpack-studio/v1",
+  "actionKeys": [
+    "idle",
+    "sneeze",
+    "roll",
+    "sleepTransition",
+    "sleepLoop",
+    "stretch",
+    "hoverAttention"
+  ],
+  "oneshotActionKeys": [
+    "sneeze",
+    "roll",
+    "sleepTransition",
+    "stretch",
+    "hoverAttention"
+  ],
+  "interruptActionKeys": [
+    "sneeze",
+    "roll",
+    "sleepTransition",
+    "stretch"
+  ],
+  "defaultTiming": {
+    "idleTimeoutMs": 22000,
+    "hoverDelayMs": 2000,
+    "hoverCooldownMs": 20000
+  }
+}

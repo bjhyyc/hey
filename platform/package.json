@@ -1,0 +1,21 @@
+{
+  "name": "petpack-studio-platform-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Server-only PetPack Studio API runtime",
+  "license": "GPL-3.0",
+  "type": "commonjs",
+  "scripts": {
+    "start:auth": "node src/runtime/start-local-auth-api.js",
+    "start:production-auth": "node src/runtime/start-production-auth-api.js"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "bullmq": "6.0.9",
+    "cos-nodejs-sdk-v5": "3.0.0",
+    "ioredis": "6.0.0",
+    "pg": "8.22.0"
+  }
+}

@@ -1,0 +1,39 @@
+services:
+  cos-verify:
+    image: petpack-platform-runtime:staging
+    user: "10001:10001"
+    environment:
+      NODE_ENV: production
+      PETPACK_PLATFORM_MODE: production
+      PETPACK_OBJECT_STORE_ENDPOINT: https://heyirmy-petpack-staging-1462360313.cos.ap-shanghai.myqcloud.com
+      PETPACK_OBJECT_STORE_BUCKET: heyirmy-petpack-staging-1462360313
+      PETPACK_OBJECT_STORE_REGION: ap-shanghai
+      PETPACK_OBJECT_STORE_ACCESS_KEY_ID_FILE: /run/secrets/cos_secret_id
+      PETPACK_OBJECT_STORE_SECRET_ACCESS_KEY_FILE: /run/secrets/cos_secret_key
+      PETPACK_COS_MAX_VERIFIED_OBJECT_BYTES: "33554432"
+      PETPACK_COS_MAX_ARCHIVE_OBJECT_BYTES: "268435456"
+    secrets:
+      - cos_secret_id
+      - cos_secret_key
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    entrypoint: ["node"]
+    command: ["src/runtime/verify-cos-runtime.js"]
+    networks:
+      - petpack-edge
+
+networks:
+  petpack-edge:
+    external: true
+    name: petpack-edge
+
+secrets:
+  cos_secret_id:
+    file: ${PETPACK_COS_SECRETS_DIR:-/opt/petpack/config/cos/secrets}/secret_id
+  cos_secret_key:
+    file: ${PETPACK_COS_SECRETS_DIR:-/opt/petpack/config/cos/secrets}/secret_key

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildRuntimeModel,
+  createStudioBehaviorRules,
   createRuleRuntime
 } from "../../src/renderer/pet/pet-runtime";
 import defaultsModule from "../../src/shared/defaults";
@@ -8,6 +9,64 @@ import defaultsModule from "../../src/shared/defaults";
 const { DEFAULT_CONFIG } = defaultsModule;
 
 describe("pet runtime model", () => {
+  it("derives the six trusted interaction rules from a Studio behavior manifest", () => {
+    const clipIds = {
+      idle: "70000000-0000-4000-8000-000000000001",
+      sneeze: "70000000-0000-4000-8000-000000000002",
+      roll: "70000000-0000-4000-8000-000000000003",
+      sleepTransition: "70000000-0000-4000-8000-000000000004",
+      sleepLoop: "70000000-0000-4000-8000-000000000005",
+      stretch: "70000000-0000-4000-8000-000000000006",
+      hoverAttention: "70000000-0000-4000-8000-000000000007"
+    };
+    const manifest = {
+      animations: {
+        default: { id: clipIds.idle, asset: "assets/idle.webm" },
+        clips: Object.entries(clipIds).slice(1).map(([name, id]) => ({ id, name, asset: `assets/${name}.webm` }))
+      },
+      triggerRules: [],
+      studioBehavior: {
+        profile: "petpack-studio/v1",
+        actionClipIds: clipIds,
+        timing: { idleTimeoutMs: 22000, hoverDelayMs: 2000, hoverCooldownMs: 20000 }
+      }
+    };
+
+    const rules = createStudioBehaviorRules(manifest);
+    expect(rules).toHaveLength(6);
+    expect(rules.find((rule) => rule.id === "studio-idle-sleep")).toMatchObject({
+      conditions: [{ filters: [{ field: "elapsedMs", operator: ">=", value: 22000, unit: "ms" }] }],
+      actions: [
+        { type: "playAnimation", animation: clipIds.sleepTransition },
+        { type: "playAnimation", animation: clipIds.sleepLoop }
+      ]
+    });
+    expect(rules.find((rule) => rule.id === "studio-hover-attention")).toMatchObject({
+      cooldownScope: "eventType",
+      cooldownMs: 20000
+    });
+
+    const model = buildRuntimeModel({
+      config: { triggerRules: [] },
+      activePackage: { manifest, assetsByPath: {} }
+    });
+    const runtime = createRuleRuntime({ rules: model.rules });
+    expect(runtime.evaluateEvent({ type: "click", timestamp: 1000 }))
+      .toEqual([{ type: "playAnimation", animation: clipIds.sneeze }]);
+    expect(runtime.evaluateEvent({ type: "idleDuration", timestamp: 22000, elapsedMs: 22000 }))
+      .toEqual([
+        { type: "playAnimation", animation: clipIds.sleepTransition },
+        { type: "playAnimation", animation: clipIds.sleepLoop }
+      ]);
+  });
+
+  it("does not derive Studio rules from an unknown or incomplete profile", () => {
+    expect(createStudioBehaviorRules({ studioBehavior: { profile: "unknown", actionClipIds: {} } })).toEqual([]);
+    expect(createStudioBehaviorRules({
+      studioBehavior: { profile: "petpack-studio/v1", actionClipIds: { idle: "idle" } }
+    })).toEqual([]);
+  });
+
   it("uses package animation assets when manifest asset URLs are present", () => {
     const model = buildRuntimeModel({
       config: {},

@@ -1,0 +1,78 @@
+services:
+  auth-api:
+    build:
+      context: ../../..
+      dockerfile: platform/docker/runtime/Dockerfile
+    image: petpack-platform-runtime:staging
+    container_name: petpack-auth-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PETPACK_PLATFORM_MODE: production
+      PETPACK_API_PORT: "8787"
+      PETPACK_POSTGRES_URL_FILE: /run/secrets/postgres_url
+      PETPACK_POSTGRES_CA_PEM_FILE: /run/secrets/postgres_ca
+      PETPACK_POSTGRES_APPLICATION_NAME: petpack-staging-auth-api
+      PETPACK_POSTGRES_POOL_MAX: "8"
+      PETPACK_POSTGRES_CONNECTION_TIMEOUT_MS: "5000"
+      PETPACK_POSTGRES_IDLE_TIMEOUT_MS: "10000"
+      PETPACK_POSTGRES_STATEMENT_TIMEOUT_MS: "15000"
+      PETPACK_REDIS_URL_FILE: /run/secrets/redis_url
+      PETPACK_REDIS_CA_PEM_FILE: /run/secrets/postgres_ca
+      PETPACK_QUEUE_NAME: petpack-staging
+      PETPACK_QUEUE_PREFIX: petpack
+      PETPACK_QUEUE_WORKER_CONCURRENCY: "4"
+      PETPACK_SESSION_SIGNING_KEY_FILE: /run/secrets/session_signing_key
+      PETPACK_SESSION_TTL_SECONDS: "2592000"
+      PETPACK_SESSION_COOKIE_SECURE: "true"
+      PETPACK_STUDIO_SESSION_COOKIE_NAME: petpack_session
+      PETPACK_AUTH_POLICY_VERSION: cloudbase-phone-v1
+      PETPACK_PHONE_AUTH_ENABLED: ${PETPACK_PHONE_AUTH_ENABLED:-false}
+      CLOUDBASE_ENV_ID: petpack-staging-d3ffsbun2dc89fae
+      CLOUDBASE_REGION: ap-shanghai
+      CLOUDBASE_AUTH_TIMEOUT_MS: "8000"
+    secrets:
+      - postgres_url
+      - postgres_ca
+      - redis_url
+      - session_signing_key
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>{if(!r.ok)throw new Error('unhealthy')})"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks:
+      - petpack-edge
+      - petpack-data
+
+networks:
+  petpack-edge:
+    external: true
+    name: petpack-edge
+  petpack-data:
+    external: true
+    name: petpack-data
+
+secrets:
+  postgres_url:
+    file: ./secrets/postgres_url
+  postgres_ca:
+    file: ./secrets/postgres_ca
+  redis_url:
+    file: ./secrets/redis_url
+  session_signing_key:
+    file: ./secrets/session_signing_key

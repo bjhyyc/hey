@@ -1,0 +1,35 @@
+services:
+  edge:
+    image: caddy:2.11.4-alpine
+    container_name: petpack-edge
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - petpack-edge
+
+networks:
+  petpack-edge:
+    name: petpack-edge
+
+volumes:
+  caddy_data:
+  caddy_config:
