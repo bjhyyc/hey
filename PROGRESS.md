@@ -9,6 +9,7 @@
 - 2026-08-13：Git 初始提交 `4de9b8e57bf5517be26896d80f8355730d2b2a68`。
 - 2026-08-13：完整 Git bundle 备份：`C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-baseline-4de9b8e.bundle`；SHA-256 `4C43A9572CF8DE906777DB5B04748168A0A1482CFFE452DA55380AB3F3CF1721`。
 - 2026-08-13：已将原任务源与后续用户裁定合并到 `PRODUCT_CONTRACT.md`。
+- 2026-08-13：用户最终指定支付服务商为 Kaipay，并已完成支付申请；后续以 `https://app.kaipay.cn/api-debugger` 的正式接入参数为准，不再开发直连支付宝。
 
 ## In progress
 
@@ -21,7 +22,7 @@
 1. 重建最新版网站首页、手机号登录和 3–4 张照片上传/两母图确认流程。
 2. 重建模拟支付后的七视频并行生成、后处理、质检、PetPack 打包下载闭环。
 3. 恢复客户端七动作状态机、显著导入入口、22 秒睡眠和透明区域鼠标穿透。
-4. 接回 PostgreSQL、Redis/BullMQ、COS、ModelArk 与支付宝的生产适配器；外部审批未完成时全部 fail-closed。
+4. 接回 PostgreSQL、Redis/BullMQ、COS、ModelArk 与 Kaipay 的生产适配器；生产参数或外部能力未完成时全部 fail-closed。
 5. 完整本地验收、构建、部署和真实 API 小额/限额测试。
 
 ## Working rules
@@ -31,4 +32,3 @@
 - 大型视频、模型输出、Docker 数据和用户媒体不提交 Git。
 - 不写入或修改 E 盘 RAW；不删除旧 D 盘目录。
 - 新代码仅位于 `D:\PetPackStudio-Rebuild-20260813`。
-
