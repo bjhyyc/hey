@@ -1,0 +1,269 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import {
+  clearHomePhotoDraft,
+  loadHomePhotoDraft,
+  saveHomePhotoDraft,
+} from "@/lib/home-photo-draft";
+import {
+  availablePhotoSlotIndexes,
+  emptyPhotoSlots,
+  hasDuplicatePhotos,
+  PHOTO_ACCEPT_ATTRIBUTE,
+  PHOTO_SLOT_DEFINITIONS,
+  photoSelectionMessage,
+  photosReady,
+  selectedPhotoCount,
+  type PetSpecies,
+  type PhotoFileSlots,
+  validatePhotoFile,
+} from "@/lib/photo-slots";
+
+function PawIcon({ kind }: { kind: PetSpecies }) {
+  return (
+    <svg className="home-model-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {kind === "dog" ? (
+        <>
+          <ellipse cx="5.8" cy="7.5" rx="2.3" ry="2.7" transform="rotate(-24 5.8 7.5)" />
+          <ellipse cx="10.3" cy="5.5" rx="2.2" ry="2.7" transform="rotate(-7 10.3 5.5)" />
+          <ellipse cx="15" cy="5.9" rx="2.2" ry="2.7" transform="rotate(9 15 5.9)" />
+          <ellipse cx="18.7" cy="8.5" rx="2.2" ry="2.6" transform="rotate(25 18.7 8.5)" />
+          <path d="M6.1 16.3c0-3.3 2.5-5.7 5.9-5.7s5.9 2.4 5.9 5.7c0 2.2-1.5 3.6-3.5 3.6-.9 0-1.6-.5-2.4-.5s-1.5.5-2.4.5c-2 0-3.5-1.4-3.5-3.6Z" />
+        </>
+      ) : (
+        <>
+          <circle cx="6.4" cy="7.5" r="2" />
+          <circle cx="10.4" cy="5.6" r="2" />
+          <circle cx="14.7" cy="5.8" r="2" />
+          <circle cx="18" cy="8.4" r="1.9" />
+          <path d="M7 15.7c0-3 2.1-5.1 5-5.1s5 2.1 5 5.1c0 2-1.4 3.3-3.1 3.3-.7 0-1.3-.4-1.9-.4s-1.2.4-1.9.4C8.4 19 7 17.7 7 15.7Z" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+export function HomeUploadEntry() {
+  const router = useRouter();
+  const picker = useRef<HTMLInputElement>(null);
+  const [species, setSpecies] = useState<PetSpecies>("dog");
+  const [photos, setPhotos] = useState<PhotoFileSlots>(emptyPhotoSlots);
+  const [previews, setPreviews] = useState<Array<string | null>>([
+    null,
+    null,
+    null,
+    null,
+  ]);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const count = selectedPhotoCount(photos);
+  const ready = photosReady(photos);
+
+  useEffect(() => {
+    let active = true;
+    loadHomePhotoDraft()
+      .then((draft) => {
+        if (active && draft) {
+          setPhotos(draft.photos);
+          setSpecies(draft.species);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const urls = photos.map((file) =>
+      file ? window.URL.createObjectURL(file) : null,
+    );
+    setPreviews(urls);
+    return () => urls.forEach((url) => url && window.URL.revokeObjectURL(url));
+  }, [photos]);
+
+  async function persist(next: PhotoFileSlots, nextSpecies = species) {
+    if (next.some(Boolean)) await saveHomePhotoDraft(next, nextSpecies);
+    else await clearHomePhotoDraft();
+  }
+
+  async function addPhotos(files: FileList | null) {
+    const selected = Array.from(files ?? []);
+    if (selected.length === 0) return;
+    const available = availablePhotoSlotIndexes(photos);
+    if (selected.length > available.length) {
+      setMessage(`最多上传 4 张，还可添加 ${available.length} 张`);
+      return;
+    }
+    const validation = selected.map(validatePhotoFile).find(Boolean);
+    if (validation) return setMessage(validation);
+    setBusy(true);
+    try {
+      const next = [...photos] as PhotoFileSlots;
+      selected.forEach((file, index) => {
+        next[available[index]] = file;
+      });
+      if (await hasDuplicatePhotos(next.filter((file): file is File => Boolean(file)))) {
+        setMessage("不能上传重复照片");
+        return;
+      }
+      await persist(next);
+      setPhotos(next);
+      setMessage(photoSelectionMessage(next));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "无法保存照片");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removePhoto(index: number) {
+    const next = [...photos] as PhotoFileSlots;
+    next[index] = null;
+    setBusy(true);
+    try {
+      await persist(next);
+      setPhotos(next);
+      setMessage(next.some(Boolean) ? photoSelectionMessage(next) : "");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "无法删除照片");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function replacePhoto(index: number, file: File | null) {
+    if (!file) return;
+    const validation = validatePhotoFile(file);
+    if (validation) return setMessage(validation);
+    setBusy(true);
+    try {
+      const next = [...photos] as PhotoFileSlots;
+      next[index] = file;
+      if (await hasDuplicatePhotos(next.filter((item): item is File => Boolean(item)))) {
+        setMessage("不能上传重复照片");
+        return;
+      }
+      await persist(next);
+      setPhotos(next);
+      setMessage(`第 ${index + 1} 张照片已替换`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "无法替换照片");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateSpecies(nextSpecies: PetSpecies) {
+    setSpecies(nextSpecies);
+    if (photos.some(Boolean)) {
+      await persist(photos, nextSpecies).catch(() => undefined);
+    }
+  }
+
+  function startMaking() {
+    if (!ready || busy) {
+      setMessage(photoSelectionMessage(photos));
+      return;
+    }
+    router.push("/projects/new");
+  }
+
+  return (
+    <div className="home-center">
+      <h1>Hey, I really miss you.</h1>
+      <p className="home-promise">把思念带回桌面</p>
+      <p className="home-automation-note">
+        无需编写复杂的动作提示词，无需在不同的 AI 视觉模型之间切换
+      </p>
+      <div className="species-switch" aria-label="选择宠物类型">
+        <button className={species === "dog" ? "active" : ""} onClick={() => void updateSpecies("dog")} type="button">狗狗</button>
+        <button className={species === "cat" ? "active" : ""} onClick={() => void updateSpecies("cat")} type="button">猫咪</button>
+      </div>
+      <section
+        className="home-upload"
+        aria-label="上传两张正面全身照和一至两张四十五度全身照并开始制作"
+      >
+        <div className={`home-upload-copy${count > 0 ? " has-photos" : ""}`}>
+          {count > 0 ? (
+            <span className="home-photo-thumbnails" aria-label={`已选择 ${count} 张照片`}>
+              {previews.map((preview, index) =>
+                preview ? (
+                  <span className="home-photo-thumbnail" key={PHOTO_SLOT_DEFINITIONS[index].id}>
+                    {/* Blob URLs intentionally use native images. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img alt={`已选择的宠物照片 ${index + 1}`} src={preview} />
+                    <b aria-hidden="true">{PHOTO_SLOT_DEFINITIONS[index].label}</b>
+                    <label className="home-photo-replace-control" title={`替换第 ${index + 1} 张照片`}>
+                      <input
+                        type="file"
+                        accept={PHOTO_ACCEPT_ATTRIBUTE}
+                        aria-label={`替换第 ${index + 1} 张照片`}
+                        disabled={busy}
+                        onChange={(event) => {
+                          void replacePhoto(index, event.target.files?.[0] ?? null);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    <button
+                      className="home-photo-remove"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void removePhoto(index)}
+                      aria-label={`删除第 ${index + 1} 张照片`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ) : null,
+              )}
+            </span>
+          ) : null}
+          <span className="home-upload-copy-text">
+            <strong>{count > 0 ? `已选择 ${count} 张照片` : "上传 2 张正面照 + 1~2 张 45° 照"}</strong>
+            <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面全身照必选，45° 全身照至少一张")}</small>
+            <span className="home-upload-slot-guide" aria-label="照片槽位要求">
+              {PHOTO_SLOT_DEFINITIONS.map((slot, index) => (
+                <i className={photos[index] ? "is-filled" : ""} key={slot.id}>
+                  {slot.label} · {slot.required ? "必选" : "可选"}
+                </i>
+              ))}
+            </span>
+          </span>
+        </div>
+        <div className="home-upload-controls">
+          <span className="home-upload-tools">
+            <input
+              ref={picker}
+              className="home-upload-file"
+              type="file"
+              accept={PHOTO_ACCEPT_ATTRIBUTE}
+              multiple
+              onChange={(event) => {
+                void addPhotos(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+            <button className="home-upload-icon" disabled={busy} onClick={() => picker.current?.click()} type="button" aria-label={count ? "继续添加宠物照片" : "选择宠物照片"}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" /></svg>
+              <span className="home-upload-count">{count === 4 ? "✓" : count || "3+"}</span>
+            </button>
+          </span>
+          <span className="home-upload-right">
+            <span className="home-models" aria-label="使用模型">
+              <span className="home-model-tag"><PawIcon kind="cat" />Seedream 5.0 Pro</span>
+              <span className="home-model-tag"><PawIcon kind="dog" />Seedance 2.0</span>
+            </span>
+            <button className="home-upload-action" aria-disabled={!ready || busy} onClick={startMaking} type="button">
+              <svg className="home-spark-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8c.8 4.7 2.5 6.4 7.2 7.2-4.7.8-6.4 2.5-7.2 7.2-.8-4.7-2.5-6.4-7.2-7.2 4.7-.8 6.4-2.5 7.2-7.2Z" /><path d="M19.1 15.4c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z" /></svg>
+              <span>开始制作</span>
+            </button>
+          </span>
+        </div>
+      </section>
+    </div>
+  );
+}
