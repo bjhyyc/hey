@@ -546,6 +546,218 @@ describe("pet media renderer", () => {
     expect(elements.video.requestVideoFrameCallback).toHaveBeenCalledTimes(2);
   });
 
+  it("notifies every plain video frame and ignores a superseded render callback", () => {
+    const callbacks = new Map();
+    let nextFrameId = 1;
+    const elements = createMediaElements();
+    elements.video.requestVideoFrameCallback = vi.fn((callback) => {
+      const id = nextFrameId++;
+      callbacks.set(id, callback);
+      return id;
+    });
+    elements.video.cancelVideoFrameCallback = vi.fn((id) => callbacks.delete(id));
+    const onFramePresented = vi.fn();
+    const renderer = createPetMediaRenderer({
+      ...elements,
+      onFramePresented,
+      logger: { debug: vi.fn(), warn: vi.fn() }
+    });
+
+    renderer.render("file:///pets/a.webm", { loop: true });
+    elements.video.onloadeddata();
+    const staleCallback = callbacks.get(1);
+
+    renderer.render("file:///pets/b.webm", { loop: true });
+    expect(elements.video.cancelVideoFrameCallback).toHaveBeenCalledWith(1);
+    staleCallback();
+    expect(onFramePresented).not.toHaveBeenCalled();
+
+    elements.video.onloadeddata();
+    callbacks.get(2)();
+    expect(onFramePresented).toHaveBeenCalledWith(expect.objectContaining({
+      asset: "file:///pets/b.webm",
+      kind: "video-frame"
+    }));
+    expect(elements.video.requestVideoFrameCallback).toHaveBeenCalledTimes(3);
+  });
+
+  it("notifies static image and ordinary GIF presentation after load", () => {
+    const elements = createMediaElements();
+    const onFramePresented = vi.fn();
+    const renderer = createPetMediaRenderer({
+      ...elements,
+      onFramePresented,
+      logger: { debug: vi.fn(), warn: vi.fn() }
+    });
+
+    renderer.render("file:///pets/idle.png", { state: "idle" });
+    elements.image.naturalWidth = 10;
+    elements.image.naturalHeight = 10;
+    elements.image.onload();
+    expect(onFramePresented).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "image" }));
+
+    renderer.render("file:///pets/wave.gif", { state: "wave" });
+    elements.image.onload();
+    expect(onFramePresented).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "gif-image" }));
+  });
+
+  it("notifies a plain keyframe video after its requested frame is presented", () => {
+    let videoFrameCallback;
+    const elements = createMediaElements();
+    elements.video.requestVideoFrameCallback = vi.fn((callback) => {
+      videoFrameCallback = callback;
+      return 31;
+    });
+    elements.video.cancelVideoFrameCallback = vi.fn();
+    const onFramePresented = vi.fn();
+    const renderer = createPetMediaRenderer({
+      ...elements,
+      onFramePresented,
+      logger: { debug: vi.fn(), warn: vi.fn() }
+    });
+
+    renderer.render("file:///pets/look.webm", { keyframe: true, progress: 0.5 });
+    elements.video.onloadeddata();
+    expect(onFramePresented).not.toHaveBeenCalled();
+    videoFrameCallback();
+    expect(onFramePresented).toHaveBeenCalledOnce();
+    expect(onFramePresented).toHaveBeenCalledWith(expect.objectContaining({ kind: "keyframe-video" }));
+  });
+
+  it("samples the maximum alpha from a 3 by 3 image neighborhood", () => {
+    const samplingPixels = new Uint8ClampedArray(3 * 3 * 4);
+    samplingPixels[4 * 4 + 3] = 173;
+    const samplingContext = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: samplingPixels }))
+    };
+    const samplingCanvas = { width: 0, height: 0, getContext: vi.fn(() => samplingContext) };
+    vi.stubGlobal("document", { createElement: vi.fn(() => samplingCanvas) });
+
+    const elements = createMediaElements();
+    elements.image.naturalWidth = 10;
+    elements.image.naturalHeight = 10;
+    const renderer = createPetMediaRenderer({
+      ...elements,
+      logger: { debug: vi.fn(), warn: vi.fn() }
+    });
+    renderer.render("file:///pets/idle.png");
+    elements.image.onload();
+
+    expect(renderer.sampleAlphaAt({ x: 5, y: 5 })).toBe(173);
+    expect(samplingContext.drawImage).toHaveBeenCalledWith(elements.image, 4, 4, 3, 3, 0, 0, 3, 3);
+    expect(renderer.sampleAlphaAt({ x: 10, y: 5 })).toBeNull();
+  });
+
+  it("samples green-screen effective alpha from the source video rather than WebGL output", () => {
+    let videoFrameCallback;
+    const elements = createMediaElements();
+    elements.video.videoWidth = 10;
+    elements.video.videoHeight = 10;
+    elements.video.requestVideoFrameCallback = vi.fn((callback) => {
+      videoFrameCallback = callback;
+      return 1;
+    });
+    elements.video.cancelVideoFrameCallback = vi.fn();
+
+    const greenPixels = new Uint8ClampedArray([0, 255, 0, 255]);
+    const greenContext = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: greenPixels })),
+      putImageData: vi.fn()
+    };
+    const greenCanvas = {
+      hidden: true,
+      width: 10,
+      height: 10,
+      getContext: vi.fn((type) => type === "2d" ? greenContext : null)
+    };
+    const samplePixels = new Uint8ClampedArray(3 * 3 * 4);
+    for (let index = 0; index < samplePixels.length; index += 4) {
+      samplePixels[index] = 0;
+      samplePixels[index + 1] = 255;
+      samplePixels[index + 2] = 0;
+      samplePixels[index + 3] = 255;
+    }
+    const samplingContext = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: samplePixels }))
+    };
+    vi.stubGlobal("document", {
+      createElement: vi.fn(() => ({ width: 0, height: 0, getContext: vi.fn(() => samplingContext) }))
+    });
+    const onFramePresented = vi.fn();
+    const renderer = createPetMediaRenderer({
+      ...elements,
+      greenCanvas,
+      onFramePresented,
+      logger: { debug: vi.fn(), warn: vi.fn() }
+    });
+
+    renderer.render("file:///pets/green.webm", {
+      loop: true,
+      greenScreen: { enabled: true, color: "#00ff00", tolerance: 0.05, softness: 0.05 }
+    });
+    elements.video.onloadeddata();
+    videoFrameCallback();
+
+    expect(renderer.sampleAlphaAt({ x: 5, y: 5 })).toBe(0);
+    expect(samplingContext.drawImage.mock.calls[0][0]).toBe(elements.video);
+    expect(samplingContext.drawImage.mock.calls[0][0]).not.toBe(greenCanvas);
+    expect(onFramePresented).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "green-screen-video-frame"
+    }));
+  });
+
+  it("returns null instead of throwing when alpha readback fails", () => {
+    const samplingContext = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => {
+        throw new DOMException("canvas is tainted", "SecurityError");
+      })
+    };
+    vi.stubGlobal("document", {
+      createElement: vi.fn(() => ({ width: 0, height: 0, getContext: vi.fn(() => samplingContext) }))
+    });
+    const elements = createMediaElements();
+    elements.image.naturalWidth = 10;
+    elements.image.naturalHeight = 10;
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    const renderer = createPetMediaRenderer({ ...elements, logger });
+    renderer.render("file:///pets/idle.png");
+    elements.image.onload();
+
+    expect(() => renderer.sampleAlphaAt({ x: 5, y: 5 })).not.toThrow();
+    expect(renderer.sampleAlphaAt({ x: 5, y: 5 })).toBeNull();
+    expect(logger.debug).toHaveBeenCalledWith("media alpha sample failed", expect.any(Object));
+  });
+
+  it("cancels frame notification callbacks and detaches media handlers on destroy", () => {
+    const elements = createMediaElements();
+    elements.video.requestVideoFrameCallback = vi.fn(() => 77);
+    elements.video.cancelVideoFrameCallback = vi.fn();
+    const renderer = createPetMediaRenderer({
+      ...elements,
+      onFramePresented: vi.fn(),
+      logger: { debug: vi.fn(), warn: vi.fn() }
+    });
+    renderer.render("file:///pets/wave.webm", { loop: true });
+    elements.video.onloadeddata();
+    renderer.destroy();
+
+    expect(elements.video.cancelVideoFrameCallback).toHaveBeenCalledWith(77);
+    expect(elements.video.onloadeddata).toBeNull();
+    expect(elements.video.onloadedmetadata).toBeNull();
+    expect(elements.video.onseeked).toBeNull();
+    expect(elements.video.onerror).toBeNull();
+    expect(elements.image.onload).toBeNull();
+    expect(elements.image.onerror).toBeNull();
+  });
+
   it("keeps the green-screen canvas visible until an uncached keyframe GIF has drawn its first frame", async () => {
     let resolveBuffer;
     const bufferPromise = new Promise((resolve) => {
@@ -587,9 +799,11 @@ describe("pet media renderer", () => {
       getContext: vi.fn()
     };
     elements.image.hidden = true;
+    const onFramePresented = vi.fn();
     const renderer = createPetMediaRenderer({
       ...elements,
       greenCanvas,
+      onFramePresented,
       logger: { debug: vi.fn(), warn: vi.fn() }
     });
 
@@ -608,6 +822,7 @@ describe("pet media renderer", () => {
 
     expect(elements.canvas.hidden).toBe(false);
     expect(greenCanvas.hidden).toBe(true);
+    expect(onFramePresented).toHaveBeenCalledWith(expect.objectContaining({ kind: "keyframe-gif" }));
   });
 
   it("retains the previous surface when keyframe GIF decoding fails", async () => {

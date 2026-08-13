@@ -22,10 +22,18 @@ import { createDebugLogger, setDebugRulesEnabled } from "./debug-utils.js";
 import {
   applyPetHiddenState,
   isPointInsideRect,
-  resolveMousePassthroughForPointer,
   shouldDispatchHiddenMouseLeave,
   shouldSkipRuntimeEventWhileHidden
 } from "./pet-visibility.js";
+import {
+  PIXEL_HIT_OPAQUE,
+  PIXEL_HIT_TRANSPARENT,
+  createAlphaHitState,
+  getObjectContainRect,
+  mapPointToObjectContain,
+  resolvePixelMousePassthrough,
+  updateAlphaHitState
+} from "./pixel-hit-test.js";
 import {
   LIFECYCLE_EVENT_TYPES,
   shouldSuppressRuntimeEventDuringDrag
@@ -56,6 +64,7 @@ const mediaRenderer = createPetMediaRenderer({
   canvas: spriteCanvas,
   greenCanvas: spriteGreenCanvas,
   greenScreenBackendPreference: "webgl",
+  onFramePresented: () => refreshPixelMouseInteraction("media-frame"),
   logger
 });
 
@@ -96,6 +105,11 @@ let dragStartedAt = 0;
 let dragStartPosition = null;
 let lastMouseMoveContext = null;
 let lastGlobalMouseMoveContext = null;
+let lastPixelPointer = null;
+let pixelAlphaHitState = createAlphaHitState();
+let pointerHitsOpaquePixel = false;
+let pixelConfirmationFrame = 0;
+let activePointerId = null;
 let hoverStartedAt = 0;
 let idleStartedAt = Date.now();
 const hoverDurationLatch = createOneShotEventLatch();
@@ -124,7 +138,7 @@ const PUSH_THROTTLE_MS = 500;
 const debugRulesLog = createDebugLogger("[desktop-pet:pet]", {
   throttleMsByMessage: {
     "global-mouse": 500,
-    "mouse-passthrough:pointer": 500,
+    "mouse-passthrough:pixel": 500,
     "event:evaluate": 500,
     "event:actions": 500
   }
@@ -427,8 +441,65 @@ function setSpriteMousePassthrough(enabled) {
   if (spriteMousePassthrough === nextEnabled) return;
   spriteMousePassthrough = nextEnabled;
   if (window.desktopPet && window.desktopPet.pet && window.desktopPet.pet.setMousePassthrough) {
-    window.desktopPet.pet.setMousePassthrough(nextEnabled);
+    const operation = window.desktopPet.pet.setMousePassthrough(nextEnabled);
+    if (operation && typeof operation.catch === "function") {
+      operation.catch((error) => {
+        if (spriteMousePassthrough === nextEnabled) spriteMousePassthrough = null;
+        logger.warn("mouse passthrough update failed", {
+          enabled: nextEnabled,
+          error: error && error.message ? error.message : String(error)
+        });
+      });
+    }
   }
+}
+
+function syncHoverDurationWithPixelHit(isOpaquePixel, reason, { resetLatch = false } = {}) {
+  const nextOpaquePixel = Boolean(isOpaquePixel);
+  const pixelChanged = pointerHitsOpaquePixel !== nextOpaquePixel;
+  pointerHitsOpaquePixel = nextOpaquePixel;
+  const shouldTrackHover = nextOpaquePixel &&
+    !petHidden &&
+    !interactionsPaused &&
+    activePointerId === null &&
+    !dragStartedAt &&
+    !Boolean(currentDisplay.mousePassthrough) &&
+    (!animationController || animationController.getCurrentState() === "default");
+
+  if (shouldTrackHover && !hoverStartedAt) {
+    hoverStartedAt = Date.now();
+    debugRulesLog("hover:pixel-start", { reason });
+    return;
+  }
+
+  if (!shouldTrackHover && (hoverStartedAt || pixelChanged)) {
+    hoverStartedAt = 0;
+    if (resetLatch) hoverDurationLatch.reset();
+    debugRulesLog("hover:pixel-stop", { reason });
+  }
+}
+
+function cancelPixelConfirmation() {
+  if (!pixelConfirmationFrame) return;
+  if (typeof window.cancelAnimationFrame === "function") {
+    window.cancelAnimationFrame(pixelConfirmationFrame);
+  }
+  pixelConfirmationFrame = 0;
+}
+
+function invalidatePixelHit(reason) {
+  cancelPixelConfirmation();
+  pixelAlphaHitState = createAlphaHitState();
+  syncHoverDurationWithPixelHit(false, reason, { resetLatch: false });
+  setSpriteMousePassthrough(Boolean(petHidden || currentDisplay.mousePassthrough));
+}
+
+function schedulePixelConfirmation() {
+  if (pixelConfirmationFrame || typeof window.requestAnimationFrame !== "function") return;
+  pixelConfirmationFrame = window.requestAnimationFrame(() => {
+    pixelConfirmationFrame = 0;
+    refreshPixelMouseInteraction("alpha-confirmation");
+  });
 }
 
 function setPetHidden(hidden, options = {}) {
@@ -445,6 +516,7 @@ function setPetHidden(hidden, options = {}) {
   petHidden = result.hidden;
   hiddenPetBounds = result.hidden ? hiddenBounds : null;
   hiddenMouseLeaveDispatched = false;
+  refreshPixelMouseInteraction(result.hidden ? "hidden" : "shown");
   return result;
 }
 
@@ -525,37 +597,24 @@ function getMediaIntrinsicSize(element) {
 }
 
 function getRenderedMediaScreenRect() {
+  const geometry = getVisibleMediaGeometry();
+  return geometry ? geometry.contentRect : null;
+}
+
+function getVisibleMediaGeometry() {
   const element = getVisibleMediaElement();
   if (!element || typeof element.getBoundingClientRect !== "function") return null;
 
   const rect = element.getBoundingClientRect();
   const intrinsic = getMediaIntrinsicSize(element);
-  let contentWidth = rect.width;
-  let contentHeight = rect.height;
-  let contentLeft = rect.left;
-  let contentTop = rect.top;
-
-  if (intrinsic && intrinsic.width > 0 && intrinsic.height > 0 && rect.width > 0 && rect.height > 0) {
-    const mediaRatio = intrinsic.width / intrinsic.height;
-    const rectRatio = rect.width / rect.height;
-
-    if (mediaRatio > rectRatio) {
-      contentWidth = rect.width;
-      contentHeight = rect.width / mediaRatio;
-      contentTop = rect.top + (rect.height - contentHeight) / 2;
-    } else {
-      contentHeight = rect.height;
-      contentWidth = rect.height * mediaRatio;
-      contentLeft = rect.left + (rect.width - contentWidth) / 2;
-    }
-  }
-
-  return {
-    x: window.screenX + contentLeft,
-    y: window.screenY + contentTop,
-    width: contentWidth,
-    height: contentHeight
+  const elementRect = {
+    x: window.screenX + rect.left,
+    y: window.screenY + rect.top,
+    width: rect.width,
+    height: rect.height
   };
+  const contentRect = getObjectContainRect(elementRect, intrinsic) || elementRect;
+  return { element, elementRect, intrinsic, contentRect };
 }
 
 function getDistanceToRect(point, rect) {
@@ -565,22 +624,91 @@ function getDistanceToRect(point, rect) {
   return Math.hypot(point.x - nearestX, point.y - nearestY);
 }
 
-function updateMousePassthroughForPointer(context) {
-  const pointer = context && (context.screenPosition || context.mousePosition);
-  const mousePassthrough = resolveMousePassthroughForPointer({
+function refreshPixelMouseInteraction(reason, context = lastGlobalMouseMoveContext) {
+  const contextPointer = context && (context.screenPosition || context.mousePosition);
+  if (
+    contextPointer &&
+    Number.isFinite(Number(contextPointer.x)) &&
+    Number.isFinite(Number(contextPointer.y))
+  ) {
+    lastPixelPointer = { x: Number(contextPointer.x), y: Number(contextPointer.y) };
+  }
+  const pointer = lastPixelPointer;
+  const geometry = getVisibleMediaGeometry();
+  const mapping = geometry && pointer && geometry.intrinsic
+    ? mapPointToObjectContain({
+      point: pointer,
+      elementRect: geometry.elementRect,
+      intrinsicSize: geometry.intrinsic
+    })
+    : geometry && pointer
+      ? { status: isPointInsideRect(pointer, geometry.contentRect) ? "inside-unknown" : "outside" }
+      : { status: "outside" };
+  const pointerInsideContent = mapping.status === "mapped"
+    ? true
+    : mapping.status === "inside-unknown"
+      ? true
+    : mapping.status === "outside"
+      ? false
+      : undefined;
+
+  let sampledAlpha = null;
+  if (
+    pointerInsideContent === true &&
+    !petHidden &&
+    !currentDisplay.mousePassthrough &&
+    activePointerId === null &&
+    !dragStartedAt
+  ) {
+    sampledAlpha = mediaRenderer.sampleAlphaAt({ x: mapping.sourceX, y: mapping.sourceY });
+    pixelAlphaHitState = updateAlphaHitState(pixelAlphaHitState, sampledAlpha);
+  } else if (pointerInsideContent !== true || petHidden || currentDisplay.mousePassthrough) {
+    pixelAlphaHitState = createAlphaHitState();
+  }
+
+  const decision = resolvePixelMousePassthrough({
     hidden: petHidden,
-    display: currentDisplay,
-    pointer,
-    rect: getRenderedMediaScreenRect()
+    forcePassthrough: Boolean(currentDisplay.mousePassthrough),
+    dragging: activePointerId !== null || Boolean(dragStartedAt),
+    pointerInsideContent,
+    alphaState: pixelAlphaHitState
   });
-  debugRulesLog("mouse-passthrough:pointer", {
+  const hitsOpaquePixel = Number.isFinite(sampledAlpha) &&
+    pointerInsideContent === true &&
+    pixelAlphaHitState.classification === PIXEL_HIT_OPAQUE;
+  const resetHoverLatch = !hitsOpaquePixel && (
+    petHidden ||
+    currentDisplay.mousePassthrough ||
+    activePointerId !== null ||
+    pointerInsideContent === false ||
+    pixelAlphaHitState.classification === PIXEL_HIT_TRANSPARENT ||
+    reason === "mouse-leave" ||
+    reason === "interactions-paused"
+  );
+  syncHoverDurationWithPixelHit(hitsOpaquePixel, reason, { resetLatch: resetHoverLatch });
+  debugRulesLog("mouse-passthrough:pixel", {
+    reason,
     eventType: context && context.type,
     eventSource: context && context.eventSource,
     hidden: petHidden,
     configuredMousePassthrough: Boolean(currentDisplay.mousePassthrough),
-    mousePassthrough
+    mappingStatus: mapping.status,
+    sampleKnown: Number.isFinite(sampledAlpha),
+    classification: pixelAlphaHitState.classification,
+    mousePassthrough: decision.mousePassthrough,
+    decisionReason: decision.reason
   });
-  setSpriteMousePassthrough(mousePassthrough);
+  setSpriteMousePassthrough(decision.mousePassthrough);
+  if (
+    Number.isFinite(sampledAlpha) &&
+    pixelAlphaHitState.transparentFrames > 0 &&
+    pixelAlphaHitState.classification !== PIXEL_HIT_TRANSPARENT
+  ) {
+    schedulePixelConfirmation();
+  } else {
+    cancelPixelConfirmation();
+  }
+  return decision;
 }
 
 function applyDisplay(display = {}) {
@@ -605,10 +733,9 @@ function applyDisplay(display = {}) {
     messageBubbleGap: Math.round(10 * scale),
     opacity: currentDisplay.opacity || 1
   });
-  if (currentDisplay.mousePassthrough) {
-    setSpriteMousePassthrough(true);
-  } else if (petHidden) {
-    setSpriteMousePassthrough(true);
+  refreshPixelMouseInteraction("display-change");
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => refreshPixelMouseInteraction("display-layout"));
   }
 
   pushRuntimeState();
@@ -782,19 +909,15 @@ function markInteraction() {
 function resetDurationSessions({ resumeHover = false, reason = "runtime-update" } = {}) {
   idleStartedAt = Date.now();
   idleDurationLatch.reset();
-
-  const pointerInsidePet = Boolean(
-    resumeHover &&
-    !petHidden &&
-    lastGlobalMouseMoveContext &&
-    lastGlobalMouseMoveContext.isInsidePet
-  );
-  hoverStartedAt = pointerInsidePet ? Date.now() : 0;
+  hoverStartedAt = 0;
   hoverDurationLatch.reset();
   debugRulesLog("duration-event:sessions-reset", {
     reason,
-    hoverResumed: pointerInsidePet
+    hoverResumed: false
   });
+  if (resumeHover && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => refreshPixelMouseInteraction(`${reason}:hover-resume`));
+  }
 }
 
 function pauseHoverForDrag(eventContext = {}) {
@@ -811,16 +934,15 @@ function pauseHoverForDrag(eventContext = {}) {
 
 function resumeHoverAfterDrag(event) {
   const context = getPointerContext("hoverDuration", event);
-  if (!context.isInsidePet || petHidden) {
+  refreshPixelMouseInteraction("drag-resume", context);
+  if (!pointerHitsOpaquePixel || petHidden) {
     debugRulesLog("hover:resume-skipped", {
-      isInsidePet: context.isInsidePet,
+      pointerHitsOpaquePixel,
       petHidden
     });
     return;
   }
 
-  hoverStartedAt = Date.now();
-  hoverDurationLatch.reset();
   debugRulesLog("hover:resumed-after-drag", {
     screenPosition: context.screenPosition
   });
@@ -859,16 +981,24 @@ function scheduleRuntimeEvents() {
         debugRulesLog("hover:paused");
       } else if (
         hoverStartedAt &&
+        pointerHitsOpaquePixel &&
         !dragStartedAt &&
         animationController &&
         animationController.getCurrentState() === "default"
       ) {
         const now = Date.now();
+        const pointer = lastPixelPointer;
+        const mediaBounds = getRenderedMediaScreenRect();
+        const baseContext = lastGlobalMouseMoveContext || {};
         const fired = hoverDurationLatch.run(() => evaluateRuntimeEvent({
-          ...getPointerContext("hoverDuration"),
+          ...baseContext,
+          type: "hoverDuration",
           timestamp: now,
           eventSource: "timer",
           elapsedMs: now - hoverStartedAt,
+          petPosition: mediaBounds || baseContext.petPosition,
+          screenPosition: pointer || baseContext.screenPosition,
+          mousePosition: pointer || baseContext.mousePosition,
           isInsidePet: true
         }));
         if (fired) {
@@ -1117,6 +1247,7 @@ function initializeAnimationController() {
     animationConfig,
     {
       renderClip: (asset, options) => {
+        invalidatePixelHit("clip-render");
         mediaRenderer.render(asset, {
           state: options.clipId || "playing",
           loop: Boolean(options.loop),
@@ -1457,9 +1588,30 @@ function handlePointerDown(event) {
   if (interactionsPaused || currentDisplay.locked) {
     return;
   }
+  if (event.button !== 0) return;
 
   cancelMovePetAnimation();
+  activePointerId = event.pointerId;
+  syncHoverDurationWithPixelHit(false, "pointer-down");
+  refreshPixelMouseInteraction("pointer-down", getPointerContext("pointerDown", event));
   petController.startDrag(event);
+}
+
+function finishPointerInteraction(event, method) {
+  const pointerId = event && event.pointerId;
+  method(event);
+  if (activePointerId === pointerId) {
+    activePointerId = null;
+    refreshPixelMouseInteraction("pointer-finished", getPointerContext("pointerFinished", event));
+  }
+}
+
+function handleLostPointerCapture(event) {
+  petController.lostPointerCapture(event);
+  if (activePointerId === null || !event || activePointerId === event.pointerId) {
+    activePointerId = null;
+    refreshPixelMouseInteraction("pointer-capture-lost");
+  }
 }
 
 function handlePetClick(event) {
@@ -1527,6 +1679,7 @@ const petController = createPetController({
       animClip: animationController && animationController.getCurrentClip() && animationController.getCurrentClip().id
     });
     pauseHoverForDrag(context);
+    refreshPixelMouseInteraction("drag-start", context);
     return evaluateRuntimeEvent(context);
   },
   onDragging: (event) => {
@@ -1561,9 +1714,9 @@ const petController = createPetController({
 
 sprite.addEventListener("pointerdown", handlePointerDown);
 sprite.addEventListener("pointermove", petController.continueDrag);
-sprite.addEventListener("pointerup", petController.endDrag);
-sprite.addEventListener("pointercancel", petController.endDrag);
-sprite.addEventListener("lostpointercapture", petController.lostPointerCapture);
+sprite.addEventListener("pointerup", (event) => finishPointerInteraction(event, petController.endDrag));
+sprite.addEventListener("pointercancel", (event) => finishPointerInteraction(event, petController.endDrag));
+sprite.addEventListener("lostpointercapture", handleLostPointerCapture);
 
 sprite.addEventListener("click", handlePetClick);
 sprite.addEventListener("dblclick", (event) => {
@@ -1581,22 +1734,32 @@ sprite.addEventListener("mouseenter", (event) => {
     debugRulesLog("event:suppressed-hidden-enter");
     return;
   }
-  markInteraction();
   if (interactionsPaused) {
     hoverStartedAt = 0;
     debugRulesLog("event:suppressed-paused-enter");
     return;
   }
-  hoverStartedAt = Date.now();
-  hoverDurationLatch.reset();
   const context = getPointerContext("mouseEnter", event);
+  refreshPixelMouseInteraction("mouse-enter", context);
+  if (!pointerHitsOpaquePixel) return;
+  markInteraction();
   evaluateRuntimeEvent(context);
 });
 sprite.addEventListener("mouseleave", (event) => {
-  markInteraction();
-  hoverStartedAt = 0;
-  hoverDurationLatch.reset();
+  const wasOpaque = pointerHitsOpaquePixel;
   const context = getPointerContext("mouseLeave", event);
+  const pointer = context.screenPosition || context.mousePosition;
+  if (pointer) lastPixelPointer = { x: pointer.x, y: pointer.y };
+  cancelPixelConfirmation();
+  pixelAlphaHitState = createAlphaHitState();
+  syncHoverDurationWithPixelHit(false, "mouse-leave", { resetLatch: true });
+  setSpriteMousePassthrough(resolvePixelMousePassthrough({
+    hidden: petHidden,
+    forcePassthrough: Boolean(currentDisplay.mousePassthrough),
+    dragging: activePointerId !== null || Boolean(dragStartedAt),
+    pointerInsideContent: false,
+    alphaState: pixelAlphaHitState
+  }).mousePassthrough);
   if (interactionsPaused) {
     debugRulesLog("event:suppressed-paused-leave");
     return;
@@ -1608,14 +1771,18 @@ sprite.addEventListener("mouseleave", (event) => {
     });
     return;
   }
+  if (!wasOpaque) return;
+  markInteraction();
   evaluateRuntimeEvent(context);
 });
 
 // Throttle mousemove to 100ms to avoid excessive event processing
 const throttledMouseMove = throttle((event) => {
   if (!interactionsPaused) {
-    markInteraction();
     const context = getMouseMoveContext(event);
+    refreshPixelMouseInteraction("local-mouse-move", context);
+    if (!pointerHitsOpaquePixel) return;
+    markInteraction();
     evaluateRuntimeEvent(context);
   }
 }, 100);
@@ -1648,17 +1815,24 @@ if (window.desktopPet && window.desktopPet.pet) {
   window.desktopPet.pet.onInteractionsPaused((enabled) => {
     interactionsPaused = enabled;
     if (interactionsPaused) {
-      hoverStartedAt = 0;
-      hoverDurationLatch.reset();
+      syncHoverDurationWithPixelHit(false, "interactions-paused", { resetLatch: true });
       debugRulesLog("interactions:paused", { hoverStartedAt });
     } else {
       resetDurationSessions({ resumeHover: true, reason: "interactions-resumed" });
+      refreshPixelMouseInteraction("interactions-resumed");
       debugRulesLog("interactions:resumed");
     }
   });
   window.desktopPet.pet.onGlobalMouseMove((context) => {
     lastGlobalMouseMoveContext = context;
-    scheduleMouseStillEvents(context);
+    refreshPixelMouseInteraction("global-pointer", context);
+    if (context && context.pointerMoved !== false) {
+      if (pointerHitsOpaquePixel) {
+        scheduleMouseStillEvents(context);
+      } else {
+        clearMouseStillTimers();
+      }
+    }
     debugRulesLog("global-mouse", {
       distanceToPetCenter: context && context.distanceToPetCenter,
       distanceToPetBounds: context && context.distanceToPetBounds,
@@ -1666,7 +1840,14 @@ if (window.desktopPet && window.desktopPet.pet) {
       isInsidePet: context && context.isInsidePet,
       mousePosition: context && context.mousePosition
     });
-    updateMousePassthroughForPointer(context);
+    if (context && context.pointerMoved === false) {
+      handleHiddenGlobalMouseLeave(context);
+      debugRulesLog("global-mouse:bounds-only", {
+        boundsChanged: context.boundsChanged,
+        isInsidePet: context.isInsidePet
+      });
+      return;
+    }
     if (interactionsPaused) {
       debugRulesLog("global-mouse:paused");
       return;
@@ -1679,7 +1860,9 @@ if (window.desktopPet && window.desktopPet.pet) {
       });
       return;
     }
-    evaluateRuntimeEvent(context);
+    if (pointerHitsOpaquePixel || Boolean(context && context.isInsidePet === false)) {
+      evaluateRuntimeEvent(context);
+    }
   });
 }
 

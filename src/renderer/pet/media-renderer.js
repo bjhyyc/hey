@@ -1,4 +1,5 @@
 import { createGreenScreenRenderer } from "./green-screen-renderer.js";
+import { getEffectiveGreenScreenAlpha } from "./pixel-hit-test.js";
 
 const VIDEO_ASSET_EXTENSIONS = new Set([".webm", ".mp4", ".mov"]);
 const GIF_ASSET_EXTENSION = ".gif";
@@ -32,6 +33,8 @@ export function isGifAsset(asset) {
 
 function clearImage(image) {
   if (!image) return;
+  image.onload = null;
+  image.onerror = null;
   if (typeof image.removeAttribute === "function") {
     image.removeAttribute("src");
   } else {
@@ -45,6 +48,7 @@ function stopVideo(video) {
   video.onloadedmetadata = null;
   video.onloadeddata = null;
   video.onseeked = null;
+  video.onerror = null;
   if (typeof video.removeAttribute === "function") {
     video.removeAttribute("src");
   } else {
@@ -285,6 +289,27 @@ function drawGifProgress(canvas, decodedGif, progress) {
   return true;
 }
 
+function getMediaSourceSize(source) {
+  if (!source) return null;
+  const width = Math.round(Number(source.videoWidth || source.naturalWidth || source.width) || 0);
+  const height = Math.round(Number(source.videoHeight || source.naturalHeight || source.height) || 0);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function createSamplingSurface() {
+  try {
+    if (typeof document !== "undefined" && typeof document.createElement === "function") {
+      return document.createElement("canvas");
+    }
+    if (typeof globalThis.OffscreenCanvas === "function") {
+      return new globalThis.OffscreenCanvas(3, 3);
+    }
+  } catch (_error) {
+    // Sampling is optional; callers use a safe interactive fallback on null.
+  }
+  return null;
+}
+
 export function createPetMediaRenderer({
   container,
   image,
@@ -292,6 +317,7 @@ export function createPetMediaRenderer({
   canvas,
   greenCanvas,
   greenScreenBackendPreference = "adaptive",
+  onFramePresented,
   logger = console
 } = {}) {
   // A canvas is permanently locked to the first context type it hands out. The
@@ -308,6 +334,114 @@ export function createPetMediaRenderer({
   let greenScreenToken = 0;
   let activeGreenScreen = null;
   let greenScreenRenderer = null;
+  let plainVideoFrameHandle = null;
+  let activeSampleSurface = null;
+  let samplingCanvas = null;
+  let samplingContext = null;
+
+  function notifyFramePresented(token, kind) {
+    if (token !== renderToken || typeof onFramePresented !== "function") return false;
+    try {
+      onFramePresented({
+        asset: (container && container.dataset && container.dataset.asset) || "",
+        kind,
+        renderToken: token
+      });
+      return true;
+    } catch (error) {
+      logger.warn("media frame callback failed", {
+        kind,
+        error: error && error.message ? error.message : String(error)
+      });
+      return false;
+    }
+  }
+
+  function stopPlainVideoFrameNotifications() {
+    cancelVideoFrame(video, plainVideoFrameHandle);
+    plainVideoFrameHandle = null;
+  }
+
+  function schedulePlainVideoFrameNotification(token, { continuous = false } = {}) {
+    if (token !== renderToken || typeof onFramePresented !== "function" || !video) return;
+    if (plainVideoFrameHandle) return;
+    plainVideoFrameHandle = requestVideoFrame(video, () => {
+      plainVideoFrameHandle = null;
+      if (token !== renderToken) return;
+      notifyFramePresented(token, continuous ? "video-frame" : "keyframe-video");
+      if (continuous && token === renderToken && activeSampleSurface?.element === video) {
+        schedulePlainVideoFrameNotification(token, { continuous: true });
+      }
+    });
+  }
+
+  function setActiveSampleSurface(element, greenScreen = null) {
+    activeSampleSurface = element ? { element, greenScreen } : null;
+  }
+
+  function getSamplingContext() {
+    if (samplingContext) return samplingContext;
+    if (!samplingCanvas) samplingCanvas = createSamplingSurface();
+    if (!samplingCanvas || typeof samplingCanvas.getContext !== "function") return null;
+    try {
+      samplingContext = samplingCanvas.getContext("2d", { willReadFrequently: true });
+    } catch (_error) {
+      samplingContext = null;
+    }
+    return samplingContext;
+  }
+
+  function sampleAlphaAt(point) {
+    try {
+      const source = activeSampleSurface && activeSampleSurface.element;
+      const size = getMediaSourceSize(source);
+      const x = Number(point && point.x);
+      const y = Number(point && point.y);
+      if (!source || !size || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      if (x < 0 || y < 0 || x >= size.width || y >= size.height) return null;
+
+      const context = getSamplingContext();
+      if (!context || typeof context.drawImage !== "function" || typeof context.getImageData !== "function") {
+        return null;
+      }
+
+      const pixelX = Math.floor(x);
+      const pixelY = Math.floor(y);
+      const sourceX = Math.max(0, pixelX - 1);
+      const sourceY = Math.max(0, pixelY - 1);
+      const sourceRight = Math.min(size.width, pixelX + 2);
+      const sourceBottom = Math.min(size.height, pixelY + 2);
+      const width = sourceRight - sourceX;
+      const height = sourceBottom - sourceY;
+      if (width <= 0 || height <= 0) return null;
+
+      if (samplingCanvas.width !== 3) samplingCanvas.width = 3;
+      if (samplingCanvas.height !== 3) samplingCanvas.height = 3;
+      if (typeof context.clearRect === "function") context.clearRect(0, 0, 3, 3);
+      context.drawImage(source, sourceX, sourceY, width, height, 0, 0, width, height);
+      const pixels = context.getImageData(0, 0, width, height)?.data;
+      if (!pixels || pixels.length < width * height * 4) return null;
+
+      let maximumAlpha = 0;
+      for (let index = 0; index < width * height * 4; index += 4) {
+        const alpha = activeSampleSurface.greenScreen
+          ? getEffectiveGreenScreenAlpha({
+            r: pixels[index],
+            g: pixels[index + 1],
+            b: pixels[index + 2],
+            a: pixels[index + 3]
+          }, activeSampleSurface.greenScreen)
+          : pixels[index + 3];
+        maximumAlpha = Math.max(maximumAlpha, Number(alpha) || 0);
+      }
+      return maximumAlpha;
+    } catch (error) {
+      logger.debug("media alpha sample failed", {
+        error: error && error.message ? error.message : String(error)
+      });
+      return null;
+    }
+  }
 
   // Hide whichever canvas the green-screen renderer is NOT using, so the two
   // canvases never show stale frames at the same time.
@@ -341,6 +475,7 @@ export function createPetMediaRenderer({
       heldCanvas.hidden = false;
       hideOtherCanvas(heldCanvas);
       video.hidden = true;
+      setActiveSampleSurface(heldCanvas);
       logger.debug("video transition frame held", {
         reason,
         asset: (container && container.dataset && container.dataset.asset) || video.src || "",
@@ -356,8 +491,9 @@ export function createPetMediaRenderer({
     }
   }
 
-  function renderPlainVideo(asset, { loop = false, keyframe = false, progress = 0 } = {}) {
+  function renderPlainVideo(asset, { loop = false, keyframe = false, progress = 0 } = {}, token = renderToken) {
     stopGreenScreenRendering();
+    stopPlainVideoFrameNotifications();
     if (video) {
       const assetChanged = video.src !== asset;
       if (assetChanged) {
@@ -368,14 +504,17 @@ export function createPetMediaRenderer({
       video.loop = keyframe ? false : Boolean(loop);
       video.onseeked = null;
       video.onerror = () => {
+        if (token !== renderToken) return;
         logger.warn("video load error", { asset });
         clearCanvas(canvas);
         if (greenScreenCanvas !== canvas) greenScreenCanvas.hidden = true;
         clearImage(image);
         if (image) image.hidden = true;
         video.hidden = true;
+        setActiveSampleSurface(null);
       };
       const showVideo = () => {
+        if (token !== renderToken) return;
         if (!hasRenderableVideoFrame(video)) {
           logger.debug("video not yet renderable", { asset, readyState: Number(video.readyState) });
           return;
@@ -385,11 +524,14 @@ export function createPetMediaRenderer({
         clearImage(image);
         if (image) image.hidden = true;
         video.hidden = false;
+        setActiveSampleSurface(video);
         if (keyframe) {
           if (typeof video.pause === "function") video.pause();
           setVideoProgress(video, progress);
+          schedulePlainVideoFrameNotification(token);
         } else {
           playVideo(video);
+          schedulePlainVideoFrameNotification(token, { continuous: true });
         }
       };
       video.onloadedmetadata = keyframe ? () => setVideoProgress(video, progress) : null;
@@ -409,10 +551,10 @@ export function createPetMediaRenderer({
     return keyframe ? "keyframe-video" : "video";
   }
 
-  function renderGreenScreenVideo(asset, options = {}, greenScreen) {
+  function renderGreenScreenVideo(asset, options = {}, greenScreen, renderGeneration = renderToken) {
     const normalizedGreenScreen = normalizeGreenScreenConfig(greenScreen);
     if (!normalizedGreenScreen) {
-      return renderPlainVideo(asset, options);
+      return renderPlainVideo(asset, options, renderGeneration);
     }
     if (!greenScreenRenderer) {
       greenScreenRenderer = createGreenScreenRenderer({
@@ -428,10 +570,11 @@ export function createPetMediaRenderer({
         hasCanvas: Boolean(greenScreenCanvas),
         hasRenderer: Boolean(greenScreenRenderer)
       });
-      return renderPlainVideo(asset, options);
+      return renderPlainVideo(asset, options, renderGeneration);
     }
 
     stopGreenScreenRendering();
+    stopPlainVideoFrameNotifications();
 
     const token = ++greenScreenToken;
     activeGreenScreen = {
@@ -447,6 +590,7 @@ export function createPetMediaRenderer({
     video.playsInline = true;
     video.loop = options.keyframe ? false : Boolean(options.loop);
     video.onerror = () => {
+      if (renderGeneration !== renderToken) return;
       logger.warn("green screen video load error", { asset });
       stopGreenScreenRendering({ clear: true });
       clearCanvas(canvas);
@@ -454,6 +598,7 @@ export function createPetMediaRenderer({
       clearImage(image);
       if (image) image.hidden = true;
       video.hidden = true;
+      setActiveSampleSurface(null);
     };
     if (assetChanged) {
       video.src = asset;
@@ -461,7 +606,7 @@ export function createPetMediaRenderer({
     }
 
     const draw = () => {
-      if (token !== greenScreenToken) return;
+      if (token !== greenScreenToken || renderGeneration !== renderToken) return;
       if (!hasRenderableVideoFrame(video)) return;
       try {
         greenScreenRenderer.draw(video, normalizedGreenScreen);
@@ -470,29 +615,31 @@ export function createPetMediaRenderer({
         video.hidden = true;
         greenScreenCanvas.hidden = false;
         hideOtherCanvas(greenScreenCanvas);
+        setActiveSampleSurface(video, normalizedGreenScreen);
+        notifyFramePresented(renderGeneration, options.keyframe ? "green-screen-keyframe-video" : "green-screen-video-frame");
       } catch (error) {
         logger.warn("green screen fallback: frame processing failed", {
           asset,
           color: normalizedGreenScreen.color.hex,
           error: error && error.message ? error.message : String(error)
         });
-        renderPlainVideo(asset, options);
+        renderPlainVideo(asset, options, renderGeneration);
       }
     };
 
     const scheduleDraw = (continuous) => {
-      if (token !== greenScreenToken || !activeGreenScreen) return;
+      if (token !== greenScreenToken || renderGeneration !== renderToken || !activeGreenScreen) return;
       greenScreenFrameHandle = requestVideoFrame(video, () => {
         greenScreenFrameHandle = null;
         draw();
-        if (continuous && token === greenScreenToken && activeGreenScreen && !activeGreenScreen.keyframe) {
+        if (continuous && token === greenScreenToken && renderGeneration === renderToken && activeGreenScreen && !activeGreenScreen.keyframe) {
           scheduleDraw(true);
         }
       });
     };
 
     const startDrawing = () => {
-      if (token !== greenScreenToken) return;
+      if (token !== greenScreenToken || renderGeneration !== renderToken) return;
       if (!hasRenderableVideoFrame(video)) {
         logger.debug("green screen video not yet renderable", { asset, readyState: Number(video.readyState) });
         return;
@@ -537,13 +684,14 @@ export function createPetMediaRenderer({
   return {
     render(asset, { state = "", loop = false, keyframe = false, progress = 0, greenScreen = null } = {}) {
       const token = ++renderToken;
+      stopPlainVideoFrameNotifications();
       if (container && container.dataset) {
         container.dataset.state = state;
         container.dataset.asset = asset || "";
       }
 
       if (keyframe && isVideoAsset(asset)) {
-        return renderGreenScreenVideo(asset, { loop, keyframe, progress }, greenScreen);
+        return renderGreenScreenVideo(asset, { loop, keyframe, progress }, greenScreen, token);
       }
 
       if (keyframe && isGifAsset(asset)) {
@@ -551,6 +699,7 @@ export function createPetMediaRenderer({
           holdCurrentVideoFrame("keyframe-gif-decode");
         }
         stopGreenScreenRendering();
+        stopPlainVideoFrameNotifications();
         stopVideo(video);
 
         const commitDecodedGif = (decodedGif, source) => {
@@ -565,6 +714,8 @@ export function createPetMediaRenderer({
             if (video) video.hidden = true;
             if (canvas) canvas.hidden = false;
             hideOtherCanvas(canvas);
+            setActiveSampleSurface(canvas);
+            notifyFramePresented(token, "keyframe-gif");
             logger.debug("keyframe gif surface committed", {
               asset,
               width: decodedGif.width,
@@ -611,16 +762,33 @@ export function createPetMediaRenderer({
       }
 
       if (isVideoAsset(asset)) {
-        return renderGreenScreenVideo(asset, { loop, keyframe, progress }, greenScreen);
+        return renderGreenScreenVideo(asset, { loop, keyframe, progress }, greenScreen, token);
       }
 
       stopGreenScreenRendering();
+      stopPlainVideoFrameNotifications();
       stopVideo(video);
       clearCanvas(canvas);
       if (greenScreenCanvas !== canvas) greenScreenCanvas.hidden = true;
       if (image) {
+        setActiveSampleSurface(null);
         image.hidden = false;
+        let imagePresented = false;
+        image.onload = () => {
+          if (token !== renderToken || imagePresented) return;
+          imagePresented = true;
+          setActiveSampleSurface(image);
+          notifyFramePresented(token, isGifAsset(asset) ? "gif-image" : "image");
+        };
+        image.onerror = () => {
+          if (token !== renderToken) return;
+          setActiveSampleSurface(null);
+          logger.warn("image load error", { asset });
+        };
         image.src = asset || "";
+        if (image.complete && Number(image.naturalWidth) > 0 && Number(image.naturalHeight) > 0) {
+          image.onload();
+        }
       }
       return "image";
     },
@@ -630,11 +798,15 @@ export function createPetMediaRenderer({
       if (isVideoAsset(asset)) {
         setVideoProgress(video, progress);
         if (activeGreenScreen) {
+          const token = renderToken;
           cancelVideoFrame(video, greenScreenFrameHandle);
           greenScreenFrameHandle = requestVideoFrame(video, () => {
             greenScreenFrameHandle = null;
+            if (token !== renderToken || !activeGreenScreen) return;
             try {
               greenScreenRenderer.draw(video, activeGreenScreen.config);
+              setActiveSampleSurface(video, activeGreenScreen.config);
+              notifyFramePresented(token, "green-screen-keyframe-video");
             } catch (error) {
               logger.warn("green screen keyframe draw failed", {
                 asset,
@@ -642,13 +814,20 @@ export function createPetMediaRenderer({
               });
             }
           });
+        } else {
+          stopPlainVideoFrameNotifications();
+          schedulePlainVideoFrameNotification(renderToken);
         }
         return true;
       }
 
       if (isGifAsset(asset) && gifCache.has(asset)) {
-        drawGifProgress(canvas, gifCache.get(asset), progress);
-        return true;
+        const drawn = drawGifProgress(canvas, gifCache.get(asset), progress);
+        if (drawn) {
+          setActiveSampleSurface(canvas);
+          notifyFramePresented(renderToken, "keyframe-gif");
+        }
+        return drawn;
       }
 
       return false;
@@ -656,6 +835,25 @@ export function createPetMediaRenderer({
 
     getCurrentAsset() {
       return (container && container.dataset && container.dataset.asset) || "";
+    },
+
+    sampleAlphaAt,
+
+    destroy() {
+      renderToken += 1;
+      stopPlainVideoFrameNotifications();
+      stopGreenScreenRendering({ clear: true });
+      setActiveSampleSurface(null);
+      if (image) {
+        image.onload = null;
+        image.onerror = null;
+      }
+      if (video) {
+        video.onloadedmetadata = null;
+        video.onloadeddata = null;
+        video.onseeked = null;
+        video.onerror = null;
+      }
     }
   };
 }

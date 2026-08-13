@@ -42,6 +42,7 @@ describe("createGlobalMouseTracker", () => {
 
     expect(petWindow.webContents.send).toHaveBeenCalledTimes(1);
     const payload = petWindow.webContents.send.mock.calls[0][1];
+    expect(payload).toMatchObject({ pointerMoved: true, boundsChanged: true });
     expect(payload.isInsidePet).toBe(false);
     expect(payload.distanceToPetBounds).toBe(452.55);
     tracker.stop();
@@ -90,7 +91,7 @@ describe("createGlobalMouseTracker", () => {
     tracker.stop();
   });
 
-  it("skips duplicate positions", () => {
+  it("skips when both cursor and bounds are unchanged", () => {
     const petWindow = createMockWindow({ x: 100, y: 100, width: 80, height: 80 });
     const tracker = createGlobalMouseTracker({
       getPetWindow: () => petWindow,
@@ -104,6 +105,101 @@ describe("createGlobalMouseTracker", () => {
     vi.advanceTimersByTime(150);
 
     expect(petWindow.webContents.send).toHaveBeenCalledTimes(1);
+    tracker.stop();
+  });
+
+  it("emits a bounds-only update when the window moves under a stationary cursor", () => {
+    const bounds = { x: 100, y: 100, width: 80, height: 80 };
+    const petWindow = createMockWindow(bounds);
+    const tracker = createGlobalMouseTracker({
+      getPetWindow: () => petWindow,
+      intervalMs: 100,
+      screenGetter: () => createMockScreen({ x: 120, y: 120 })
+    });
+
+    tracker.start();
+    vi.advanceTimersByTime(150);
+    bounds.x = 300;
+    vi.advanceTimersByTime(100);
+
+    expect(petWindow.webContents.send).toHaveBeenCalledTimes(2);
+    const payload = petWindow.webContents.send.mock.calls[1][1];
+    expect(payload).toMatchObject({
+      pointerMoved: false,
+      boundsChanged: true,
+      deltaX: 0,
+      deltaY: 0,
+      speed: 0,
+      direction: "none",
+      isInsidePet: false
+    });
+    tracker.stop();
+  });
+
+  it("marks cursor-only updates without claiming the bounds changed", () => {
+    const petWindow = createMockWindow({ x: 100, y: 100, width: 80, height: 80 });
+    let cursor = { x: 120, y: 120 };
+    const tracker = createGlobalMouseTracker({
+      getPetWindow: () => petWindow,
+      intervalMs: 100,
+      screenGetter: () => createMockScreen(cursor)
+    });
+
+    tracker.start();
+    vi.advanceTimersByTime(150);
+    cursor = { x: 130, y: 120 };
+    vi.advanceTimersByTime(100);
+
+    expect(petWindow.webContents.send.mock.calls[1][1]).toMatchObject({
+      pointerMoved: true,
+      boundsChanged: false
+    });
+    tracker.stop();
+  });
+
+  it("resets emitted snapshots after stop and restart", () => {
+    const petWindow = createMockWindow({ x: 100, y: 100, width: 80, height: 80 });
+    const tracker = createGlobalMouseTracker({
+      getPetWindow: () => petWindow,
+      intervalMs: 100,
+      screenGetter: () => createMockScreen({ x: 120, y: 120 })
+    });
+
+    tracker.start();
+    vi.advanceTimersByTime(150);
+    tracker.stop();
+    tracker.start();
+    vi.advanceTimersByTime(150);
+
+    expect(petWindow.webContents.send).toHaveBeenCalledTimes(2);
+    expect(petWindow.webContents.send.mock.calls[1][1]).toMatchObject({
+      pointerMoved: true,
+      boundsChanged: true
+    });
+    tracker.stop();
+  });
+
+  it("emits a fresh baseline when the target window is replaced", () => {
+    const firstWindow = createMockWindow({ x: 100, y: 100, width: 80, height: 80 });
+    const secondWindow = createMockWindow({ x: 100, y: 100, width: 80, height: 80 });
+    let currentWindow = firstWindow;
+    const tracker = createGlobalMouseTracker({
+      getPetWindow: () => currentWindow,
+      intervalMs: 100,
+      screenGetter: () => createMockScreen({ x: 120, y: 120 })
+    });
+
+    tracker.start();
+    vi.advanceTimersByTime(150);
+    currentWindow = secondWindow;
+    vi.advanceTimersByTime(100);
+
+    expect(firstWindow.webContents.send).toHaveBeenCalledTimes(1);
+    expect(secondWindow.webContents.send).toHaveBeenCalledTimes(1);
+    expect(secondWindow.webContents.send.mock.calls[0][1]).toMatchObject({
+      pointerMoved: true,
+      boundsChanged: true
+    });
     tracker.stop();
   });
 

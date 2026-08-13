@@ -68,6 +68,18 @@ function round(value) {
   return Math.round(value * 100) / 100;
 }
 
+function samePoint(left, right) {
+  return Boolean(left && right) && left.x === right.x && left.y === right.y;
+}
+
+function sameBounds(left, right) {
+  return Boolean(left && right) &&
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height;
+}
+
 function debugMouseLog(...args) {
   if (process.env.DESKTOP_PET_DEBUG_RULES === "1") {
     logger.debug(...args);
@@ -88,6 +100,9 @@ function createGlobalMouseTracker({
   let lastEmittedAt = 0;
   let lastPosition = null;
   let lastPositionAt = 0;
+  let lastEmittedPosition = null;
+  let lastEmittedBounds = null;
+  let lastEmittedTarget = null;
 
   function tick() {
     const petWindow = typeof getPetWindow === "function" ? getPetWindow() : null;
@@ -99,6 +114,15 @@ function createGlobalMouseTracker({
     if (!windowBounds) return;
     const bounds = getSpriteBounds(windowBounds);
 
+    const target = petWindow.webContents;
+    if (lastEmittedTarget !== target) {
+      lastPosition = null;
+      lastPositionAt = 0;
+      lastEmittedPosition = null;
+      lastEmittedBounds = null;
+      lastEmittedAt = 0;
+    }
+
     const activeScreen = getScreen();
     if (!activeScreen || typeof activeScreen.getCursorScreenPoint !== "function") return;
 
@@ -106,22 +130,25 @@ function createGlobalMouseTracker({
     const distance = isPointInsideBounds(point, bounds) ? 0 : distanceToBounds(point, bounds);
 
     const now = Date.now();
-    if (lastPosition && lastPosition.x === point.x && lastPosition.y === point.y) {
-      return;
-    }
+    const pointerMoved = !samePoint(lastEmittedPosition, point);
+    const boundsChanged = !sameBounds(lastEmittedBounds, bounds);
+    if (!pointerMoved && !boundsChanged) return;
 
     const previousPosition = lastPosition;
     const previousPositionAt = lastPositionAt;
-    lastPosition = { x: point.x, y: point.y };
-    lastPositionAt = now;
     if (now - lastEmittedAt < intervalMs) return;
     lastEmittedAt = now;
 
+    if (pointerMoved) {
+      lastPosition = { x: point.x, y: point.y };
+      lastPositionAt = now;
+    }
+
     const center = getPetCenter(bounds);
-    const deltaX = previousPosition ? point.x - previousPosition.x : 0;
-    const deltaY = previousPosition ? point.y - previousPosition.y : 0;
+    const deltaX = pointerMoved && previousPosition ? point.x - previousPosition.x : 0;
+    const deltaY = pointerMoved && previousPosition ? point.y - previousPosition.y : 0;
     const distanceDelta = previousPosition ? Math.hypot(deltaX, deltaY) : 0;
-    const elapsedMs = previousPosition ? Math.max(0, now - previousPositionAt) : 0;
+    const elapsedMs = pointerMoved && previousPosition ? Math.max(0, now - previousPositionAt) : 0;
     const speed = elapsedMs > 0 ? distanceDelta / (elapsedMs / 1000) : 0;
     const previousDistanceToCenter = previousPosition
       ? Math.hypot(previousPosition.x - center.x, previousPosition.y - center.y)
@@ -132,6 +159,8 @@ function createGlobalMouseTracker({
       type: "mouseMove",
       timestamp: now,
       eventSource: "globalMouse",
+      pointerMoved,
+      boundsChanged,
       petPosition: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
       mousePosition: { x: point.x, y: point.y },
       mouseLocalPosition: {
@@ -163,6 +192,9 @@ function createGlobalMouseTracker({
       petPosition: payload.petPosition
     });
     petWindow.webContents.send("pet:global-mouse-move", payload);
+    lastEmittedPosition = { x: point.x, y: point.y };
+    lastEmittedBounds = { ...bounds };
+    lastEmittedTarget = target;
   }
 
   function start() {
@@ -177,6 +209,9 @@ function createGlobalMouseTracker({
     }
     lastPosition = null;
     lastPositionAt = 0;
+    lastEmittedPosition = null;
+    lastEmittedBounds = null;
+    lastEmittedTarget = null;
     lastEmittedAt = 0;
   }
 
