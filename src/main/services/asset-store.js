@@ -57,6 +57,13 @@ function parseProgressLine(line) {
   return key ? { key, value } : null;
 }
 
+function parseVideoCodecName(output) {
+  const match = String(output || "").match(
+    /Stream\s+#\d+:\d+(?:\([^)]+\))?:\s+Video:\s*([^,\s]+)/i
+  );
+  return match ? String(match[1]).toLowerCase() : "";
+}
+
 function getVideoCodecName(sourcePath, ffmpegPath = findFfmpegPath()) {
   if (!ffmpegPath || typeof sourcePath !== "string" || !sourcePath) return "";
 
@@ -67,8 +74,7 @@ function getVideoCodecName(sourcePath, ffmpegPath = findFfmpegPath()) {
     });
   } catch (error) {
     const output = `${error.stdout || ""}\n${error.stderr || ""}`;
-    const match = output.match(/Stream\s+#\d+:\d+(?:\([^)]+\))?:\s+Video:\s*([^,\s]+)/i);
-    return match ? String(match[1]).toLowerCase() : "";
+    return parseVideoCodecName(output);
   }
 
   return "";
@@ -826,6 +832,7 @@ module.exports = {
   _internals: {
     getMovTranscodeArgs,
     getColorkeyTranscodeArgs,
+    parseVideoCodecName,
     getVideoCodecName
   }
 };

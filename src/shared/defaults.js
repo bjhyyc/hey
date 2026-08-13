@@ -107,7 +107,7 @@ const DEFAULT_RULE_TEMPLATES = [
     id: "default-idle-sleep",
     name: "休息状态",
     enabled: true,
-    conditions: [{ type: "idleDuration", required: true, filters: [{ field: "elapsedMs", operator: ">=", value: 60000, unit: "ms" }] }],
+    conditions: [{ type: "idleDuration", required: true, filters: [{ field: "elapsedMs", operator: ">=", value: 22000, unit: "ms" }] }],
     cooldownMs: 10000,
     priority: 5,
     actionStrategy: "sequence",

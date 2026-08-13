@@ -67,7 +67,17 @@ describe("asset-store", () => {
     const targetPath = path.join(tempDir, "notes.txt");
     const symlinkPath = path.join(tempDir, "looks-like-asset.svg");
     fs.writeFileSync(targetPath, "not an asset", "utf8");
-    fs.symlinkSync(targetPath, symlinkPath);
+    try {
+      fs.symlinkSync(targetPath, symlinkPath);
+    } catch (error) {
+      if (process.platform === "win32" && error && error.code === "EPERM") {
+        const junctionTarget = path.join(tempDir, "junction-target");
+        fs.mkdirSync(junctionTarget);
+        fs.symlinkSync(junctionTarget, symlinkPath, "junction");
+      } else {
+        throw error;
+      }
+    }
 
     expect(validateAsset(symlinkPath)).toEqual({
       ok: false,
@@ -251,17 +261,14 @@ describe("asset-store", () => {
   });
 
   it("parses the input video codec from ffmpeg probe output", () => {
-    const fakeFfmpegPath = path.join(tempDir, "fake-ffmpeg");
-    fs.writeFileSync(fakeFfmpegPath, [
-      "#!/bin/sh",
-      "printf \"Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'alpha.mov':\\n\" >&2",
-      "printf \"  Stream #0:0(eng): Video: vp9 (Profile 0), yuva420p, 720x720\\n\" >&2",
-      "exit 1"
-    ].join("\n"), "utf8");
-    fs.chmodSync(fakeFfmpegPath, 0o755);
+    const probeOutput = [
+      "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'alpha.mov':",
+      "  Stream #0:0(eng): Video: vp9 (Profile 0), yuva420p, 720x720"
+    ].join("\n");
 
+    expect(_internals.parseVideoCodecName(probeOutput)).toBe("vp9");
+    expect(_internals.parseVideoCodecName("no video stream")).toBe("");
     expect(_internals.getVideoCodecName("alpha.mov", process.execPath)).toBe("");
-    expect(_internals.getVideoCodecName("alpha.mov", fakeFfmpegPath)).toBe("vp9");
   });
 
   it("deletes safe package assets and rejects unsafe paths", () => {

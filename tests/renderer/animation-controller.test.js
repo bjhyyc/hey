@@ -811,6 +811,17 @@ describe("AnimationController", () => {
       expect(controller.getClip("new-idle").asset).toBe("new-idle.gif");
     });
 
+    it("renders a changed default immediately while already idle", () => {
+      controller.updateConfig({
+        default: { id: "new-idle", asset: "new-idle.gif" },
+        clips: []
+      });
+
+      expect(controller.getCurrentState()).toBe("default");
+      expect(controller.getCurrentClip()).toMatchObject({ id: "new-idle", asset: "new-idle.gif" });
+      expect(renderer.renderClip).toHaveBeenCalledWith("new-idle.gif", { loop: true });
+    });
+
     it("should return to default if current clip removed", () => {
       controller.playAnimation("jump");
       expect(controller.getCurrentClip().id).toBe("jump");

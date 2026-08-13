@@ -994,6 +994,59 @@ describe("stateful (sustained) rules", () => {
     });
   });
 
+  it("does not let hover cooldown delay the 22-second idle rule", () => {
+    const runtime = createRuleRuntime({
+      rules: [
+        {
+          id: "hover",
+          enabled: true,
+          cooldownMs: 30000,
+          conditions: [{ type: "hoverDuration", filters: [{ field: "elapsedMs", operator: ">=", value: 2000 }] }],
+          actions: [{ type: "playAnimation", animation: "hover" }]
+        },
+        {
+          id: "sleep",
+          enabled: true,
+          conditions: [{ type: "idleDuration", filters: [{ field: "elapsedMs", operator: ">=", value: 22000 }] }],
+          actions: [{ type: "playAnimation", animation: "sleep-transition" }]
+        }
+      ]
+    });
+
+    expect(runtime.evaluateEvent({ type: "hoverDuration", timestamp: 2000, elapsedMs: 2000 })).toHaveLength(1);
+    expect(runtime.evaluateEvent({ type: "idleDuration", timestamp: 22000, elapsedMs: 22000 })).toEqual([
+      { type: "playAnimation", animation: "sleep-transition" }
+    ]);
+  });
+
+  it.each(["click", "doubleClick", "rightClick"])(
+    "lets direct %s interaction bypass an unrelated hover cooldown",
+    (eventType) => {
+      const runtime = createRuleRuntime({
+        rules: [
+          {
+            id: "hover",
+            enabled: true,
+            cooldownMs: 30000,
+            conditions: [{ type: "hoverDuration", filters: [{ field: "elapsedMs", operator: ">=", value: 2000 }] }],
+            actions: [{ type: "playAnimation", animation: "hover" }]
+          },
+          {
+            id: `direct-${eventType}`,
+            enabled: true,
+            conditions: [{ type: eventType, filters: [] }],
+            actions: [{ type: "playAnimation", animation: eventType }]
+          }
+        ]
+      });
+
+      runtime.evaluateEvent({ type: "hoverDuration", timestamp: 2000, elapsedMs: 2000 });
+      expect(runtime.evaluateEvent({ type: eventType, timestamp: 3000 })).toEqual([
+        { type: "playAnimation", animation: eventType }
+      ]);
+    }
+  );
+
   it("applies cooldown to repeated hoverDuration timer events", () => {
     const runtime = createRuleRuntime({
       rules: [

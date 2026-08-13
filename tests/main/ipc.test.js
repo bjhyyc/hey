@@ -227,6 +227,7 @@ describe("registerIpc", () => {
     expect(saved).toEqual({ currentPackageId: "missing", triggerRules: [] });
     expect(petWindow.webContents.send).toHaveBeenCalledWith("pet:runtime-updated", {
       config: { currentPackageId: "missing", triggerRules: [] },
+      updateReason: "configChanged",
       package: null,
       packageError: "Active package is unavailable"
     });

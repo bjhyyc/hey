@@ -30,6 +30,12 @@ import {
   LIFECYCLE_EVENT_TYPES,
   shouldSuppressRuntimeEventDuringDrag
 } from "./event-suppression.js";
+import {
+  createOneShotEventLatch,
+  getRuntimeUpdateLifecycleEvents,
+  playDefaultThenDispatchLifecycleEvents,
+  shouldReturnToDefaultForRuntimeUpdate
+} from "./runtime-event-helpers.js";
 
 // Initialize locale
 initLocale();
@@ -92,7 +98,9 @@ let lastMouseMoveContext = null;
 let lastGlobalMouseMoveContext = null;
 let hoverStartedAt = 0;
 let idleStartedAt = Date.now();
-let runtimeTimers = [];
+const hoverDurationLatch = createOneShotEventLatch();
+const idleDurationLatch = createOneShotEventLatch();
+const runtimeTimers = new Set();
 let mouseStillTimers = [];
 let actionSequenceTimers = [];
 let movePetAnimationFrame = 0;
@@ -617,13 +625,23 @@ function applyInteractionConfig(interactions = {}) {
 
 function clearRuntimeTimers() {
   runtimeTimers.forEach((timerId) => window.clearTimeout(timerId));
-  runtimeTimers = [];
+  runtimeTimers.clear();
   clearMouseStillTimers();
   clearActionSequenceTimers("runtime-update");
   cancelPendingSingleClick("runtime-update");
   if (pomodoroRuntime) {
     pomodoroRuntime.destroy("runtime-update");
   }
+}
+
+function scheduleRuntimeTimeout(callback, delayMs) {
+  let timerId = 0;
+  timerId = window.setTimeout(() => {
+    runtimeTimers.delete(timerId);
+    callback();
+  }, delayMs);
+  runtimeTimers.add(timerId);
+  return timerId;
 }
 
 function clearActionSequenceTimers(reason = "clear") {
@@ -756,6 +774,27 @@ function scheduleMouseStillEvents(context) {
 
 function markInteraction() {
   idleStartedAt = Date.now();
+  if (idleDurationLatch.reset()) {
+    debugRulesLog("duration-event:latch-reset", { type: "idleDuration", reason: "interaction" });
+  }
+}
+
+function resetDurationSessions({ resumeHover = false, reason = "runtime-update" } = {}) {
+  idleStartedAt = Date.now();
+  idleDurationLatch.reset();
+
+  const pointerInsidePet = Boolean(
+    resumeHover &&
+    !petHidden &&
+    lastGlobalMouseMoveContext &&
+    lastGlobalMouseMoveContext.isInsidePet
+  );
+  hoverStartedAt = pointerInsidePet ? Date.now() : 0;
+  hoverDurationLatch.reset();
+  debugRulesLog("duration-event:sessions-reset", {
+    reason,
+    hoverResumed: pointerInsidePet
+  });
 }
 
 function pauseHoverForDrag(eventContext = {}) {
@@ -765,6 +804,9 @@ function pauseHoverForDrag(eventContext = {}) {
     elapsedMs: Date.now() - hoverStartedAt
   });
   hoverStartedAt = 0;
+  if (hoverDurationLatch.reset()) {
+    debugRulesLog("duration-event:latch-reset", { type: "hoverDuration", reason: "drag" });
+  }
 }
 
 function resumeHoverAfterDrag(event) {
@@ -778,6 +820,7 @@ function resumeHoverAfterDrag(event) {
   }
 
   hoverStartedAt = Date.now();
+  hoverDurationLatch.reset();
   debugRulesLog("hover:resumed-after-drag", {
     screenPosition: context.screenPosition
   });
@@ -791,15 +834,21 @@ function scheduleRuntimeEvents() {
     const intervalMs = 2000;
     const tickIdle = () => {
       const now = Date.now();
-      evaluateRuntimeEvent({
+      const fired = idleDurationLatch.run(() => evaluateRuntimeEvent({
         type: "idleDuration",
         timestamp: now,
         eventSource: "timer",
         elapsedMs: now - idleStartedAt
-      });
-      runtimeTimers.push(window.setTimeout(tickIdle, intervalMs));
+      }));
+      if (fired) {
+        debugRulesLog("duration-event:latched", {
+          type: "idleDuration",
+          elapsedMs: now - idleStartedAt
+        });
+      }
+      scheduleRuntimeTimeout(tickIdle, intervalMs);
     };
-    runtimeTimers.push(window.setTimeout(tickIdle, intervalMs));
+    scheduleRuntimeTimeout(tickIdle, intervalMs);
   }
 
   if (runtimeHasCondition("hoverDuration")) {
@@ -808,19 +857,30 @@ function scheduleRuntimeEvents() {
     const tickHover = () => {
       if (interactionsPaused) {
         debugRulesLog("hover:paused");
-      } else if (hoverStartedAt && !dragStartedAt) {
+      } else if (
+        hoverStartedAt &&
+        !dragStartedAt &&
+        animationController &&
+        animationController.getCurrentState() === "default"
+      ) {
         const now = Date.now();
-        evaluateRuntimeEvent({
+        const fired = hoverDurationLatch.run(() => evaluateRuntimeEvent({
           ...getPointerContext("hoverDuration"),
           timestamp: now,
           eventSource: "timer",
           elapsedMs: now - hoverStartedAt,
           isInsidePet: true
-        });
+        }));
+        if (fired) {
+          debugRulesLog("duration-event:latched", {
+            type: "hoverDuration",
+            elapsedMs: now - hoverStartedAt
+          });
+        }
       }
-      runtimeTimers.push(window.setTimeout(tickHover, intervalMs));
+      scheduleRuntimeTimeout(tickHover, intervalMs);
     };
-    runtimeTimers.push(window.setTimeout(tickHover, intervalMs));
+    scheduleRuntimeTimeout(tickHover, intervalMs);
   }
 
   const timerEntries = getScheduledConditionEntries("timer");
@@ -838,9 +898,9 @@ function scheduleRuntimeEvents() {
         currentHour: now.getHours(),
         dayOfWeek: now.getDay()
       });
-      runtimeTimers.push(window.setTimeout(tickTimer, intervalMs));
+      scheduleRuntimeTimeout(tickTimer, intervalMs);
     };
-    runtimeTimers.push(window.setTimeout(tickTimer, intervalMs));
+    scheduleRuntimeTimeout(tickTimer, intervalMs);
   });
 
   const randomTimerEntries = getScheduledConditionEntries("randomTimer");
@@ -860,9 +920,9 @@ function scheduleRuntimeEvents() {
         currentHour: now.getHours(),
         dayOfWeek: now.getDay()
       });
-      runtimeTimers.push(window.setTimeout(tickRandom, getDelayMs()));
+      scheduleRuntimeTimeout(tickRandom, getDelayMs());
     };
-    runtimeTimers.push(window.setTimeout(tickRandom, getDelayMs()));
+    scheduleRuntimeTimeout(tickRandom, getDelayMs());
   });
 }
 
@@ -1085,6 +1145,10 @@ function initializeAnimationController() {
 }
 
 function applyRuntime(runtime) {
+  resetDurationSessions({
+    resumeHover: true,
+    reason: runtime && runtime.updateReason ? runtime.updateReason : "initial-load"
+  });
   currentConfig = runtime && runtime.config ? runtime.config : currentConfig;
   // 调试日志开关跟随系统设置里的日志开关和日志等级。
   setDebugRulesEnabled(
@@ -1157,17 +1221,12 @@ async function loadInitialConfig() {
     // Update window title
     document.title = t("pet.title");
 
-    evaluateRuntimeEvent({
-      type: "appLaunch",
-      timestamp: Date.now(),
-      eventSource: "petRenderer"
+    playDefaultThenDispatchLifecycleEvents({
+      playDefault: playDefaultAnimation,
+      evaluateEvent: evaluateRuntimeEvent,
+      defaultReason: "initialLoad",
+      eventTypes: ["appLaunch"]
     });
-    evaluateRuntimeEvent({
-      type: "packageLoaded",
-      timestamp: Date.now(),
-      eventSource: "petRenderer"
-    });
-    playDefaultAnimation("initialLoad");
   } catch (error) {
     logger.error("Failed to load pet config", error);
   }
@@ -1484,6 +1543,7 @@ const petController = createPetController({
     const handled = evaluateRuntimeEvent(context);
     dragStartedAt = 0;
     dragStartPosition = null;
+    markInteraction();
     resumeHoverAfterDrag(event);
     return handled;
   },
@@ -1494,6 +1554,7 @@ const petController = createPetController({
     });
     dragStartedAt = 0;
     dragStartPosition = null;
+    markInteraction();
     resumeHoverAfterDrag(event);
   }
 });
@@ -1527,12 +1588,14 @@ sprite.addEventListener("mouseenter", (event) => {
     return;
   }
   hoverStartedAt = Date.now();
+  hoverDurationLatch.reset();
   const context = getPointerContext("mouseEnter", event);
   evaluateRuntimeEvent(context);
 });
 sprite.addEventListener("mouseleave", (event) => {
   markInteraction();
   hoverStartedAt = 0;
+  hoverDurationLatch.reset();
   const context = getPointerContext("mouseLeave", event);
   if (interactionsPaused) {
     debugRulesLog("event:suppressed-paused-leave");
@@ -1572,24 +1635,24 @@ if (window.desktopPet && window.desktopPet.pet) {
   window.desktopPet.pet.onRuntimeUpdated((runtime) => {
     applyRuntime(runtime);
 
-    // Re-initialize animation controller with new runtime
-    if (animationController) {
-      initializeAnimationController();
+    const updateReason = runtime && runtime.updateReason;
+    if (shouldReturnToDefaultForRuntimeUpdate(updateReason)) {
+      playDefaultThenDispatchLifecycleEvents({
+        playDefault: playDefaultAnimation,
+        evaluateEvent: evaluateRuntimeEvent,
+        defaultReason: "runtimeUpdated",
+        eventTypes: getRuntimeUpdateLifecycleEvents(updateReason)
+      });
     }
-
-    evaluateRuntimeEvent({
-      type: "packageLoaded",
-      timestamp: Date.now(),
-      eventSource: "petRenderer"
-    });
-    playDefaultAnimation("runtimeUpdated");
   });
   window.desktopPet.pet.onInteractionsPaused((enabled) => {
     interactionsPaused = enabled;
     if (interactionsPaused) {
       hoverStartedAt = 0;
+      hoverDurationLatch.reset();
       debugRulesLog("interactions:paused", { hoverStartedAt });
     } else {
+      resetDurationSessions({ resumeHover: true, reason: "interactions-resumed" });
       debugRulesLog("interactions:resumed");
     }
   });

@@ -423,6 +423,8 @@ class AnimationController {
    * @param {object} config - New animation configuration
    */
   updateConfig(config) {
+    const wasShowingDefault = this.currentState === 'default';
+
     // Update default clip if provided
     if (config.default && config.default.asset) {
       this.defaultClip = {
@@ -449,6 +451,17 @@ class AnimationController {
       });
 
       this.clips = newClips;
+    }
+
+    if (wasShowingDefault) {
+      this.currentClip = this.defaultClip;
+      this.renderer.renderClip(this.defaultClip.asset, {
+        loop: true,
+        ...(this.defaultClip.greenScreen ? { greenScreen: this.defaultClip.greenScreen } : {})
+      });
+      if (typeof this.renderer.onClipStart === 'function') {
+        this.renderer.onClipStart(this.defaultClip);
+      }
     }
 
     // 等待项 clip 已被删除 -> 清空等待区

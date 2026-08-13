@@ -577,11 +577,12 @@ function sendDisplayUpdate(getWindows, display) {
   petWindow.webContents.send("pet:display-updated", display);
 }
 
-function sendRuntimeUpdate(getWindows, userDataDir, config) {
+function sendRuntimeUpdate(getWindows, userDataDir, config, updateReason = "configChanged") {
   const petWindow = getPetWindow(getWindows);
   if (petWindow && petWindow.webContents) {
     petWindow.webContents.send("pet:runtime-updated", {
       config,
+      updateReason,
       ...loadActivePackageRuntime(userDataDir, config)
     });
   }
@@ -758,7 +759,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
       animations: packageConfig.animations,
       triggerRules: packageConfig.triggerRules
     });
-    sendRuntimeUpdate(getWindows, userDataDir, savedConfig);
+    sendRuntimeUpdate(getWindows, userDataDir, savedConfig, "packageChanged");
     return savedConfig;
   });
   replaceHandler("package:delete", (_event, packageId) => {
@@ -785,7 +786,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
     if (savedConfig && savedConfig.ok === false) return savedConfig;
 
     if (shouldSwitchToDefault) {
-      sendRuntimeUpdate(getWindows, userDataDir, savedConfig);
+      sendRuntimeUpdate(getWindows, userDataDir, savedConfig, "packageChanged");
     }
 
     return {
@@ -806,7 +807,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
       animations: packageConfig.animations,
       triggerRules: packageConfig.triggerRules
     });
-    sendRuntimeUpdate(getWindows, userDataDir, savedConfig);
+    sendRuntimeUpdate(getWindows, userDataDir, savedConfig, "packageChanged");
     return savedConfig;
   });
   replaceHandler("asset:list", (_event, packageId) => {
@@ -885,7 +886,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
     });
     if (result.ok) {
       logger.info("Replaced asset", { packageId, assetPath: payload && payload.targetAssetPath });
-      sendRuntimeUpdate(getWindows, userDataDir, loadedConfig);
+      sendRuntimeUpdate(getWindows, userDataDir, loadedConfig, "assetsChanged");
     }
     return result;
   });
@@ -923,7 +924,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
     });
     if (result.ok) {
       logger.info("Baked green screen asset", { packageId, asset: result.asset });
-      sendRuntimeUpdate(getWindows, userDataDir, loadedConfig);
+      sendRuntimeUpdate(getWindows, userDataDir, loadedConfig, "assetsChanged");
     } else {
       logger.warn("Green screen baking failed", { packageId, error: result.error });
     }
@@ -1077,7 +1078,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
     logger.info("Config saved", { packageId: savedConfig.currentPackageId });
     saveConfigToActivePackageManifest(userDataDir, savedConfig);
     sendDisplayUpdate(getWindows, savedConfig.display || {});
-    sendRuntimeUpdate(getWindows, userDataDir, savedConfig);
+    sendRuntimeUpdate(getWindows, userDataDir, savedConfig, "configChanged");
     return savedConfig;
   });
   replaceHandler("menu:open-context-menu", () => {

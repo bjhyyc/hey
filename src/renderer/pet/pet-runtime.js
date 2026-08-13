@@ -371,7 +371,11 @@ export function createRuleRuntime({
     }
 
     const justEntered = [];
-    const activeGlobalCooldown = getActiveGlobalCooldown(rules, timestamp, lastTriggeredAtByRuleId);
+    const activeGlobalCooldown = getActiveGlobalCooldown(
+      rules.filter((rule) => eventMatchesAnyConditionType(rule, currentEvent)),
+      timestamp,
+      lastTriggeredAtByRuleId
+    );
     for (const rule of rules) {
       if (!isStatefulRule(rule)) continue;
       if (!shouldEvaluateRuleForEvent(rule, currentEvent)) {
@@ -512,7 +516,13 @@ export function createRuleRuntime({
       } else if (!hasActiveStateful) {
         const candidateRules = rules.filter((rule) => !isStatefulRule(rule) && shouldEvaluateRuleForEvent(rule, nextEvent));
         const cooldownRules = rules.filter((rule) => !isStatefulRule(rule));
-        const activeGlobalCooldown = getActiveGlobalCooldown(cooldownRules, timestamp, lastTriggeredAtByRuleId);
+        // Cooldowns arbitrate rules competing for the same event. A hover rule
+        // must never suppress a later click, right-click or 22-second idle
+        // event just because its own cooldown is still active.
+        const effectiveCooldownRules = cooldownRules.filter((rule) => (
+          eventMatchesAnyConditionType(rule, nextEvent)
+        ));
+        const activeGlobalCooldown = getActiveGlobalCooldown(effectiveCooldownRules, timestamp, lastTriggeredAtByRuleId);
         if (activeGlobalCooldown) {
           debugRulesLog("global-cooldown-active", {
             eventType: nextEvent.type,
@@ -527,7 +537,7 @@ export function createRuleRuntime({
           eventHistory,
           now: timestamp,
           lastTriggeredAtByRuleId,
-          cooldownRules
+          cooldownRules: effectiveCooldownRules
         });
         const executedRuleIds = [];
         let stoppedByRuleId = null;
