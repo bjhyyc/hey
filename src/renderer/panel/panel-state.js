@@ -545,6 +545,7 @@ export function buildRuleFromForm(form) {
     name: trimOptional(form.name) || "Untitled rule",
     enabled: Boolean(form.enabled),
     cooldownMs: toFiniteNumber(form.cooldownMs, 0),
+    cooldownScope: form.cooldownScope === "eventType" ? "eventType" : undefined,
     priority: toFiniteNumber(form.priority, 0),
     stopOnMatch: form.stopOnMatch === false ? false : undefined,
     continuous: hasContinuousAction ? true : undefined,

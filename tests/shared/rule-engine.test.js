@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest";
 import ruleEngine from "../../src/shared/rule-engine";
 
-const { evaluateRules, eventMatchesRule } = ruleEngine;
+const { evaluateRules, eventMatchesRule, getCooldownRulesForEvent } = ruleEngine;
 
 describe("evaluateRules", () => {
   const now = 10_000;
+
+  it("keeps global cooldown as the compatibility default and scopes only explicit eventType rules", () => {
+    const globalRule = { id: "global", cooldownMs: 5000, conditions: [{ type: "hoverDuration" }] };
+    const scopedHover = {
+      id: "scoped-hover",
+      cooldownMs: 5000,
+      cooldownScope: "eventType",
+      conditions: [{ type: "hoverDuration" }]
+    };
+
+    expect(getCooldownRulesForEvent([globalRule, scopedHover], { type: "click" }))
+      .toEqual([globalRule]);
+    expect(getCooldownRulesForEvent([globalRule, scopedHover], { type: "hoverDuration" }))
+      .toEqual([globalRule, scopedHover]);
+  });
 
   it("matches a single condition with multiple filters", () => {
     const rules = [

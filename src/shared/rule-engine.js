@@ -93,6 +93,14 @@ function getActiveGlobalCooldown(rules, now, lastTriggeredAtByRuleId) {
   return activeCooldown;
 }
 
+function getCooldownRulesForEvent(rules, event) {
+  const eventType = event && event.type;
+  return rules.filter((rule) => {
+    if (!rule || rule.cooldownScope !== "eventType") return true;
+    return normalizeRuleConditions(rule).some((condition) => condition && condition.type === eventType);
+  });
+}
+
 function isCoolingDown(rule, activeGlobalCooldown) {
   if (!activeGlobalCooldown) return false;
   if (isContinuousMouseMoveRule(rule)) return false;
@@ -182,6 +190,7 @@ export {
   evaluateRules,
   eventMatchesRule,
   getActiveGlobalCooldown,
+  getCooldownRulesForEvent,
   isContinuousMouseMoveRule
 };
 
@@ -189,5 +198,6 @@ export default {
   evaluateRules,
   eventMatchesRule,
   getActiveGlobalCooldown,
+  getCooldownRulesForEvent,
   isContinuousMouseMoveRule
 };

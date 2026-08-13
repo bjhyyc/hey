@@ -137,6 +137,11 @@ function validateAnimationClip(clip, label, availableFiles, errors) {
   if (clip.type && !["default", "oneshot", "loop", "keyframe"].includes(clip.type)) {
     errors.push(`${label}.type is not supported`);
   }
+  if (Object.prototype.hasOwnProperty.call(clip, "durationMs")) {
+    if (typeof clip.durationMs !== "number" || !Number.isFinite(clip.durationMs) || clip.durationMs <= 0) {
+      errors.push(`${label}.durationMs must be a finite positive number`);
+    }
+  }
   validateGreenScreenConfig(clip.greenScreen, label, errors);
 
   if (Object.prototype.hasOwnProperty.call(clip, "easeIn")) {
@@ -261,7 +266,16 @@ function validateManifest(manifest, availableFiles = new Set()) {
     if (Object.prototype.hasOwnProperty.call(rule, "stopOnMatch") && typeof rule.stopOnMatch !== "boolean") {
       errors.push(`${ruleLabel}.stopOnMatch must be a boolean`);
     }
+    if (Object.prototype.hasOwnProperty.call(rule, "cooldownScope") && !["global", "eventType"].includes(rule.cooldownScope)) {
+      errors.push(`${ruleLabel}.cooldownScope must be global or eventType`);
+    }
     const conditions = Array.isArray(rule.conditions) ? rule.conditions : [];
+    if (rule.cooldownScope === "eventType") {
+      const conditionTypes = new Set(conditions.map((condition) => condition && condition.type).filter(Boolean));
+      if (conditionTypes.size !== 1) {
+        errors.push(`${ruleLabel}.cooldownScope eventType requires exactly one condition type`);
+      }
+    }
     conditions.forEach((condition, conditionIndex) => {
       validateCondition(condition, `${ruleLabel}.conditions[${conditionIndex}]`, errors);
     });

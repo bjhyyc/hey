@@ -40,6 +40,37 @@ describe("validateManifest", () => {
     expect(result.errors).toEqual([]);
   });
 
+  it("rejects invalid clip durations and cooldown scopes", () => {
+    const manifest = createManifest();
+    manifest.animations.clips[0].durationMs = 0;
+    manifest.triggerRules[0].cooldownScope = "mystery";
+
+    const result = validateManifest(manifest, new Set(["assets/idle.svg", "assets/wave.svg"]));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("animations.clips[0].durationMs must be a finite positive number");
+    expect(result.errors).toContain("triggerRules[0].cooldownScope must be global or eventType");
+  });
+
+  it("accepts legacy finite durations above sixty seconds", () => {
+    const manifest = createManifest();
+    manifest.animations.clips[0].durationMs = 120000.5;
+
+    expect(validateManifest(manifest, new Set(["assets/idle.svg", "assets/wave.svg"])))
+      .toEqual({ ok: true, errors: [] });
+  });
+
+  it("requires eventType cooldown rules to use exactly one condition type", () => {
+    const manifest = createManifest();
+    manifest.triggerRules[0].cooldownScope = "eventType";
+    manifest.triggerRules[0].conditions.push({ type: "doubleClick", filters: [] });
+
+    const result = validateManifest(manifest, new Set(["assets/idle.svg", "assets/wave.svg"]));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("triggerRules[0].cooldownScope eventType requires exactly one condition type");
+  });
+
   it("accepts keyframe animations driven by keyframe progress actions", () => {
     const result = validateManifest(createManifest({
       animations: {

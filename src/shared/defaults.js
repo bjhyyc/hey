@@ -109,6 +109,7 @@ const DEFAULT_RULE_TEMPLATES = [
     enabled: true,
     conditions: [{ type: "idleDuration", required: true, filters: [{ field: "elapsedMs", operator: ">=", value: 22000, unit: "ms" }] }],
     cooldownMs: 10000,
+    cooldownScope: "eventType",
     priority: 5,
     actionStrategy: "sequence",
     actions: [{ type: "showMessage", text: "Zzz...", durationMs: 1800 }]

@@ -416,6 +416,7 @@ export async function saveRuleFromForm(form, config, saveConfig, state, render) 
     name: form.elements.name.value,
     enabled: existingRule ? existingRule.enabled !== false : true,
     cooldownMs: form.elements.cooldownMs.value,
+    cooldownScope: existingRule && existingRule.cooldownScope,
     priority: form.elements.priority.value,
     stopOnMatch: form.elements.stopOnMatch ? form.elements.stopOnMatch.checked : true,
     conditions,

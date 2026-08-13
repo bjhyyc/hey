@@ -80,6 +80,47 @@ describe("panel form handlers", () => {
     expect(render).toHaveBeenCalledTimes(1);
   });
 
+  it("round-trips an existing hidden cooldown scope when saving a rule", async () => {
+    const conditionRow = createRow({
+      '[name="conditionType"]': createField("hoverDuration"),
+      '[name="filterField"]': createField("elapsedMs"),
+      '[name="filterOperator"]': createField(">="),
+      '[name="filterValue"]': createField("2000"),
+      '[name="filterUnit"]': createField("ms"),
+      '[name="conditionRequired"]': createField("", true)
+    });
+    const actionRow = createRow({
+      '[name="actionType"]': createField("playAnimation"),
+      '[name="animation"]': createField("hover")
+    });
+    const form = {
+      elements: {
+        id: createField("hover-attention"),
+        name: createField("Hover attention"),
+        cooldownMs: createField("20000"),
+        priority: createField("200"),
+        stopOnMatch: createField("", true),
+        actionStrategy: createField("sequence")
+      },
+      querySelectorAll: vi.fn((selector) => {
+        if (selector === '[data-rule-condition][data-scope="conditions"]') return [conditionRow];
+        if (selector === '[data-rule-condition][data-scope="exitConditions"]') return [];
+        if (selector === '[data-inline-action][data-scope="actions"]') return [actionRow];
+        if (selector === '[data-inline-action][data-scope="exitActions"]') return [];
+        return [];
+      })
+    };
+    const config = {
+      animations: { default: { id: "idle", asset: "idle.webm" }, clips: [{ id: "hover", asset: "hover.webm" }] },
+      triggerRules: [{ id: "hover-attention", cooldownScope: "eventType" }]
+    };
+    const saveConfig = vi.fn(async (nextConfig) => nextConfig);
+
+    await saveRuleFromForm(form, config, saveConfig, { selectedRuleId: "", ruleEditorOpen: true }, vi.fn());
+
+    expect(saveConfig.mock.calls[0][0].triggerRules[0].cooldownScope).toBe("eventType");
+  });
+
   it("saves delay rule actions with editable duration", async () => {
     const conditionRow = createRow({
       '[name="conditionType"]': createField("click"),

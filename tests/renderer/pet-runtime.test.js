@@ -1001,6 +1001,7 @@ describe("stateful (sustained) rules", () => {
           id: "hover",
           enabled: true,
           cooldownMs: 30000,
+          cooldownScope: "eventType",
           conditions: [{ type: "hoverDuration", filters: [{ field: "elapsedMs", operator: ">=", value: 2000 }] }],
           actions: [{ type: "playAnimation", animation: "hover" }]
         },
@@ -1028,6 +1029,7 @@ describe("stateful (sustained) rules", () => {
             id: "hover",
             enabled: true,
             cooldownMs: 30000,
+            cooldownScope: "eventType",
             conditions: [{ type: "hoverDuration", filters: [{ field: "elapsedMs", operator: ">=", value: 2000 }] }],
             actions: [{ type: "playAnimation", animation: "hover" }]
           },

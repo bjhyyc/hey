@@ -170,6 +170,25 @@ describe("panel state helpers", () => {
     expect(nextConfig.triggerRules).toEqual([rule]);
   });
 
+  it("preserves the hidden eventType cooldown scope used by product rules", () => {
+    const rule = buildRuleFromForm({
+      id: "hover-attention",
+      name: "Hover attention",
+      enabled: true,
+      cooldownMs: "20000",
+      cooldownScope: "eventType",
+      priority: "200",
+      conditionType: "hoverDuration",
+      filterField: "elapsedMs",
+      filterOperator: ">=",
+      filterValue: "2000",
+      actionStrategy: "sequence",
+      actions: [{ type: "playAnimation", animation: "hover" }]
+    });
+
+    expect(rule.cooldownScope).toBe("eventType");
+  });
+
   it("only marks keyframe progress rules continuous when they are driven by mouseMove", () => {
     const hoverRule = buildRuleFromForm({
       id: "hover-progress",

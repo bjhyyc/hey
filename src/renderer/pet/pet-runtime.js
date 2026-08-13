@@ -2,6 +2,7 @@ import {
   evaluateRules,
   eventMatchesRule,
   getActiveGlobalCooldown,
+  getCooldownRulesForEvent,
   isContinuousMouseMoveRule
 } from "../../shared/rule-engine.js";
 import { createDebugLogger } from "./debug-utils.js";
@@ -372,7 +373,7 @@ export function createRuleRuntime({
 
     const justEntered = [];
     const activeGlobalCooldown = getActiveGlobalCooldown(
-      rules.filter((rule) => eventMatchesAnyConditionType(rule, currentEvent)),
+      getCooldownRulesForEvent(rules, currentEvent),
       timestamp,
       lastTriggeredAtByRuleId
     );
@@ -516,12 +517,10 @@ export function createRuleRuntime({
       } else if (!hasActiveStateful) {
         const candidateRules = rules.filter((rule) => !isStatefulRule(rule) && shouldEvaluateRuleForEvent(rule, nextEvent));
         const cooldownRules = rules.filter((rule) => !isStatefulRule(rule));
-        // Cooldowns arbitrate rules competing for the same event. A hover rule
-        // must never suppress a later click, right-click or 22-second idle
-        // event just because its own cooldown is still active.
-        const effectiveCooldownRules = cooldownRules.filter((rule) => (
-          eventMatchesAnyConditionType(rule, nextEvent)
-        ));
+        // Global remains the compatibility default. Product rules may opt in
+        // to eventType scope so hover spam protection never delays sleep or a
+        // direct interaction.
+        const effectiveCooldownRules = getCooldownRulesForEvent(cooldownRules, nextEvent);
         const activeGlobalCooldown = getActiveGlobalCooldown(effectiveCooldownRules, timestamp, lastTriggeredAtByRuleId);
         if (activeGlobalCooldown) {
           debugRulesLog("global-cooldown-active", {

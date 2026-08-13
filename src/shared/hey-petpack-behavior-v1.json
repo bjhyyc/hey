@@ -1,0 +1,123 @@
+{
+  "contractVersion": "hey-petpack-behavior/v1",
+  "schemaVersion": "2.0.0",
+  "actionOrder": [
+    "idle",
+    "sneeze",
+    "roll",
+    "sleep-transition",
+    "sleep-loop",
+    "stretch",
+    "hover-attention"
+  ],
+  "animations": {
+    "idle": {
+      "animationId": "70000000-0000-4000-8000-000000000001",
+      "name": "Idle",
+      "asset": "assets/idle.webm",
+      "type": "default",
+      "nominalDurationMs": 4000
+    },
+    "sneeze": {
+      "animationId": "70000000-0000-4000-8000-000000000002",
+      "name": "Sneeze",
+      "asset": "assets/sneeze.webm",
+      "type": "oneshot",
+      "interrupt": true,
+      "nominalDurationMs": 4000
+    },
+    "roll": {
+      "animationId": "70000000-0000-4000-8000-000000000003",
+      "name": "Roll",
+      "asset": "assets/roll.webm",
+      "type": "oneshot",
+      "interrupt": true,
+      "nominalDurationMs": 6000
+    },
+    "sleep-transition": {
+      "animationId": "70000000-0000-4000-8000-000000000004",
+      "name": "Sleep transition",
+      "asset": "assets/sleep-transition.webm",
+      "type": "oneshot",
+      "interrupt": true,
+      "nominalDurationMs": 6000
+    },
+    "sleep-loop": {
+      "animationId": "70000000-0000-4000-8000-000000000005",
+      "name": "Sleep loop",
+      "asset": "assets/sleep-loop.webm",
+      "type": "loop",
+      "interrupt": false,
+      "nominalDurationMs": 6000
+    },
+    "stretch": {
+      "animationId": "70000000-0000-4000-8000-000000000006",
+      "name": "Stretch and yawn",
+      "asset": "assets/stretch.webm",
+      "type": "oneshot",
+      "interrupt": true,
+      "nominalDurationMs": 7000
+    },
+    "hover-attention": {
+      "animationId": "70000000-0000-4000-8000-000000000007",
+      "name": "Hover attention",
+      "asset": "assets/hover-attention.webm",
+      "type": "oneshot",
+      "interrupt": false,
+      "nominalDurationMs": 7000
+    }
+  },
+  "rules": [
+    {
+      "id": "startup-stretch",
+      "name": "Startup stretch and yawn",
+      "eventType": "appLaunch",
+      "priority": 500,
+      "cooldownMs": 0,
+      "actions": ["stretch"]
+    },
+    {
+      "id": "click-sneeze",
+      "name": "Single click sneeze",
+      "eventType": "click",
+      "priority": 400,
+      "cooldownMs": 0,
+      "actions": ["sneeze"]
+    },
+    {
+      "id": "double-click-roll",
+      "name": "Double click roll",
+      "eventType": "doubleClick",
+      "priority": 400,
+      "cooldownMs": 0,
+      "actions": ["roll"]
+    },
+    {
+      "id": "right-click-wake",
+      "name": "Right click wake and stretch",
+      "eventType": "rightClick",
+      "priority": 400,
+      "cooldownMs": 0,
+      "actions": ["stretch"]
+    },
+    {
+      "id": "idle-sleep",
+      "name": "Sleep after 22 seconds idle",
+      "eventType": "idleDuration",
+      "elapsedMs": 22000,
+      "priority": 300,
+      "cooldownMs": 0,
+      "actions": ["sleep-transition", "sleep-loop"]
+    },
+    {
+      "id": "hover-attention",
+      "name": "Hover attention after 2 seconds",
+      "eventType": "hoverDuration",
+      "elapsedMs": 2000,
+      "priority": 200,
+      "cooldownMs": 20000,
+      "cooldownScope": "eventType",
+      "actions": ["hover-attention"]
+    }
+  ]
+}
