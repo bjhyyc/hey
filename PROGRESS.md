@@ -79,6 +79,7 @@
 - 2026-08-14：Kaipay EPay V1 正式 wire adapter 已按官方公开文档接入并冻结为 `kaipay-epay-v1-md5/1`：生产网关严格固定 `https://api.kaipay.cn`，通过 `/epay/mapi` 创建支付宝或微信订单，通过 `/epay/api` 主动查单；异步通知只接受 GET 原始 query，执行 MD5 ASCII 排序验签、订单/商户/金额/渠道绑定及服务端二次查单后才返回纯文本 `success`。错误签名、重复字段、未知状态和查单暂不可用均不能改变客户订单。
 - 2026-08-14：新增无扣款的 Kaipay 商户只读探针 `npm run verify:kaipay`，只调用官方 `act=query` 并仅输出成功/失败，不输出密钥、用户名、余额或请求 URL；新增 `/projects/payment-return` 静态回跳页，明确同步回跳不代表支付成功，用户只查看服务端确认后的项目状态。公开 EPay V1 文档没有退款接口，自动退款继续 fail-closed，未猜测任何退款字段。
 - 2026-08-14：Kaipay 接入最终本地回归为 81 个测试文件、875 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；新增协议、工厂、HTTP、错签名、通知重放、商户探针和订单不变性覆盖。网站 Next.js 生产构建成功并生成 16 个静态页面，支付回跳路由已进入产物。本轮没有读取真实商户密钥、创建真实订单或发生费用。
+- 2026-08-14：Kaipay EPay V1 代码提交为 `9f0b66af09f379a88620174fc1579569f6ac21d8`。完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-kaipay-9f0b66a.bundle`，27,451,517 字节，`git bundle verify` 通过，SHA-256 为 `DD93FB0E5E8630002C66560BEE046876D27FBBC7022B0DBE6B29F5174C618CF2`。
 
 ## In progress
 
