@@ -53,15 +53,18 @@
 - 2026-08-13：媒体 Worker 镜像 `petpack-studio-worker:9c7a2a6` 约 163 MB，本地镜像 ID 为 `sha256:a8533e69938d3acd325b300dc15217df7756314f8de5ff3c51d05f913d394ef8`；最小化复制 FFmpeg/ffprobe 的实际动态依赖并写入 190 个包、210 个文件的运行时清单，隔离容器内已真实完成 VP9 WebM 编码和 ffprobe。Scout 当次同样报告 0 项，但人工清单仍包含 `libjxl0.7`，其未修复 jpeg-xl 高危通告按 fail-closed 继续作为正式上线阻塞，不能用 Scout 的零项结果覆盖人工审计。
 - 2026-08-13：Dockerfile 静态检查无警告，生产 Compose 使用合成非秘密参数真实 `config --quiet` 解析通过；Docker/心跳/Compose 聚焦测试 25/25，通过后全量回归 71 个测试文件、804 项通过，2 项 opt-in 数据库测试按设计跳过。桌宠 Vite 构建（67 modules）、落地页 Vite 构建（7 modules）及网站 Next.js 构建（21 routes）全部成功。构建期间未执行 prune、volume rm 或递归删除，未挂载盘根、`D:\桌宠` 或项目根；此前安全检查留下的停止容器也未自动删除。
 - 2026-08-13：容器加固里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-container-hardening-73a3985.bundle`，27,348,374 字节，包含至提交 `73a39857a5bd77f57c625001cf3511664b72ab1f` 的完整历史；`git bundle verify` 通过，SHA-256 为 `93376CD32ACB681610AA185A6A7B36F2F2FAF003714F09073E15D569D18EC177`。
+- 2026-08-13：Lighthouse 数据层 TLS-only 加固提交为 `b4178cbba07009979d16ae99174299d837eae3de`。PostgreSQL 现在以受控 `pg_hba.conf` 先拒绝全部明文连接，再只允许 TLS 1.2+ 与 SCRAM；Redis 关闭明文端口、禁用默认用户，将应用身份限制在固定 key/channel 前缀并拒绝 `FLUSHALL` 等管理/破坏命令。PostgreSQL 与 Redis 使用独立 CA，CA 私钥不进入常驻容器；Compose 不发布数据库端口且强制使用 `repository@sha256` 镜像引用。
+- 2026-08-13：真实 PostgreSQL 18.4 隔离演练报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-tls-rehearsals\data-tls-20260813215358-c5fbb3c7\report.json`：TLSv1.3 认证成功、明文连接被拒绝、001–014 正式迁移成功；额外 015 测试迁移由两个并发 runner 严格串行，恰好一次应用、一次识别为已应用。真实 Redis 隔离演练报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-redis-tls-rehearsals\redis-tls-20260813214958-b8568e64\report.json`：TLS 认证、明文拒绝、越界 key 拒绝及 `FLUSHALL` 拒绝全部通过，容器停止后保留供审计。
+- 2026-08-13：数据层最终回归为 72 个测试文件、812 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；Shell/PowerShell 语法、数据 Compose 解析、桌宠 Vite、落地页 Vite 和网站 Next.js 生产构建全部通过。该加固尚未部署 Lighthouse；本地 Redis 演练使用的 Alpine digest 只证明协议/ACL 功能，不能替代仍待选择和扫描的正式生产镜像。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker、完整零费用多进程闭环及第一阶段生产容器边界已恢复并验证。当前进入生产数据层 TLS-only、故障恢复、生产视觉处理器/validator 与真实供应商适配阶段；真实付费能力和 `studio-production` profile 仍保持关闭。
+- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker、完整零费用多进程闭环、第一阶段生产容器边界及数据层 TLS-only 发布代码均已恢复并验证。当前进入故障恢复、生产视觉处理器/validator、正式镜像选型与真实供应商适配阶段；真实付费能力和 `studio-production` profile 仍保持关闭，数据层新配置尚未部署 Lighthouse。
 
 ## Next
 
-1. 加固 Lighthouse 数据层：PostgreSQL 明文连接必须拒绝、TLS 最低 1.2、Redis TLS/ACL、CA 私钥不进入常驻容器、运行时证书与签发目录分离、镜像引用固定 digest、迁移并发锁与正反向连接验证。
-2. 做 API/outbox/Worker 强制终止、Redis 重启/数据丢失、PostgreSQL 短暂中断与租约过期重投测试；补确定性队列重放/对账工具，保证不会丢任务或重复付费，并补队列积压/死信监控。
+1. 做 API/outbox/Worker 强制终止、Redis 重启/数据丢失、PostgreSQL 短暂中断与租约过期重投测试；补确定性队列重放/对账工具，保证不会丢任务或重复付费，并补队列积压/死信监控。
+2. 选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口；只在完整备份/恢复演练通过后将新的 TLS-only 数据配置部署到 Lighthouse。
 3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
 4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
 5. 到达 `INTEGRATION_GATES.md` 第一项真实门槛时，向用户索取 Kaipay API 调试器协议资料并实现正式 wire adapter；之后才依次进行有费用上限的 ModelArk、COS、CloudBase 和最终上线验收。
