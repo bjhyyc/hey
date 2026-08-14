@@ -12,10 +12,12 @@
 
 ## 需要重新盘点的生产基础设施
 
-- 本机 PostgreSQL 18.4 已完成 001–014 空库与历史支付升级验证；仍需生产实例网络、TLS-only、最小权限、备份与恢复演练。
-- 本地 TLS Redis/BullMQ 多进程闭环与安全 Worker 重启已通过；仍缺生产实例最小权限 ACL、持久化、死信、Redis 数据丢失后的确定性队列重放和恢复演练。
+- 本机 PostgreSQL 18.4 已完成 001–014 空库与历史支付升级验证；现有 Lighthouse 数据层仍需改成明文连接必拒绝的 TLS-only、TLS 1.2+、最小权限、运行时证书与 CA 签发私钥隔离，并完成备份与恢复演练。
+- 本地 TLS Redis/BullMQ 多进程闭环与安全 Worker 重启已通过；仍缺生产实例的独立 Redis CA、最小权限 ACL、持久化、死信、Redis 数据丢失后的确定性队列重放和恢复演练。
 - COS 生产 CAM 最小权限、生命周期、删除和审计策略。
-- Lighthouse Worker 镜像、监控、告警、资源上限和水平扩容。
+- 私有 outbox/Worker Compose、运行时心跳、非 root/read-only/资源上限及最小化 distroless 镜像已完成；镜像尚未推送生产仓库并以 registry digest 部署，队列积压/死信告警与水平扩容仍未完成。
+- 当前媒体 Worker 的人工运行时清单仍包含 `libjxl0.7`；即使 Docker Scout 报告 0 项，先前识别的未修复 jpeg-xl `CVE-2025-70103` 仍按高危阻塞正式发布。必须换成不含该库的最小 FFmpeg 或验证过的已修复版本，并重新扫描、生成 SBOM、实测 VP9/alpha 后才能解除。
+- `PETPACK_WORKER_COMPONENTS_MODULE` 所需的生产来源照、母图、抠图/QA 与 delivery-validator 组件仍未实现 production-assured manifest；当前 fixture 组件只可用于零费用彩排，生产 profile 保持关闭。
 
 ## 视觉处理与真实验收
 

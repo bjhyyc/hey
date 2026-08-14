@@ -48,17 +48,22 @@
 - 2026-08-13：Docker 仅复用隔离 Redis 容器 `petpack-rebuild-redis-20260813`；宿主挂载严格限定为项目 `.tmp\redis-rehearsal-20260813\data`（读写）和同级 `tls`（只读），没有挂载盘根、`D:\桌宠` 或项目根，也没有执行 prune、volume rm 或递归清理。Docker Desktop 数据仍位于 `D:\Docker\wsl`。
 - 2026-08-13：本里程碑全量回归 67 个测试文件、790 项通过；两项 PostgreSQL opt-in 集成测试另在真实 PG18 隔离库 2/2 通过。桌宠 Vite 构建（67 modules）、落地页 Vite 构建（7 modules）和网站 Next.js 构建（21 routes）全部成功。
 - 2026-08-13：零费用完整闭环提交为 `189f0564534dfd9bb09170519d46430d18143d1b`；完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-zero-cost-189f056.bundle`，27,330,171 字节，`git bundle verify` 通过，SHA-256 为 `4BFBC573C1F375D0F48C2143C27C32EDBFF193031AC09A86D2582FF39BFE7435`。
+- 2026-08-13：生产 Worker 容器边界提交为 `9c7a2a6fc2fe32191218721dc432708a49a6d264`。新增仅在显式 `studio-production` profile 下启用的私有 outbox/Worker Compose：不发布宿主端口、不加入公网 edge 网络、不挂载宿主项目目录；使用外置精确 secret 文件、独立 PostgreSQL/Redis CA、只读根文件系统、非 root 用户、全部 capability 丢弃、`no-new-privileges`、资源上限、日志轮转和容器内心跳健康检查。
+- 2026-08-13：基础运行时镜像 `petpack-platform-runtime:9c7a2a6` 已从固定 Node 22.22.2 builder 与固定 distroless runtime 构建，约 59 MB，本地镜像 ID 为 `sha256:a7cb0c3c155005de32240a45edd3ffe6d18ea21593935379bac724a93980494d`；最终镜像无 shell/npm，运行用户为 `10001:10001`，Docker Scout 当次结果为 0C/0H/0M/0L。
+- 2026-08-13：媒体 Worker 镜像 `petpack-studio-worker:9c7a2a6` 约 163 MB，本地镜像 ID 为 `sha256:a8533e69938d3acd325b300dc15217df7756314f8de5ff3c51d05f913d394ef8`；最小化复制 FFmpeg/ffprobe 的实际动态依赖并写入 190 个包、210 个文件的运行时清单，隔离容器内已真实完成 VP9 WebM 编码和 ffprobe。Scout 当次同样报告 0 项，但人工清单仍包含 `libjxl0.7`，其未修复 jpeg-xl 高危通告按 fail-closed 继续作为正式上线阻塞，不能用 Scout 的零项结果覆盖人工审计。
+- 2026-08-13：Dockerfile 静态检查无警告，生产 Compose 使用合成非秘密参数真实 `config --quiet` 解析通过；Docker/心跳/Compose 聚焦测试 25/25，通过后全量回归 71 个测试文件、804 项通过，2 项 opt-in 数据库测试按设计跳过。桌宠 Vite 构建（67 modules）、落地页 Vite 构建（7 modules）及网站 Next.js 构建（21 routes）全部成功。构建期间未执行 prune、volume rm 或递归删除，未挂载盘根、`D:\桌宠` 或项目根；此前安全检查留下的停止容器也未自动删除。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker 及完整零费用多进程闭环已恢复并验证。当前进入生产容器、监控、故障恢复与真实供应商适配阶段；真实付费能力仍保持关闭。
+- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker、完整零费用多进程闭环及第一阶段生产容器边界已恢复并验证。当前进入生产数据层 TLS-only、故障恢复、生产视觉处理器/validator 与真实供应商适配阶段；真实付费能力和 `studio-production` profile 仍保持关闭。
 
 ## Next
 
-1. 补齐 Worker 镜像、健康检查、资源上限、队列积压/死信监控与安全部署配置，继续保持 Studio 业务路由不对公网开放。
-2. 做 API/outbox/Worker 强制终止、Redis 重启/数据丢失、PostgreSQL 短暂中断与租约过期重投测试；补确定性队列重放/对账工具，保证不会丢任务或重复付费。
-3. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
-4. 到达 `INTEGRATION_GATES.md` 第一项真实门槛时，向用户索取 Kaipay API 调试器协议资料并实现正式 wire adapter；之后才依次进行有费用上限的 ModelArk、COS、CloudBase 和最终上线验收。
+1. 加固 Lighthouse 数据层：PostgreSQL 明文连接必须拒绝、TLS 最低 1.2、Redis TLS/ACL、CA 私钥不进入常驻容器、运行时证书与签发目录分离、镜像引用固定 digest、迁移并发锁与正反向连接验证。
+2. 做 API/outbox/Worker 强制终止、Redis 重启/数据丢失、PostgreSQL 短暂中断与租约过期重投测试；补确定性队列重放/对账工具，保证不会丢任务或重复付费，并补队列积压/死信监控。
+3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
+4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
+5. 到达 `INTEGRATION_GATES.md` 第一项真实门槛时，向用户索取 Kaipay API 调试器协议资料并实现正式 wire adapter；之后才依次进行有费用上限的 ModelArk、COS、CloudBase 和最终上线验收。
 
 ## Working rules
 
