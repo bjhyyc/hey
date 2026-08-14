@@ -85,6 +85,7 @@
 - 2026-08-14：Seedream 请求已固定 `sequential_image_generation=disabled` 与 `stream=false`，确保每个母图任务只返回一张；生产 Compose 默认请求 1536×864 后再规范化为 854×480 角色画布。Seedance 2.0 请求为首尾帧图片显式写入 `first_frame`/`last_frame` role，时长只允许 4–15 秒整数，保持 480p、16:9、无音频、无水印并返回尾帧。
 - 2026-08-14：最新零密钥硬故障全链彩排报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814235337-f008d9c2\report.json`，硬中断控制报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\hard-kill-rehearsals\hard-kill-20260814165323-9073c12c\report.json`。3 张来源照、3 张母图、7 个动作、12/12 QA、38/38 执行、39/39 outbox 全部完成，API/Outbox/Worker 各自硬中断后恢复，外部调用为 0；下载的 8 文件 PetPack 已由原版客户端 `importPetpack` 实际导入。
 - 2026-08-14：最终本地回归为 84 个测试文件、891 项通过，2 个 opt-in PostgreSQL 集成文件按设计跳过；网站 4 个测试文件、22 项通过。桌宠 Vite 生产构建（67 modules）与网站 Next.js 生产构建（16 个静态页面及全部动态业务路由）均成功；`git diff --check` 无空白错误。本轮没有读取真实 API key、发送短信、创建真实订单、调用 ModelArk 或产生外部费用。
+- 2026-08-14：Kaipay V3 与 ModelArk 契约里程碑提交为 `b5ee22a5e4bfb6d0f71c6035d2c5e4b6332fdecf`。完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-kaipay-v3-b5ee22a.bundle`，27,491,109 字节，`git bundle verify` 通过，SHA-256 为 `8E02D8B803B862660A4B17B311E86FD9EEE50FB142CFBBBDECA4A4F3F886FB8F`。
 
 ## In progress
 
