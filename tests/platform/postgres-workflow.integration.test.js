@@ -49,7 +49,7 @@ integration("PostgreSQL production workflow integration", () => {
     await pool.query(
       `INSERT INTO customer_order
         (id, user_id, project_id, plan_id, amount_fen, payment_method, status, paid_at)
-       VALUES ($1, $2, $3, $4, 100, 'ALIPAY', 'paid', now())
+       VALUES ($1, $2, $3, $4, 100, 'KAIPAY', 'paid', now())
        ON CONFLICT (id) DO NOTHING`,
       [ids.order, ids.user, ids.project, ids.plan]
     );

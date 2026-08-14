@@ -1,6 +1,6 @@
 import "server-only";
 
-import { normalizeStudioPath, StudioGatewayError } from "./studio-gateway-core";
+import { platformStudioPath, StudioGatewayError } from "./studio-gateway-core";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -24,10 +24,15 @@ export function readStudioGatewayConfiguration(
     if (origin.protocol !== "https:" && !developmentLoopback) {
       return { configured: false, reason: "服务端工作流地址无效" };
     }
-    if (origin.username || origin.password || origin.search || origin.hash) {
+    if (
+      origin.username ||
+      origin.password ||
+      origin.search ||
+      origin.hash ||
+      origin.pathname !== "/"
+    ) {
       return { configured: false, reason: "服务端工作流地址无效" };
     }
-    origin.pathname = `${origin.pathname.replace(/\/$/, "")}/`;
     return { configured: true, origin, token };
   } catch {
     return { configured: false, reason: "服务端工作流地址无效" };
@@ -51,7 +56,7 @@ export async function serverStudioRequest(
     );
   }
 
-  const target = new URL(normalizeStudioPath(path), configuration.origin);
+  const target = new URL(platformStudioPath(path), configuration.origin);
   const incoming = new URL(request.url);
   target.search = incoming.search;
 

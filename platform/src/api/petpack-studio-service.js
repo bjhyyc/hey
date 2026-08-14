@@ -323,7 +323,7 @@ class PetPackStudioService {
     if (reconciliation.state === "paid" && order.productionRunNeeded) {
       await this.workflow.startPaidOrder({ order, projectId: order.projectId, runId: order.productionRunId });
     }
-    return { accepted: true };
+    return { accepted: true, acknowledgement: reconciliation.acknowledgement };
   }
 }
 

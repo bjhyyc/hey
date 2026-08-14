@@ -4,6 +4,8 @@ trap 'printf "Data verification failed at line %s.\n" "$LINENO" >&2' ERR
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
+expected_migration_count="$(find "$script_dir/../../../platform/sql" -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d '[:space:]')"
+[[ "$expected_migration_count" =~ ^[1-9][0-9]*$ ]]
 
 postgres_health="$(sudo docker inspect --format='{{.State.Health.Status}}' petpack-postgres)"
 redis_health="$(sudo docker inspect --format='{{.State.Health.Status}}' petpack-redis)"
@@ -32,7 +34,7 @@ postgres_result="$(sudo docker run --rm \
 IFS='|' read -r app_role tls_enabled migration_count table_count <<<"$postgres_result"
 [[ "$app_role" == petpack_app ]]
 [[ "$tls_enabled" == true ]]
-[[ "$migration_count" == 12 ]]
+[[ "$migration_count" == "$expected_migration_count" ]]
 [[ "$table_count" =~ ^[1-9][0-9]*$ ]]
 
 checksums="$(sudo docker exec -u postgres petpack-postgres psql \

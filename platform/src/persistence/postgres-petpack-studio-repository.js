@@ -45,6 +45,11 @@ const ADMIN_OPERATION_STATUSES = Object.freeze([
 ]);
 const ADMIN_OPERATION_STATUS_SET = new Set(ADMIN_OPERATION_STATUSES);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PAYMENT_NOTIFICATION_ALGORITHM = "aes-256-gcm";
+const PAYMENT_NOTIFICATION_IV_BYTES = 12;
+const PAYMENT_NOTIFICATION_TAG_BYTES = 16;
+const PAYMENT_NOTIFICATION_MAX_BYTES = 1024 * 1024;
+const PAYMENT_EVENT_PROVIDER = "KAIPAY";
 
 // These fragments are selected exclusively from ADMIN_OPERATION_STATUSES;
 // browser input is never interpolated into SQL. `action` / `outbox` aliases
@@ -131,6 +136,50 @@ function oneRow(result, message) {
 
 function nullableString(value) {
   return typeof value === "string" && value ? value : null;
+}
+
+function normalizePaymentNotificationEncryptionKey(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (Buffer.isBuffer(value)) {
+    if (value.length !== 32) throw new Error("Payment notification encryption key must contain exactly 32 bytes");
+    return Buffer.from(value);
+  }
+  if (typeof value !== "string") throw new Error("Payment notification encryption key is invalid");
+  const normalized = value.trim();
+  const decoded = /^[a-f0-9]{64}$/i.test(normalized)
+    ? Buffer.from(normalized, "hex")
+    : Buffer.from(normalized, "base64");
+  if (decoded.length !== 32) throw new Error("Payment notification encryption key must contain exactly 32 bytes");
+  return decoded;
+}
+
+function rawNotificationBytes(value) {
+  const bytes = Buffer.isBuffer(value) ? Buffer.from(value) : typeof value === "string" ? Buffer.from(value, "utf8") : null;
+  if (!bytes || bytes.length < 1 || bytes.length > PAYMENT_NOTIFICATION_MAX_BYTES) {
+    throw new Error("Raw payment notification byte size is invalid");
+  }
+  return bytes;
+}
+
+function encryptPaymentNotification(value, key, iv = crypto.randomBytes(PAYMENT_NOTIFICATION_IV_BYTES)) {
+  const encryptionKey = normalizePaymentNotificationEncryptionKey(key);
+  if (!encryptionKey) throw new Error("Payment notification encryption key is required");
+  if (!Buffer.isBuffer(iv) || iv.length !== PAYMENT_NOTIFICATION_IV_BYTES) throw new Error("Payment notification IV is invalid");
+  const cipher = crypto.createCipheriv(PAYMENT_NOTIFICATION_ALGORITHM, encryptionKey, iv);
+  const ciphertext = Buffer.concat([cipher.update(rawNotificationBytes(value)), cipher.final()]);
+  return Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), ciphertext]);
+}
+
+function assertPaymentProvider(value) {
+  if (value !== PAYMENT_EVENT_PROVIDER) throw new Error("Payment event provider must be KAIPAY");
+  return value;
+}
+
+function optionalPaymentStatus(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const normalized = requiredString(value, "Payment provider status").toUpperCase();
+  if (!["PAID", "PENDING", "EXPIRED", "FAILED"].includes(normalized)) throw new Error("Payment provider status is not canonical");
+  return normalized;
 }
 
 function isoTimestampOrNull(value) {
@@ -288,7 +337,7 @@ function checkoutIdempotencyDigest({ userId, idempotencyKey }) {
 
 function assertPaymentMethod(paymentMethod) {
   if (!PAYMENT_METHODS.includes(paymentMethod)) {
-    throw new Error("PetPack Studio accepts only ALIPAY payments");
+    throw new Error("PetPack Studio accepts only KAIPAY payments");
   }
   return paymentMethod;
 }
@@ -537,7 +586,7 @@ function normalizeReconciliation(reconciliation) {
  * text, provider payloads, credentials, or permanent media URLs.
  */
 class PostgresPetPackStudioRepository {
-  constructor({ database, idFactory = crypto.randomUUID, reservationTtlSeconds = 600, logger = console } = {}) {
+  constructor({ database, idFactory = crypto.randomUUID, reservationTtlSeconds = 600, paymentNotificationEncryptionKey, logger = console } = {}) {
     this.database = requireDatabase(database);
     if (typeof idFactory !== "function") throw new Error("An ID factory is required");
     if (!Number.isInteger(reservationTtlSeconds) || reservationTtlSeconds < 60 || reservationTtlSeconds > 3600) {
@@ -545,6 +594,7 @@ class PostgresPetPackStudioRepository {
     }
     this.idFactory = idFactory;
     this.reservationTtlSeconds = reservationTtlSeconds;
+    this.paymentNotificationEncryptionKey = normalizePaymentNotificationEncryptionKey(paymentNotificationEncryptionKey);
     this.logger = logger;
   }
 
@@ -828,6 +878,156 @@ class PostgresPetPackStudioRepository {
 
   async getPromptHistory(actionId) {
     return this.getPromptVersions(actionId);
+  }
+
+  async getPaymentOrder(platformOrderId) {
+    const orderId = requiredString(platformOrderId, "Platform order ID");
+    return this._transaction(async (tx) => {
+      const row = rows(await tx.query(
+        `SELECT id AS order_id, user_id AS order_user_id, project_id, plan_id,
+                amount_fen, currency, payment_method, status AS order_status,
+                version, provider_order_id, paid_at, created_at AS order_created_at,
+                updated_at AS order_updated_at
+           FROM customer_order
+          WHERE id = $1`,
+        [orderId]
+      ));
+      return row.length ? mapOrder(row[0]) : null;
+    });
+  }
+
+  async appendIdempotent(event = {}) {
+    const platformOrderId = requiredString(event.platformOrderId, "Payment event platform order ID");
+    const idempotencyKey = requiredString(event.idempotencyKey, "Payment event idempotency key");
+    const eventType = requiredString(event.type, "Payment event type");
+    const provider = assertPaymentProvider(event.provider || PAYMENT_EVENT_PROVIDER);
+    const providerOrderId = nullableString(event.providerOrderId);
+    const adapterVersion = requiredString(event.adapterVersion, "Payment adapter version");
+    const providerStatus = optionalPaymentStatus(event.providerStatus);
+    const outcome = event.state && RECONCILABLE_PAYMENT_STATES.has(event.state) ? event.state : null;
+    const rawNotificationDigest = nullableString(event.rawNotificationDigest);
+    const signatureValid = typeof event.signatureValid === "boolean" ? event.signatureValid : null;
+    if (idempotencyKey.length > 512 || eventType.length > 128 || adapterVersion.length > 128) {
+      throw new Error("Payment event metadata is too long");
+    }
+    return this._transaction(async (tx) => {
+      const order = oneRow(await tx.query(
+        "SELECT id, amount_fen, payment_method FROM customer_order WHERE id = $1 FOR UPDATE",
+        [platformOrderId]
+      ), "Payment order was not found");
+      if (eventType === "checkout_created" || eventType === "checkout_created_simulated") {
+        const amountFen = databaseNumber(event.amountFen, "Checkout amountFen");
+        if (amountFen !== databaseNumber(order.amount_fen, "Order amountFen")) throw new Error("Checkout amount does not match the order");
+        const paymentMethod = assertPaymentMethod(event.paymentMethod);
+        if (paymentMethod !== order.payment_method || !providerOrderId) throw new Error("Checkout payment identity does not match the order");
+        const insertedAttempt = rows(await tx.query(
+          `INSERT INTO payment_attempt
+            (id, order_id, provider, provider_order_id, payment_method, amount_fen,
+             status, idempotency_key, adapter_version)
+           VALUES ($1, $2, $3, $4, $5, $6, 'created', $7, $8)
+           ON CONFLICT (idempotency_key) DO NOTHING
+           RETURNING id`,
+          [this.idFactory(), platformOrderId, provider, providerOrderId, paymentMethod, amountFen, idempotencyKey, adapterVersion]
+        ));
+        if (!insertedAttempt.length) {
+          const existing = oneRow(await tx.query(
+            `SELECT order_id, provider, provider_order_id, payment_method,
+                    amount_fen, adapter_version
+               FROM payment_attempt
+              WHERE idempotency_key = $1`,
+            [idempotencyKey]
+          ), "Payment attempt idempotency record was not found");
+          if (existing.order_id !== platformOrderId || existing.provider !== provider ||
+              existing.provider_order_id !== providerOrderId || existing.payment_method !== paymentMethod ||
+              databaseNumber(existing.amount_fen, "Existing checkout amountFen") !== amountFen ||
+              existing.adapter_version !== adapterVersion) {
+            throw new Error("Payment attempt idempotency key belongs to another checkout");
+          }
+        }
+      }
+      const inserted = rows(await tx.query(
+        `INSERT INTO payment_event
+          (id, order_id, provider_order_id, event_type, idempotency_key,
+           raw_notification_digest, signature_valid, provider_status, outcome,
+           provider, adapter_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::order_status, $10, $11)
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING id`,
+        [
+          this.idFactory(), platformOrderId, providerOrderId, eventType, idempotencyKey,
+          rawNotificationDigest,
+          signatureValid,
+          providerStatus, outcome, provider, adapterVersion
+        ]
+      ));
+      if (!inserted.length) {
+        const existing = oneRow(await tx.query(
+          `SELECT order_id, provider_order_id, event_type, raw_notification_digest,
+                  signature_valid, provider_status, outcome, provider, adapter_version
+             FROM payment_event
+            WHERE idempotency_key = $1`,
+          [idempotencyKey]
+        ), "Payment event idempotency record was not found");
+        if (existing.order_id !== platformOrderId || nullableString(existing.provider_order_id) !== providerOrderId ||
+            existing.event_type !== eventType || nullableString(existing.raw_notification_digest) !== rawNotificationDigest ||
+            existing.signature_valid !== signatureValid || nullableString(existing.provider_status) !== providerStatus ||
+            nullableString(existing.outcome) !== outcome || existing.provider !== provider ||
+            existing.adapter_version !== adapterVersion) {
+          throw new Error("Payment event idempotency key conflicts with another event");
+        }
+      }
+      return { inserted: inserted.length === 1 };
+    });
+  }
+
+  async storeEncryptedNotification(event = {}) {
+    if (!this.paymentNotificationEncryptionKey) throw new Error("Payment notification encryption key is required");
+    const platformOrderId = requiredString(event.platformOrderId, "Payment notification platform order ID");
+    const idempotencyKey = requiredString(event.idempotencyKey, "Payment notification idempotency key");
+    const provider = assertPaymentProvider(event.provider || PAYMENT_EVENT_PROVIDER);
+    const adapterVersion = requiredString(event.adapterVersion, "Payment adapter version");
+    const rawBytes = rawNotificationBytes(event.rawNotification);
+    const digest = crypto.createHash("sha256").update(rawBytes).digest("hex");
+    const ciphertext = encryptPaymentNotification(rawBytes, this.paymentNotificationEncryptionKey);
+    return this._transaction(async (tx) => {
+      const inserted = rows(await tx.query(
+        `INSERT INTO payment_event
+          (id, order_id, provider_order_id, event_type, idempotency_key,
+           raw_notification_ciphertext, raw_notification_digest, provider,
+           adapter_version)
+         VALUES ($1, $2, $3, 'payment_notification_raw', $4, $5, $6, $7, $8)
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING id`,
+        [this.idFactory(), platformOrderId, nullableString(event.providerOrderId), idempotencyKey, ciphertext, digest, provider, adapterVersion]
+      ));
+      if (!inserted.length) {
+        const existing = oneRow(await tx.query(
+          `SELECT order_id, provider_order_id, raw_notification_digest, provider, adapter_version
+             FROM payment_event
+            WHERE idempotency_key = $1`,
+          [idempotencyKey]
+        ), "Encrypted payment notification idempotency record was not found");
+        if (existing.order_id !== platformOrderId ||
+            nullableString(existing.provider_order_id) !== nullableString(event.providerOrderId) ||
+            existing.raw_notification_digest !== digest || existing.provider !== provider ||
+            existing.adapter_version !== adapterVersion) {
+          throw new Error("Encrypted payment notification idempotency key conflicts with another payload");
+        }
+      }
+      return { inserted: inserted.length === 1, digest };
+    });
+  }
+
+  async countLegacyOpenPayments() {
+    return this._transaction(async (tx) => {
+      const row = oneRow(await tx.query(
+        `SELECT count(*)::integer AS count
+           FROM customer_order
+          WHERE payment_method = 'ALIPAY'
+            AND status IN ('draft', 'pending_payment', 'payment_review', 'refund_pending')`
+      ), "Legacy payment count was not returned");
+      return databaseNonNegativeNumber(row.count, "Legacy open payment count");
+    });
   }
 
   async listPublishedMetadata() {
@@ -1882,6 +2082,8 @@ module.exports = {
   mapProject,
   mapReservation,
   mapRun,
+  encryptPaymentNotification,
+  normalizePaymentNotificationEncryptionKey,
   normalizeAdminOperationsQuery,
   normalizeReconciliation
 };

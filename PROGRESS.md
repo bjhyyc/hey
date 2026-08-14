@@ -33,17 +33,23 @@
 - 2026-08-13：新增迁移 `012_dual_character_masters.sql`，已在独立 PostgreSQL 18.4 空库中按 001–012 顺序真实执行成功，建立 39 张业务表；关键约束确认来源照只能 3–4 张、画布仅允许历史/480p 两个版本、提示词兼容 480p/历史 720p。真实数据库事务测试证明已付款订单会原子写入冻结模型版本、运行状态和仅含 ID 的 outbox 任务，重复回调不创建第二个运行记录。
 - 2026-08-13：从恢复的三母图原文和老版稳定七动作派生 `docs/prompts/正式发布候选·三母图七动作·480p-v1.txt`。解析器确认恰好 3 个图片段和 7 个视频段，时长 4/6/6/7/4/6/7 秒；已去除第三方动画品牌、音频要求、720p/1280×720 遗留，保留老版动作节奏并加入睡眠单周期呼吸、固定镜头、身份花色和首尾静止约束。原始恢复文件未改写。
 - 2026-08-13：本里程碑全量回归 53 个测试文件、708 项通过；新增后端合同测试 9 项及可选 PostgreSQL 集成测试 1 项，平台全部 JavaScript 语法检查通过；桌宠 Vite 与网站 Next.js 生产构建均成功。
+- 2026-08-13：历史支付宝运行时代码已替换为 Kaipay 单一支付合同。开发模拟支付与真实 Kaipay provider 分离；生产 provider 只接受版本化 client / notification protocol，不猜测 API 调试器字段、签名、验签或回执。旧支付宝回调关闭，Kaipay 回调要求原始字节，并在服务端以 AES-256-GCM 加密留痕后通过主动查单二次确认。
+- 2026-08-13：新增支付迁移 013/014，并在 PostgreSQL 18.4 两种路径真实验证：空库按 001–014 逐文件独立事务成功；升级库先写入历史 ALIPAY 未完成订单再执行 013/014，历史订单与空 adapter 记录保持可读，新 KAIPAY 记录必须携带 adapter version。Kaipay 持久化与生产工作流真库集成测试 2/2 通过。
+- 2026-08-13：修复网站服务端网关路径错层，纯 `PETPACK_STUDIO_API_ORIGIN` 现在会把所有平台调用规范化为唯一 `/api/...`，已带前缀也不会重复；伪 origin（路径、凭据、查询或 hash）会 fail-closed。Web 聚焦测试 18 项及 Next.js 生产构建通过。
+- 2026-08-13：补齐 COS 私有对象 `getPrivate`：服务器凭据 HEAD 后以 ETag 条件 GET 有界流式读取，校验 MIME、声明长度、实际传输长度与对象变化，不生成签名 URL；三个媒体 workspace 均可构造，聚焦测试 7/7 通过。
+- 2026-08-13：新增单 BullMQ 队列统一 job router，完整白名单覆盖 15 个工作名；母图、视频与 PetPack 各自只进入对应 handler，`await-photos` 作为严格校验的幂等状态标记消费，未知任务 fail-closed。路由测试 19/19 通过。
+- 2026-08-13：本轮全量回归 56 个测试文件、744 项通过、2 项 opt-in 数据库测试在常规命令中跳过且已单独在 PG18 真库通过；桌宠 Vite 生产构建（67 modules）及网站 Next.js 生产构建（21 routes）均成功。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站源码及后端 3–4 图/三母图/480p 核心合同已恢复并验证，正在替换历史支付宝实现为单一 Kaipay 适配器，并恢复完整可运行的 API/Worker 装配。
+- 从干净骨架重新开发；客户端、最新版网站源码、3–4 图/三母图/480p 核心合同、Kaipay 安全边界、COS 私有读取与统一队列路由已恢复并验证。当前正在装配完整 Studio API、独立 outbox dispatcher 和统一 Worker 进程。
 
 ## Next
 
-1. 以 Kaipay 单一支付合同替换历史直连支付宝代码；开发模拟支付与生产 Kaipay 严格隔离，未知协议字段不猜测。
-2. 恢复 Studio API、outbox dispatcher、BullMQ Worker 的可部署运行时装配，并跑通模拟支付后的七视频并行、后处理、质检、PetPack 打包下载闭环。
-3. 接回 PostgreSQL、Redis/BullMQ、COS 与 ModelArk 的生产配置；生产参数或外部能力未完成时全部 fail-closed。
-4. 完整本地验收、构建、部署和真实 API 小额/限额测试。
+1. 装配 Studio API：认证、仓储、工作流、COS、开发模拟支付、生产 Kaipay fail-closed 边界及完整 HTTP 路由。
+2. 新增独立 outbox dispatcher 与统一 BullMQ Worker 入口，补齐镜像依赖、健康检查和安全关闭。
+3. 用 PostgreSQL + Redis + 本地合成媒体跑通模拟支付后的 3 图、三母图、七视频并行、后处理、质检、PetPack 打包下载多进程闭环及崩溃恢复。
+4. 在 Kaipay 正式协议与 ModelArk 生产参数到位后，分别执行有费用上限的小额支付/退款和真实生成验收，再更新部署。
 
 ## Working rules
 

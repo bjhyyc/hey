@@ -18,7 +18,7 @@ const HTTP_API_ROUTES = Object.freeze({
   CONFIRM_CHARACTER: "POST /api/projects/:projectId/character/confirm",
   GET_PROJECT: "GET /api/projects/:projectId",
   CREATE_PETPACK_DOWNLOAD: "POST /api/projects/:projectId/petpack-download",
-  ALIPAY_NOTIFICATION: "POST /api/payments/alipay/notify/:platformOrderId",
+  KAIPAY_NOTIFICATION: "POST /api/payments/kaipay/notify/:platformOrderId",
   ADMIN_OPERATIONS: "GET /api/admin/operations",
   ADMIN_OPERATION_COSTS: "GET /api/admin/operations/costs",
   ADMIN_RETENTION_PLAN: "GET /api/admin/retention/plan",
@@ -123,17 +123,28 @@ function decodeJsonObject(value, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES } = {})
 
 // Payment signatures are calculated over the provider's original form body.
 // This boundary must not parse and re-serialize it before the server-side
-// Alipay verifier receives it. It only enforces a bounded, non-empty payload.
+// Kaipay's versioned verifier receives it. It only enforces a bounded,
+// non-empty payload and never parses/re-serializes signed provider bytes.
 function readBoundedRawNotification(request, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES } = {}) {
-  const rawNotification = request.rawBody === undefined ? request.body : request.rawBody;
+  const rawNotification = request.rawBody;
   if (typeof rawNotification === "string" || Buffer.isBuffer(rawNotification)) {
     if (!rawNotification.length || Buffer.byteLength(rawNotification) > maxJsonBytes) throw badRequest("支付通知内容无效");
     return rawNotification;
   }
-  if (!isPlainObject(rawNotification)) throw badRequest("支付通知内容无效");
-  assertNoUnsafeJsonKeys(rawNotification);
-  if (Buffer.byteLength(JSON.stringify(rawNotification), "utf8") > maxJsonBytes) throw badRequest("支付通知内容过大");
-  return rawNotification;
+  throw badRequest("支付通知必须保留原始字节");
+}
+
+function requirePaymentAcknowledgement(value) {
+  const status = Number(value && value.status);
+  const body = value && typeof value.body === "string" ? value.body : "";
+  const contentType = value && typeof value.contentType === "string" ? value.contentType.trim() : "";
+  const permittedStatus = (status >= 200 && status <= 299) || (status >= 400 && status <= 599);
+  if (!Number.isInteger(status) || !permittedStatus ||
+      !body || Buffer.byteLength(body, "utf8") > 4096 ||
+      !/^[A-Za-z0-9!#$&^_.+\-]+\/[A-Za-z0-9!#$&^_.+\-]+(?:; ?charset=[A-Za-z0-9._-]+)?$/.test(contentType)) {
+    throw new Error("The Kaipay adapter returned an invalid callback acknowledgement");
+  }
+  return { status, body, contentType };
 }
 
 function assertExactKeys(value, { allowed, required = allowed }) {
@@ -819,8 +830,8 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
   if (normalService && method === "POST" && projectPrefix && segments.length === 4 && segments[2] && segments[3] === "petpack-download") {
     return { id: "petpack_download", requiresActor: true, projectId: requirePathParameter(segments[2], "项目 ID") };
   }
-  if (normalService && method === "POST" && ((is("api", "payments", "alipay", "notify", segments[4])) || (is("api", "payments", "alipay", "notifications", segments[4])))) {
-    return { id: "alipay_notification", platformOrderId: requirePathParameter(segments[4], "平台订单 ID") };
+  if (normalService && method === "POST" && ((is("api", "payments", "kaipay", "notify", segments[4])) || (is("api", "payments", "kaipay", "notifications", segments[4])))) {
+    return { id: "kaipay_notification", platformOrderId: requirePathParameter(segments[4], "平台订单 ID") };
   }
   if (method === "GET" && is("api", "admin", "operations") && typeof adminOperationsService?.listOperations === "function") {
     return { id: "admin_operations", requiresActor: true, acceptsQuery: true };
@@ -954,12 +965,13 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         assertExactKeys(decodeJsonObject(request.body, { maxJsonBytes }), { allowed: [] });
         return { status: 200, body: serializeDownload(await normalService.createPetpackDownload({ actor, projectId: route.projectId })) };
       }
-      case "alipay_notification": {
+      case "kaipay_notification": {
         const rawNotification = readBoundedRawNotification(request, { maxJsonBytes });
-        await normalService.handlePaymentNotification({ platformOrderId: route.platformOrderId, rawNotification });
-        // Alipay requires this exact acknowledgement body or it retries the
-        // notification. Reconciliation details remain server-only.
-        return { status: 200, headers: { "content-type": "text/plain; charset=utf-8" }, body: "success" };
+        const result = await normalService.handlePaymentNotification({ platformOrderId: route.platformOrderId, rawNotification });
+        // The exact Kaipay acknowledgement is supplied by the pinned protocol
+        // adapter. The HTTP layer validates it but never guesses provider text.
+        const acknowledgement = requirePaymentAcknowledgement(result && result.acknowledgement);
+        return { status: acknowledgement.status, headers: { "content-type": acknowledgement.contentType }, body: acknowledgement.body };
       }
       case "admin_operations": {
         assertNoBody(request);
@@ -1075,6 +1087,7 @@ module.exports = {
   mapError,
   parseRequestPath,
   readBoundedRawNotification,
+  requirePaymentAcknowledgement,
   serializeExpiredSessionCookie,
   serializeAdminCostSummary,
   serializeAdminOperationsPage,

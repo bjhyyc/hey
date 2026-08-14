@@ -18,7 +18,7 @@ export function NewProjectForm() {
       const result = await studioBrowserApi.createCheckout({
         planCode: "petpack-seven-action-v1",
         displayName: displayName.trim(),
-        paymentMethod: "kaipay",
+        paymentMethod: "KAIPAY",
         idempotencyKey: crypto.randomUUID(),
       });
       if (result.checkout.checkoutUrl) {

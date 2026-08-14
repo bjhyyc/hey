@@ -26,6 +26,13 @@ export function normalizeStudioPath(path: string | readonly string[]): string {
   return normalized.join("/");
 }
 
+export function platformStudioPath(path: string | readonly string[]): string {
+  const normalized = normalizeStudioPath(path);
+  return normalized === "api" || normalized.startsWith("api/")
+    ? `/${normalized}`
+    : `/api/${normalized}`;
+}
+
 export function browserStudioUrl(path: string | readonly string[]): string {
   return `/api/studio/${normalizeStudioPath(path)}`;
 }

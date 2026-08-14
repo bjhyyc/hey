@@ -8,6 +8,20 @@ const DEFAULT_MAX_VERIFIED_OBJECT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_ARCHIVE_OBJECT_BYTES = 256 * 1024 * 1024;
 const BUCKET_PATTERN = /^[a-z0-9][a-z0-9-]{1,58}-[0-9]{5,20}$/;
 const REGION_PATTERN = /^ap-[a-z0-9-]{2,40}$/;
+const CONTENT_TYPE_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:\s*;[^\r\n]*)?$/;
+
+function classifyCosFailure(cause) {
+  const code = typeof cause?.code === "string" ? cause.code : "";
+  const statusCode = Number.isSafeInteger(cause?.statusCode) ? cause.statusCode : undefined;
+  if (code === "private_object_too_large" || code === "verified_object_too_large") return "object_too_large";
+  if (code === "invalid_object_metadata" || code === "invalid_download_stream") return "invalid_response";
+  if (code === "object_length_changed" || code === "object_metadata_changed" || statusCode === 412) return "object_changed";
+  if (statusCode === 404 || code === "NoSuchKey" || code === "NoSuchBucket" || code === "NotFound") return "not_found";
+  if (statusCode === 401 || statusCode === 403 || code === "AccessDenied" || code === "InvalidAccessKeyId") return "access_denied";
+  if (statusCode === 408 || /timeout/i.test(code)) return "timeout";
+  if (statusCode === 429 || (statusCode !== undefined && statusCode >= 500)) return "upstream_unavailable";
+  return "request_failed";
+}
 
 class TencentCosPrivateObjectError extends Error {
   constructor(operation, cause) {
@@ -17,6 +31,7 @@ class TencentCosPrivateObjectError extends Error {
     this.code = typeof cause?.code === "string" ? cause.code : "cos_request_failed";
     this.statusCode = Number.isSafeInteger(cause?.statusCode) ? cause.statusCode : undefined;
     this.requestId = typeof cause?.RequestId === "string" ? cause.RequestId : undefined;
+    this.category = classifyCosFailure(cause);
   }
 }
 
@@ -83,6 +98,35 @@ function headerValue(headers, name) {
     }
   }
   return undefined;
+}
+
+function readObjectMetadata(response, { maximumBytes, tooLargeCode = "private_object_too_large", operation } = {}) {
+  const contentType = headerValue(response?.headers, "content-type")?.trim();
+  const contentLength = headerValue(response?.headers, "content-length");
+  const byteSize = Number(contentLength);
+  if (!contentType || contentType.length > 255 || !CONTENT_TYPE_PATTERN.test(contentType) ||
+      !/^[1-9][0-9]*$/.test(contentLength || "") || !Number.isSafeInteger(byteSize)) {
+    throw new TencentCosPrivateObjectError(operation, { code: "invalid_object_metadata" });
+  }
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || byteSize > maximumBytes) {
+    throw new TencentCosPrivateObjectError(operation, { code: tooLargeCode });
+  }
+  const rawEtag = headerValue(response?.headers, "etag");
+  const etag = rawEtag === undefined ? undefined : rawEtag.trim();
+  if (etag !== undefined && (!etag || etag.length > 256 || /[\r\n]/.test(etag))) {
+    throw new TencentCosPrivateObjectError(operation, { code: "invalid_object_metadata" });
+  }
+  return { contentType, byteSize, etag };
+}
+
+function sameContentType(left, right) {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function asCosError(operation, cause) {
+  return cause instanceof TencentCosPrivateObjectError
+    ? cause
+    : new TencentCosPrivateObjectError(operation, cause);
 }
 
 function safeDisposition(value) {
@@ -186,14 +230,11 @@ class TencentCosPrivateObjectDriver {
   async headPrivate({ objectKey } = {}) {
     const params = this.objectParams(objectKey);
     const head = await cosOperation("headObject", () => this.cos.headObject(params));
-    const contentType = headerValue(head?.headers, "content-type");
-    const byteSize = Number(headerValue(head?.headers, "content-length"));
-    if (!contentType || !Number.isSafeInteger(byteSize) || byteSize <= 0) {
-      throw new TencentCosPrivateObjectError("headObject", { code: "invalid_object_metadata" });
-    }
-    if (byteSize > this.config.maxVerifiedObjectBytes) {
-      throw new TencentCosPrivateObjectError("headObject", { code: "verified_object_too_large" });
-    }
+    const { contentType, byteSize } = readObjectMetadata(head, {
+      maximumBytes: this.config.maxVerifiedObjectBytes,
+      tooLargeCode: "verified_object_too_large",
+      operation: "headObject"
+    });
 
     const hash = crypto.createHash("sha256");
     let downloadedBytes = 0;
@@ -215,6 +256,90 @@ class TencentCosPrivateObjectDriver {
       throw new TencentCosPrivateObjectError("getObject", { code: "object_length_changed" });
     }
     return { objectKey, contentType, byteSize, sha256: hash.digest("hex") };
+  }
+
+  async getPrivate({ objectKey } = {}) {
+    const params = this.objectParams(objectKey);
+    const head = await cosOperation("headObject", () => this.cos.headObject(params));
+    const metadata = readObjectMetadata(head, {
+      maximumBytes: this.config.maxArchiveObjectBytes,
+      operation: "headObject"
+    });
+
+    let downloadedBytes = 0;
+    let flushCallback;
+    let responseSettled = false;
+    let responseError;
+    const guardedBody = new Transform({
+      transform(chunk, encoding, callback) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+        downloadedBytes += buffer.length;
+        if (downloadedBytes > metadata.byteSize) {
+          callback(new TencentCosPrivateObjectError("getObject", { code: "object_length_changed" }));
+          return;
+        }
+        callback(null, buffer);
+      },
+      flush(callback) {
+        flushCallback = callback;
+        finishResponse();
+      }
+    });
+
+    function finishResponse() {
+      if (!flushCallback || !responseSettled) return;
+      const callback = flushCallback;
+      flushCallback = undefined;
+      if (responseError) {
+        callback(responseError);
+      } else if (downloadedBytes !== metadata.byteSize) {
+        callback(new TencentCosPrivateObjectError("getObject", { code: "object_length_changed" }));
+      } else {
+        callback();
+      }
+    }
+
+    let source;
+    try {
+      source = this.cos.getObject({
+        ...params,
+        Headers: metadata.etag ? { "If-Match": metadata.etag } : {},
+        ReturnStream: true
+      }, (error, data) => {
+        try {
+          if (error) throw asCosError("getObject", error);
+          const responseMetadata = readObjectMetadata(data, {
+            maximumBytes: this.config.maxArchiveObjectBytes,
+            operation: "getObject"
+          });
+          if (responseMetadata.byteSize !== metadata.byteSize ||
+              !sameContentType(responseMetadata.contentType, metadata.contentType)) {
+            throw new TencentCosPrivateObjectError("getObject", { code: "object_metadata_changed" });
+          }
+        } catch (failure) {
+          responseError = asCosError("getObject", failure);
+        } finally {
+          responseSettled = true;
+          finishResponse();
+        }
+      });
+    } catch (error) {
+      throw asCosError("getObject", error);
+    }
+    if (!source || typeof source.pipe !== "function") {
+      source?.destroy?.();
+      throw new TencentCosPrivateObjectError("getObject", { code: "invalid_download_stream" });
+    }
+    source.once("error", (error) => guardedBody.destroy(asCosError("getObject", error)));
+    guardedBody.once("error", () => source.destroy?.());
+    source.pipe(guardedBody);
+
+    return {
+      objectKey: params.Key,
+      contentType: metadata.contentType,
+      byteSize: metadata.byteSize,
+      body: guardedBody
+    };
   }
 
   async putPrivate({ objectKey, body, contentType } = {}) {

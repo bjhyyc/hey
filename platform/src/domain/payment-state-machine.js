@@ -1,6 +1,6 @@
 const crypto = require("node:crypto");
 
-const PAYMENT_METHODS = Object.freeze(["ALIPAY"]);
+const PAYMENT_METHODS = Object.freeze(["KAIPAY"]);
 const PAYMENT_STATES = Object.freeze({
   DRAFT: "draft",
   PENDING_PAYMENT: "pending_payment",
@@ -11,14 +11,18 @@ const PAYMENT_STATES = Object.freeze({
   REFUNDED: "refunded"
 });
 
-const SUCCESS_PROVIDER_STATUSES = new Set(["SUCCESS", "PAID", "TRADE_SUCCESS", "TRADE_FINISHED"]);
-const PENDING_PROVIDER_STATUSES = new Set(["PROCESSING", "PENDING", "INIT", "CREATED", "WAIT_BUYER_PAY"]);
-const EXPIRED_PROVIDER_STATUSES = new Set(["TIME_OUT", "TIMEOUT", "CLOSE", "CLOSED", "EXPIRED", "TRADE_CLOSED"]);
-const FAILED_PROVIDER_STATUSES = new Set(["FAIL", "FAILED", "CANCELED", "CANCELLED"]);
+// Provider-specific wire statuses are translated by the Kaipay adapter. The
+// core payment state machine deliberately accepts only these canonical values
+// so a newly introduced or misspelled provider status can never mark an order
+// paid by accident.
+const SUCCESS_PROVIDER_STATUSES = new Set(["PAID"]);
+const PENDING_PROVIDER_STATUSES = new Set(["PENDING"]);
+const EXPIRED_PROVIDER_STATUSES = new Set(["EXPIRED"]);
+const FAILED_PROVIDER_STATUSES = new Set(["FAILED"]);
 
 function assertPaymentMethod(method) {
   if (!PAYMENT_METHODS.includes(method)) {
-    throw new Error("PetPack Studio accepts only ALIPAY payments");
+    throw new Error("PetPack Studio accepts only KAIPAY payments");
   }
   return method;
 }

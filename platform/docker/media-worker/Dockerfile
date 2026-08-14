@@ -16,6 +16,6 @@ COPY src/shared ./src/shared
 
 USER node
 
-# Deployment supplies the process entrypoint, ModelArk/Alipay credentials, and
+# Deployment supplies the process entrypoint, ModelArk/Kaipay credentials, and
 # local segmentation implementation through its orchestrator. This image only
 # provides the deterministic FFmpeg/Node worker runtime.

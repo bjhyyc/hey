@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   browserStudioUrl,
   normalizeStudioPath,
+  platformStudioPath,
   StudioGatewayError,
 } from "@/lib/studio-gateway-core";
 
@@ -10,6 +11,15 @@ describe("studio gateway path boundary", () => {
     expect(browserStudioUrl(["projects", "project-123", "progress"])).toBe(
       "/api/studio/projects/project-123/progress",
     );
+  });
+
+  it.each([
+    ["auth/session", "/api/auth/session"],
+    ["api", "/api"],
+    ["/api/auth/session", "/api/auth/session"],
+    [["api", "projects", "project-123"], "/api/projects/project-123"],
+  ])("builds one canonical platform API prefix for %j", (path, expected) => {
+    expect(platformStudioPath(path)).toBe(expected);
   });
 
   it.each(["", "../admin", "projects/%2e%2e/admin", "https://example.com", "projects\\admin"])(

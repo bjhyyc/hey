@@ -1,5 +1,5 @@
 const { loadModelRegistry } = require("./model-registry");
-const { loadAlipayConfig } = require("../providers/alipay-payment-provider");
+const { loadKaipayConfig } = require("../providers/kaipay-payment-provider");
 const { loadTencentCloudBaseAuthConfig } = require("../providers/tencent-cloudbase-identity-verifier");
 
 const REQUIRED_PROBES = Object.freeze([
@@ -8,7 +8,8 @@ const REQUIRED_PROBES = Object.freeze([
   "objectStore",
   "cloudBaseAuth",
   "modelArkEntitlement",
-  "alipayMerchant",
+  "kaipayMerchant",
+  "legacyPaymentDrain",
   "sourcePhotoInspector",
   "masterImageProcessor",
   "mediaProcessor",
@@ -22,8 +23,8 @@ const SECRET_SETTINGS = Object.freeze([
   "PETPACK_OBJECT_STORE_SECRET_ACCESS_KEY",
   "MODELARK_API_KEY",
   "MODELARK_VIDEO_CALLBACK_SECRET",
-  "ALIPAY_PRIVATE_KEY",
-  "ALIPAY_PUBLIC_KEY",
+  "KAIPAY_CREDENTIALS_JSON",
+  "PETPACK_PAYMENT_NOTIFICATION_ENCRYPTION_KEY",
   "PETPACK_SESSION_SIGNING_KEY"
 ]);
 
@@ -122,24 +123,32 @@ function validateProductionEnvironment(environment = process.env) {
     "video_resolution_must_be_480p",
     [{ name: "MODELARK_VIDEO_RESOLUTION", value: setting(environment, "MODELARK_VIDEO_RESOLUTION") }]);
 
-  let alipayReady = true;
+  let kaipayReady = true;
   try {
-    loadAlipayConfig(environment);
+    loadKaipayConfig(environment);
   } catch (_error) {
-    alipayReady = false;
+    kaipayReady = false;
   }
-  const alipaySettings = [
-    "ALIPAY_APP_ID", "ALIPAY_SELLER_ID", "ALIPAY_PRIVATE_KEY", "ALIPAY_PUBLIC_KEY",
-    "ALIPAY_NOTIFY_BASE_URL", "ALIPAY_RETURN_BASE_URL", "ALIPAY_GATEWAY_URL"
+  const kaipaySettings = [
+    "KAIPAY_MERCHANT_ID", "KAIPAY_CREDENTIALS_JSON", "KAIPAY_ADAPTER_VERSION",
+    "KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL"
   ].map((name) => ({ name, value: setting(environment, name) }));
-  addCheck(checks, missing, "payment.alipay_config", alipayReady, "alipay_config_invalid", alipaySettings);
-  addCheck(checks, missing, "payment.alipay_https",
-    ["ALIPAY_NOTIFY_BASE_URL", "ALIPAY_RETURN_BASE_URL", "ALIPAY_GATEWAY_URL"]
+  addCheck(checks, missing, "payment.kaipay_config", kaipayReady, "kaipay_config_invalid", kaipaySettings);
+  addCheck(checks, missing, "payment.kaipay_https",
+    ["KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL"]
       .every((name) => exactHttpsUrl(setting(environment, name))),
-    "alipay_https_required");
+    "kaipay_https_required");
   addCheck(checks, missing, "payment.simulation_disabled",
-    setting(environment, "ALIPAY_ALLOW_SIMULATED_PAYMENTS") !== "true",
+    setting(environment, "KAIPAY_ALLOW_SIMULATED_PAYMENTS") !== "true",
     "simulated_payments_forbidden");
+  const legacyAlipaySettings = [
+    "ALIPAY_APP_ID", "ALIPAY_SELLER_ID", "ALIPAY_PRIVATE_KEY", "ALIPAY_PUBLIC_KEY",
+    "ALIPAY_NOTIFY_BASE_URL", "ALIPAY_RETURN_BASE_URL", "ALIPAY_GATEWAY_URL",
+    "ALIPAY_ALLOW_SIMULATED_PAYMENTS"
+  ];
+  addCheck(checks, missing, "payment.legacy_alipay_disabled",
+    legacyAlipaySettings.every((name) => !setting(environment, name)),
+    "legacy_alipay_configuration_forbidden");
 
   let cloudBaseReady = true;
   try {
