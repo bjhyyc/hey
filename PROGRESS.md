@@ -75,6 +75,7 @@
 - 2026-08-14：Redis AOF 同容器保留重启已在独立 TLS-only Redis 8.8.1 与 PostgreSQL 18.4 上真实通过。报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\redis-aof-rehearsals\redis-aof-20260814044430-71f00321\report.json`（SHA-256 `D586379FF883D52B2BE390617E97F6E744D177C5EB1A3EE26C62EB9CAD00E9F7`）；容器完整 ID `2864fd961c46c98080adcae7253fcb8640085b2e68031f266c06039f56598df1` 在结束后为 `exited(0)`，受保护的既有 Redis 容器仍为 `running`，独立 PostgreSQL 进程为 0。
 - 2026-08-14：AOF 检查点严格冻结 6 个 waiting 与 1 个 delayed 七视频 Job；同一容器停止、AOF fsync、重新启动后，完整 data/options/attempts/timestamp 规范化 SHA-256 在重启前后均为 `2664ae39075636c6d84a34e8afaa429eaf4f6275d8802dd1d17a3b607a114b6d`。最终队列 39 completed，waiting/delayed/active/failed/prioritized/waiting-children/repeat 全为 0；TLS 成功、明文连接拒绝、AOF 状态为 ok。
 - 2026-08-14：对应零费用完整工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814114443-e9d60ab5\report.json`（SHA-256 `9B6A271647DAE1AC2283A095CF7ED15C874C85BA3692E3CFF1029CB8AA05D003`）：3 来源照、3 母图、7 动作、12/12 QA、38/38 执行、39/39 Outbox、10 次 fixture usage、0 外部调用，8 文件 PetPack 再次由原版客户端导入。全量回归为 82 个测试文件、868 项全部通过；桌宠 Vite、落地页 Vite、网站 Next.js 三项生产构建及 `git diff --check` 全部通过。
+- 2026-08-14：Redis AOF 里程碑代码提交为 `1a7dcf7bf6a38eb4f4a2ed13a66ef577be821029`。完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-redis-aof-1a7dcf7.bundle`，27,439,631 字节，包含至该提交的完整历史；`git bundle verify` 通过，SHA-256 为 `B6406607E8E7434B5AD8FB0C455E9818066F54425D9ACEBE3A81DDB47409A335`。
 
 ## In progress
 
