@@ -67,6 +67,7 @@
 - 2026-08-13：彩排曾暴露“下载已就绪早于 7 个 finalizer 完全收口”的真实竞态；验收现在不会放宽计数，而会有界等待数据库与 outbox 达到完整最终合同后再签发报告。隔离 PostgreSQL 18.4 使用唯一数据目录和端口，结束后已确认无监听；Docker 只读检查证明既有 Redis 容器在本轮前已运行，挂载仍严格位于项目 `.tmp` 且仅发布 loopback 端口，本轮 Docker mutation、破坏性 Redis 命令和宿主路径删除均为 0。
 - 2026-08-13：硬中断里程碑最终回归为 76 个测试文件、843 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；桌宠 Vite、落地页 Vite 和网站 Next.js 三项生产构建全部成功，PowerShell 语法与 `git diff --check` 通过。
 - 2026-08-13：精确硬中断代码提交为 `e133817a023142007ec358412831706016fb29e3`。
+- 2026-08-13：精确硬中断里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-hard-kill-e300e84.bundle`，27,401,054 字节，包含至提交 `e300e84cf24f3197f0bdf4a9ca7b4f56e7d77208` 的完整历史；`git bundle verify` 通过，SHA-256 为 `F9E4B49D73ED68E654F2A318FBEFAE0D728560C0B639A39BC076F47ACEDD7FF1`。
 
 ## In progress
 
