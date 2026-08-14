@@ -7,6 +7,7 @@ const {
   ACTION_DURATIONS,
   FIXTURE_MASTER_PROCESSOR_VERSION,
   FIXTURE_VALIDATOR_VERSION,
+  boundedDevelopmentDelay,
   createDevelopmentDeliveryValidator,
   createFixturePng,
   createFixtureWebm,
@@ -24,6 +25,12 @@ const { createDevelopmentQaPolicy } = require("../../platform/src/qa/character-c
 const { validateSleepLoopBoundaryInspection } = require("../../platform/src/qa/sleep-loop-boundary-v1");
 
 describe("zero-cost worker components", () => {
+  it("bounds the development-only poll hold", () => {
+    expect(boundedDevelopmentDelay(undefined, "hold")).toBe(0);
+    expect(boundedDevelopmentDelay("20000", "hold")).toBe(20_000);
+    expect(() => boundedDevelopmentDelay("30001", "hold")).toThrow(/between 0 and 30000/);
+  });
+
   it("produces deterministic 854x480 PNG and WebM-signature fixtures", () => {
     const first = createFixturePng({ kind: "front", variant: 1 });
     const second = createFixturePng({ kind: "front", variant: 1 });

@@ -21,6 +21,31 @@ const OUTBOX_ENTRY = path.resolve(__dirname, "start-zero-cost-outbox.js");
 const WORKER_ENTRY = path.resolve(__dirname, "start-zero-cost-studio-worker.js");
 const DEFAULT_API_PORT = 18787;
 const DEFAULT_OBJECT_PORT = 18991;
+const CHILD_ENTRY_BY_ROLE = Object.freeze({
+  api: API_ENTRY,
+  outbox: OUTBOX_ENTRY,
+  worker: WORKER_ENTRY
+});
+
+function normalizedPath(value) {
+  return path.resolve(String(value || "")).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function requireOwnedChildRecord(record) {
+  const expectedEntry = CHILD_ENTRY_BY_ROLE[record?.role];
+  if (!expectedEntry || normalizedPath(record?.entry) !== normalizedPath(expectedEntry)) {
+    throw new Error("Rehearsal child record has an unexpected role or entry");
+  }
+  const child = record?.child;
+  if (!child || typeof child.kill !== "function" || !Array.isArray(child.spawnargs)) {
+    throw new Error("Rehearsal child record is not an owned ChildProcess");
+  }
+  if (normalizedPath(child.spawnfile) !== normalizedPath(process.execPath) ||
+      normalizedPath(child.spawnargs[1]) !== normalizedPath(expectedEntry)) {
+    throw new Error("Rehearsal child process identity does not match its fixed entry");
+  }
+  return child;
+}
 
 function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
@@ -35,6 +60,20 @@ function positivePort(value, fallback, label) {
 function uniqueRehearsalId(now = new Date()) {
   const timestamp = now.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
   return `rehearsal-${timestamp}-${crypto.randomBytes(4).toString("hex")}`;
+}
+
+function normalizeFaultPlan(value) {
+  const input = value === undefined || value === null ? {} : value;
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Rehearsal fault plan must be an object");
+  const allowed = new Set(["apiAfterPhotos", "outboxAfterClaim", "workerActiveLease"]);
+  for (const [key, enabled] of Object.entries(input)) {
+    if (!allowed.has(key) || typeof enabled !== "boolean") throw new Error("Rehearsal fault plan is invalid");
+  }
+  return Object.freeze({
+    apiAfterPhotos: input.apiAfterPhotos === true,
+    outboxAfterClaim: input.outboxAfterClaim === true,
+    workerActiveLease: input.workerActiveLease === true
+  });
 }
 
 async function createRehearsalEnvironment(environment = process.env) {
@@ -99,12 +138,21 @@ function collectChildOutput(child, role, logger) {
 }
 
 async function startChild({ role, entry, environment, logger = console, timeoutMs = 30_000 } = {}) {
-  const child = spawn(process.execPath, [entry], {
+  const expectedEntry = CHILD_ENTRY_BY_ROLE[role];
+  const resolvedEntry = path.resolve(String(entry || ""));
+  if (!expectedEntry || normalizedPath(resolvedEntry) !== normalizedPath(expectedEntry)) {
+    throw new Error("Rehearsal child role and entry are not allowlisted");
+  }
+  const child = spawn(process.execPath, [resolvedEntry], {
     cwd: PROJECT_ROOT,
     env: environment,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
     windowsHide: true,
     shell: false
+  });
+  const messages = [];
+  child.on("message", (message) => {
+    if (message && typeof message === "object") messages.push(message);
   });
   collectChildOutput(child, role, logger);
   let ready;
@@ -125,14 +173,14 @@ async function startChild({ role, entry, environment, logger = console, timeoutM
       });
     });
   } catch (error) {
-    try { await stopChild({ role, child }, { timeoutMs: 5_000 }); } catch (stopError) { error.stopError = stopError; }
+    try { await stopChild({ role, entry: resolvedEntry, child, messages }, { timeoutMs: 5_000 }); } catch (stopError) { error.stopError = stopError; }
     throw error;
   }
-  return { role, child, ready };
+  return { role, entry: resolvedEntry, child, messages, ready };
 }
 
 async function stopChild(record, { timeoutMs = 30_000 } = {}) {
-  const child = record?.child;
+  const child = requireOwnedChildRecord(record);
   if (!child || child.exitCode !== null) return;
   const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
   child.kill("SIGTERM");
@@ -143,6 +191,49 @@ async function stopChild(record, { timeoutMs = 30_000 } = {}) {
   const result = await Promise.race([exited, timeout]);
   clearTimeout(timer);
   if (!result) throw new Error(`${record.role} did not stop gracefully; it was left for operator inspection`);
+}
+
+async function hardKillChild(record, { timeoutMs = 5_000 } = {}) {
+  const child = requireOwnedChildRecord(record);
+  if (child.exitCode !== null) throw new Error(`${record.role} already exited before its hard-kill checkpoint`);
+  const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+  if (child.kill("SIGKILL") !== true) throw new Error(`${record.role} rejected the exact child hard-kill request`);
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  const result = await Promise.race([exited, timeout]);
+  clearTimeout(timer);
+  if (!result) throw new Error(`${record.role} did not exit after its owned ChildProcess handle was hard-killed`);
+  return Object.freeze(result);
+}
+
+async function waitForChildCheckpoint(record, checkpoint, { timeoutMs = 120_000 } = {}) {
+  const child = requireOwnedChildRecord(record);
+  const matches = (message) => message?.type === "checkpoint" && message.role === record.role && message.checkpoint === checkpoint;
+  const existing = record.messages.find(matches);
+  if (existing) return existing;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+      callback(value);
+    };
+    const onMessage = (message) => {
+      if (matches(message)) finish(resolve, message);
+    };
+    const onExit = (code) => finish(reject, new Error(`${record.role} exited before checkpoint ${checkpoint} with code ${code}`));
+    const timer = setTimeout(
+      () => finish(reject, new Error(`${record.role} did not reach checkpoint ${checkpoint} in time`)),
+      timeoutMs
+    );
+    child.on("message", onMessage);
+    child.once("exit", onExit);
+  });
 }
 
 async function request(apiOrigin, route, { method = "GET", body, cookie, expectedStatus } = {}) {
@@ -214,6 +305,39 @@ async function waitForVideoSubmissions({ database, runId, count = REQUIRED_ACTIO
   throw new Error("Rehearsal did not persist all fixture provider task IDs before the restart checkpoint");
 }
 
+async function waitForActiveVideoPollLease({ database, runId, count = REQUIRED_ACTION_IDS.length, timeoutMs = 45_000 } = {}) {
+  if (!database || typeof database.query !== "function") throw new Error("Rehearsal database is required at the active-lease checkpoint");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await database.query(
+      `SELECT (SELECT count(*)::integer FROM generation_action action
+                WHERE action.run_id = $1) AS total_actions,
+              (SELECT count(*)::integer FROM generation_action action
+                WHERE action.run_id = $1 AND action.provider_task_id IS NOT NULL) AS bound_provider_tasks,
+              (SELECT count(*)::integer FROM production_job_execution execution
+                WHERE execution.run_id = $1
+                  AND execution.job_name = 'petpack.poll-video-action'
+                  AND execution.status = 'leased'
+                  AND execution.leased_until > now()) AS active_poll_leases,
+              (SELECT count(*)::integer FROM production_job_execution execution
+                WHERE execution.run_id = $1
+                  AND execution.status = 'reconciliation_required') AS reconciliation_required`,
+      [runId]
+    );
+    const checkpoint = result.rows[0] || {};
+    if (Number(checkpoint.reconciliation_required) > 0) {
+      throw new Error("Rehearsal reached reconciliation before the active worker lease checkpoint");
+    }
+    if (Number(checkpoint.total_actions) === count &&
+        Number(checkpoint.bound_provider_tasks) === count &&
+        Number(checkpoint.active_poll_leases) > 0) {
+      return checkpoint;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Rehearsal did not reach an active video poll lease before hard-kill");
+}
+
 async function collectDatabaseReport(database, projectId) {
   const runResult = await database.query(
     `SELECT run.id, run.state, run.failure_code,
@@ -250,12 +374,65 @@ async function collectDatabaseReport(database, projectId) {
   return { run: runResult.rows[0], delivery: delivery.rows[0] };
 }
 
-async function runZeroCostRehearsal({ environment = process.env, logger = console, restartWorker = true } = {}) {
+function hasFinalDatabaseContract(databaseReport) {
+  const run = databaseReport?.run || {};
+  return Number(run.confirmed_source_photos) === 3 &&
+    Number(run.passed_masters) === 3 &&
+    Number(run.passed_actions) === 7 &&
+    Number(run.passed_qa_reports) === 12 &&
+    Number(run.failed_qa_reports) === 0 &&
+    Number(run.total_executions) === 38 &&
+    Number(run.succeeded_executions) === 38 &&
+    Number(run.incomplete_executions) === 0 &&
+    Number(run.total_outbox_jobs) === 39 &&
+    Number(run.sent_outbox_jobs) === 39 &&
+    Number(run.unsent_outbox) === 0 &&
+    Number(run.fixture_usage_attempts) === 10 &&
+    run.state === "deliverable" &&
+    databaseReport?.delivery?.status === "ready";
+}
+
+async function waitForFinalDatabaseContract({
+  database,
+  projectId,
+  timeoutMs = 60_000,
+  intervalMs = 100,
+  collectReport = collectDatabaseReport
+}) {
+  if (!database || typeof database.query !== "function") throw new Error("Final database contract requires a database");
+  if (typeof collectReport !== "function") throw new Error("Final database contract collector is required");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw new Error("Final database contract timeout is invalid");
+  if (!Number.isInteger(intervalMs) || intervalMs < 1 || intervalMs > 5_000) throw new Error("Final database contract interval is invalid");
+  const deadline = Date.now() + timeoutMs;
+  let lastReport = null;
+  do {
+    lastReport = await collectReport(database, projectId);
+    if (hasFinalDatabaseContract(lastReport)) return lastReport;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  } while (Date.now() < deadline);
+  throw Object.assign(new Error("Rehearsal database did not reach the final drained contract"), {
+    databaseReport: lastReport
+  });
+}
+
+async function runZeroCostRehearsal({
+  environment = process.env,
+  logger = console,
+  restartWorker = true,
+  faultPlan
+} = {}) {
+  const faults = normalizeFaultPlan(faultPlan);
   const config = await createRehearsalEnvironment(environment);
   const database = createPostgresDatabase({ environment: config.environment, logger });
   const children = [];
+  let apiRecord;
+  let outboxRecord;
   let workerRecord;
   let workerRestarted = false;
+  let apiHardKilled = false;
+  let outboxHardKilled = false;
+  let workerHardKilled = false;
+  const faultCheckpoints = {};
   const stopAll = async () => {
     const failures = [];
     for (const record of [...children].reverse()) {
@@ -271,11 +448,24 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
     const seed = await seedZeroCostDatabase({ database, environment: config.environment });
     await database.close();
 
-    const api = await startChild({ role: "api", entry: API_ENTRY, environment: config.environment, logger });
-    children.push(api);
-    const outbox = await startChild({ role: "outbox", entry: OUTBOX_ENTRY, environment: config.environment, logger });
-    children.push(outbox);
-    workerRecord = await startChild({ role: "worker", entry: WORKER_ENTRY, environment: config.environment, logger });
+    apiRecord = await startChild({ role: "api", entry: API_ENTRY, environment: config.environment, logger });
+    children.push(apiRecord);
+    const initialOutboxEnvironment = faults.outboxAfterClaim
+      ? {
+        ...config.environment,
+        PETPACK_REHEARSAL_OUTBOX_HARD_KILL: "true",
+        PETPACK_OUTBOX_LEASE_SECONDS: "5"
+      }
+      : config.environment;
+    outboxRecord = await startChild({ role: "outbox", entry: OUTBOX_ENTRY, environment: initialOutboxEnvironment, logger });
+    children.push(outboxRecord);
+    const outboxClaimCheckpoint = faults.outboxAfterClaim
+      ? waitForChildCheckpoint(outboxRecord, "claimed_before_enqueue")
+      : null;
+    const initialWorkerEnvironment = faults.workerActiveLease
+      ? { ...config.environment, PETPACK_REHEARSAL_VIDEO_POLL_HOLD_MS: "20000" }
+      : config.environment;
+    workerRecord = await startChild({ role: "worker", entry: WORKER_ENTRY, environment: initialWorkerEnvironment, logger });
     children.push(workerRecord);
 
     const cookie = `${seed.sessionCookieName}=${seed.sessionToken}`;
@@ -328,6 +518,39 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
       });
     }
 
+    if (faults.outboxAfterClaim) {
+      faultCheckpoints.outbox = await outboxClaimCheckpoint;
+      await hardKillChild(outboxRecord);
+      const outboxIndex = children.indexOf(outboxRecord);
+      if (outboxIndex < 0) throw new Error("Hard-killed outbox child was not tracked");
+      children.splice(outboxIndex, 1);
+      outboxRecord = await startChild({
+        role: "outbox",
+        entry: OUTBOX_ENTRY,
+        environment: {
+          ...config.environment,
+          PETPACK_REHEARSAL_OUTBOX_HARD_KILL: "false",
+          PETPACK_OUTBOX_LEASE_SECONDS: "5"
+        },
+        logger
+      });
+      children.push(outboxRecord);
+      outboxHardKilled = true;
+    }
+
+    if (faults.apiAfterPhotos) {
+      await hardKillChild(apiRecord);
+      const apiIndex = children.indexOf(apiRecord);
+      if (apiIndex < 0) throw new Error("Hard-killed API child was not tracked");
+      children.splice(apiIndex, 1);
+      apiRecord = await startChild({ role: "api", entry: API_ENTRY, environment: config.environment, logger });
+      children.push(apiRecord);
+      const recoveredAuth = await request(config.apiOrigin, "/api/auth/session", { cookie });
+      if (recoveredAuth.body?.authenticated !== true) throw new Error("Rehearsal session did not survive the API hard-kill");
+      faultCheckpoints.api = { sessionRecovered: true };
+      apiHardKilled = true;
+    }
+
     const confirmationView = await waitForProject({
       apiOrigin: config.apiOrigin,
       projectId,
@@ -344,7 +567,30 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
       body: { frontMasterRevisionId, sideMasterRevisionId }
     });
 
-    if (restartWorker) {
+    if (faults.workerActiveLease) {
+      const runLookup = createPostgresDatabase({ environment: config.environment, logger });
+      try {
+        const runRows = await runLookup.query("SELECT id FROM production_run WHERE project_id = $1", [projectId]);
+        const runId = runRows.rows[0]?.id;
+        if (!runId) throw new Error("Rehearsal run ID is unavailable at active-lease checkpoint");
+        faultCheckpoints.worker = await waitForActiveVideoPollLease({ database: runLookup, runId });
+      } finally {
+        await runLookup.close();
+      }
+      await hardKillChild(workerRecord);
+      const workerIndex = children.indexOf(workerRecord);
+      if (workerIndex < 0) throw new Error("Hard-killed worker child was not tracked");
+      children.splice(workerIndex, 1);
+      workerRecord = await startChild({
+        role: "worker",
+        entry: WORKER_ENTRY,
+        environment: { ...config.environment, PETPACK_REHEARSAL_VIDEO_POLL_HOLD_MS: "0" },
+        logger
+      });
+      children.push(workerRecord);
+      workerRestarted = true;
+      workerHardKilled = true;
+    } else if (restartWorker) {
       const runLookup = createPostgresDatabase({ environment: config.environment, logger });
       try {
         const runRows = await runLookup.query("SELECT id FROM production_run WHERE project_id = $1", [projectId]);
@@ -365,7 +611,8 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
       apiOrigin: config.apiOrigin,
       projectId,
       cookie,
-      predicate: (view) => view?.downloadReady === true
+      predicate: (view) => view?.downloadReady === true,
+      timeoutMs: faults.workerActiveLease ? 240_000 : 180_000
     });
     const download = await request(config.apiOrigin, `/api/projects/${encodeURIComponent(projectId)}/petpack-download`, {
       method: "POST",
@@ -381,8 +628,16 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
     if (!clientImport.ok) throw new Error(`Desktop client rejected the rehearsal PetPack: ${clientImport.error || "unknown error"}`);
 
     const reportDatabase = createPostgresDatabase({ environment: config.environment, logger });
-    const databaseReport = await collectDatabaseReport(reportDatabase, projectId);
-    await reportDatabase.close();
+    let databaseReport;
+    try {
+      databaseReport = await waitForFinalDatabaseContract({
+        database: reportDatabase,
+        projectId,
+        timeoutMs: faults.workerActiveLease ? 60_000 : 30_000
+      });
+    } finally {
+      await reportDatabase.close();
+    }
     const audit = await readAudit(config.environment.PETPACK_REHEARSAL_AUDIT_FILE);
     const externalCalls = audit.filter((entry) => entry.external !== false);
     const fixtureEvents = Object.fromEntries(
@@ -394,6 +649,12 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
       zeroCost: true,
       externalCallCount: externalCalls.length,
       workerRestarted,
+      faultInjection: {
+        apiHardKilled,
+        outboxHardKilled,
+        workerHardKilled,
+        checkpoints: faultCheckpoints
+      },
       projectId,
       orderId,
       workflow: {
@@ -431,8 +692,11 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
         report.workflow.passedActions !== 7 || report.workflow.passedQaReports !== 12 || report.workflow.failedQaReports !== 0 ||
         report.workflow.totalExecutions !== 38 || report.workflow.succeededExecutions !== 38 || report.workflow.incompleteExecutions !== 0 ||
         report.workflow.totalOutboxJobs !== 39 || report.workflow.sentOutboxJobs !== 39 || report.workflow.unsentOutboxJobs !== 0 ||
-        report.workflow.fixtureUsageAttempts !== 10 || report.workflow.runState !== "deliverable" || report.delivery.status !== "ready" ||
-        report.delivery.clientImport.packageId !== report.delivery.packageId || report.delivery.clientImport.fileCount !== report.delivery.archiveFileCount) {
+         report.workflow.fixtureUsageAttempts !== 10 || report.workflow.runState !== "deliverable" || report.delivery.status !== "ready" ||
+         report.delivery.clientImport.packageId !== report.delivery.packageId || report.delivery.clientImport.fileCount !== report.delivery.archiveFileCount ||
+         (faults.apiAfterPhotos && !report.faultInjection.apiHardKilled) ||
+         (faults.outboxAfterClaim && !report.faultInjection.outboxHardKilled) ||
+         (faults.workerActiveLease && !report.faultInjection.workerHardKilled)) {
       throw Object.assign(new Error("Zero-cost rehearsal completed with an invalid final contract"), { report });
     }
     await fsp.writeFile(config.reportPath, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
@@ -453,14 +717,19 @@ async function runZeroCostRehearsal({ environment = process.env, logger = consol
 }
 
 if (require.main === module) {
+  const hardKillAll = process.env.PETPACK_REHEARSAL_HARD_KILL_ALL === "true";
   runZeroCostRehearsal({
-    restartWorker: process.env.PETPACK_REHEARSAL_RESTART_WORKER !== "false"
+    restartWorker: hardKillAll ? false : process.env.PETPACK_REHEARSAL_RESTART_WORKER !== "false",
+    faultPlan: hardKillAll
+      ? { apiAfterPhotos: true, outboxAfterClaim: true, workerActiveLease: true }
+      : undefined
   }).then((report) => {
     console.log(JSON.stringify({
       ok: true,
       rehearsalId: report.rehearsalId,
       externalCallCount: report.externalCallCount,
       workerRestarted: report.workerRestarted,
+      faultInjection: report.faultInjection,
       reportPath: report.artifacts.reportPath,
       petpackPath: report.artifacts.petpackPath
     }));
@@ -471,15 +740,23 @@ if (require.main === module) {
 }
 
 module.exports = {
+  CHILD_ENTRY_BY_ROLE,
   collectDatabaseReport,
   createRehearsalEnvironment,
+  hardKillChild,
+  hasFinalDatabaseContract,
+  normalizeFaultPlan,
   readAudit,
+  requireOwnedChildRecord,
   request,
   runZeroCostRehearsal,
   sha256,
   startChild,
   stopChild,
   uniqueRehearsalId,
+  waitForActiveVideoPollLease,
+  waitForChildCheckpoint,
+  waitForFinalDatabaseContract,
   waitForProject,
   waitForVideoSubmissions
 };

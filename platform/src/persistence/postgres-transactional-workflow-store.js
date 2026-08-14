@@ -581,6 +581,7 @@ class PostgresOutboxDispatcher {
     maxAttempts = 8,
     baseRetrySeconds = 5,
     maxRetrySeconds = 600,
+    afterClaim = null,
     logger = console
   } = {}) {
     this.database = requireDatabase(database);
@@ -595,11 +596,15 @@ class PostgresOutboxDispatcher {
     if (!Number.isInteger(maxRetrySeconds) || maxRetrySeconds < baseRetrySeconds || maxRetrySeconds > 86400) {
       throw new Error("Outbox maximum retry delay must be at least the base delay and at most one day");
     }
+    if (afterClaim !== null && typeof afterClaim !== "function") {
+      throw new Error("Outbox after-claim hook must be a function");
+    }
     this.queue = queue;
     this.leaseTokenFactory = leaseTokenFactory;
     this.maxAttempts = maxAttempts;
     this.baseRetrySeconds = baseRetrySeconds;
     this.maxRetrySeconds = maxRetrySeconds;
+    this.afterClaim = afterClaim;
     this.logger = logger;
   }
 
@@ -649,6 +654,13 @@ class PostgresOutboxDispatcher {
 
   async dispatchBatch(options) {
     const messages = await this.claimBatch(options);
+    if (messages.length > 0 && this.afterClaim) {
+      await this.afterClaim(Object.freeze(messages.map((message) => Object.freeze({
+        id: message.id,
+        jobName: message.payload?.name || null,
+        dedupeKey: message.dedupeKey
+      }))));
+    }
     for (const message of messages) {
       try {
         assertWorkflowJob({ ...message.payload, dedupeKey: message.dedupeKey });

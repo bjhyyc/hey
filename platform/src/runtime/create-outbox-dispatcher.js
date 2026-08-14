@@ -224,10 +224,14 @@ async function createOutboxDispatcherRuntime({
   queue,
   dispatcher,
   reconciler,
+  afterClaim,
   logger = console,
   waitController
 } = {}) {
   const hydrated = hydrateEnvironmentFromSecretFiles({ environment });
+  if (afterClaim !== undefined && hydrated.PETPACK_PLATFORM_MODE === "production") {
+    throw new Error("Outbox after-claim hooks are forbidden in production");
+  }
   const runtimeDatabase = database || createPostgresDatabase({ environment: hydrated, PoolClass, logger });
   try {
     const runtimeQueue = queue || new BullMqWorkflowQueue({
@@ -238,6 +242,7 @@ async function createOutboxDispatcherRuntime({
     const runtimeDispatcher = dispatcher || new PostgresOutboxDispatcher({
       database: runtimeDatabase,
       queue: runtimeQueue,
+      afterClaim: afterClaim || null,
       logger
     });
     const runtimeReconciler = reconciler === undefined

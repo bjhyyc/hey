@@ -14,6 +14,18 @@ const FIXTURE_VALIDATOR_VERSION = "zero-cost-delivery-validator/v1";
 const FIXTURE_POLICY_VERSION = "zero-cost-rehearsal-policy/v1";
 const FIXTURE_PROVIDER_ID_PREFIX = "zero-cost";
 
+function boundedDevelopmentDelay(value, label) {
+  const parsed = value === undefined || value === "" ? 0 : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 30_000) {
+    throw new Error(`${label} must be between 0 and 30000 milliseconds`);
+  }
+  return parsed;
+}
+
+function wait(milliseconds) {
+  return milliseconds > 0 ? new Promise((resolve) => setTimeout(resolve, milliseconds)) : Promise.resolve();
+}
+
 const ACTION_DURATIONS = Object.freeze({
   idle: 4,
   sneeze: 4,
@@ -411,6 +423,10 @@ async function createWorkerComponents({ environment = process.env, logger = cons
   }
   const recorder = createAuditRecorder(environment);
   const artifactServer = await createFixtureArtifactServer({ recorder, logger });
+  const videoPollHoldMs = boundedDevelopmentDelay(
+    environment.PETPACK_REHEARSAL_VIDEO_POLL_HOLD_MS,
+    "Zero-cost video poll hold"
+  );
   const modelArkClient = {
     async createFrontMaster() {
       recorder.record("fixture.seedream", { kind: "front" });
@@ -433,6 +449,7 @@ async function createWorkerComponents({ environment = process.env, logger = cons
       const task = decodeVideoTask(providerTaskId);
       const encodedTask = Buffer.from(providerTaskId, "utf8").toString("base64url");
       recorder.record("fixture.seedance_poll", { runId: task.runId, actionId: task.actionId });
+      await wait(videoPollHoldMs);
       return {
         providerTaskId,
         status: "succeeded",
@@ -463,6 +480,7 @@ module.exports = {
   FIXTURE_MASTER_PROCESSOR_VERSION,
   FIXTURE_POLICY_VERSION,
   FIXTURE_VALIDATOR_VERSION,
+  boundedDevelopmentDelay,
   createDevelopmentDeliveryValidator,
   createDevelopmentMasterProcessor,
   createDevelopmentMattingService,
