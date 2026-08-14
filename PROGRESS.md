@@ -56,6 +56,7 @@
 - 2026-08-13：Lighthouse 数据层 TLS-only 加固提交为 `b4178cbba07009979d16ae99174299d837eae3de`。PostgreSQL 现在以受控 `pg_hba.conf` 先拒绝全部明文连接，再只允许 TLS 1.2+ 与 SCRAM；Redis 关闭明文端口、禁用默认用户，将应用身份限制在固定 key/channel 前缀并拒绝 `FLUSHALL` 等管理/破坏命令。PostgreSQL 与 Redis 使用独立 CA，CA 私钥不进入常驻容器；Compose 不发布数据库端口且强制使用 `repository@sha256` 镜像引用。
 - 2026-08-13：真实 PostgreSQL 18.4 隔离演练报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-tls-rehearsals\data-tls-20260813215358-c5fbb3c7\report.json`：TLSv1.3 认证成功、明文连接被拒绝、001–014 正式迁移成功；额外 015 测试迁移由两个并发 runner 严格串行，恰好一次应用、一次识别为已应用。真实 Redis 隔离演练报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-redis-tls-rehearsals\redis-tls-20260813214958-b8568e64\report.json`：TLS 认证、明文拒绝、越界 key 拒绝及 `FLUSHALL` 拒绝全部通过，容器停止后保留供审计。
 - 2026-08-13：数据层最终回归为 72 个测试文件、812 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；Shell/PowerShell 语法、数据 Compose 解析、桌宠 Vite、落地页 Vite 和网站 Next.js 生产构建全部通过。该加固尚未部署 Lighthouse；本地 Redis 演练使用的 Alpine digest 只证明协议/ACL 功能，不能替代仍待选择和扫描的正式生产镜像。
+- 2026-08-13：数据层加固里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-data-hardening-d5ef47b.bundle`，27,368,632 字节，包含至提交 `d5ef47b2034979685636bdd0cc8cf4a8620dc6b5` 的完整历史；`git bundle verify` 通过，SHA-256 为 `32AFE89200BC3C451D03FE4FD731D7D50ED08141215BA7F87BA5BDDA32A11DAA`。
 
 ## In progress
 
