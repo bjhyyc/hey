@@ -23,3 +23,8 @@ recovery-inputs/
 .runtime-tmp/
 .tmp/
 docs/superpowers/
+
+# Lighthouse credentials and runtime PKI are always external to a release.
+ops/lighthouse/**/secrets/
+ops/lighthouse/**/tls/
+ops/lighthouse/**/runtime-tls/

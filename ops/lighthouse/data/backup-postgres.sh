@@ -1,13 +1,33 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 backup_dir="/opt/petpack/shared/backups/postgres"
 retention_days="${PETPACK_BACKUP_RETENTION_DAYS:-7}"
+if [[ ! "$retention_days" =~ ^[1-9][0-9]*$ || "$retention_days" -gt 365 ]]; then
+  printf 'PETPACK_BACKUP_RETENTION_DAYS must be between 1 and 365.\n' >&2
+  exit 1
+fi
+if [[ -L "$backup_dir" ]]; then
+  printf 'Backup directory must not be a symbolic link.\n' >&2
+  exit 1
+fi
+install -d -m 0700 "$backup_dir"
+if [[ "$(readlink -f -- "$backup_dir")" != "$backup_dir" ]]; then
+  printf 'Backup directory must not traverse a symbolic link.\n' >&2
+  exit 1
+fi
+
+exec 9>/run/lock/petpack-postgres-backup.lock
+if ! flock -n 9; then
+  printf 'Another PostgreSQL backup is already running.\n' >&2
+  exit 1
+fi
+
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 final_path="$backup_dir/petpack_studio-$timestamp.dump"
 temp_path="$final_path.tmp"
 
-install -d -m 0700 "$backup_dir"
 trap 'rm -f -- "$temp_path"' EXIT
 
 docker exec -u postgres petpack-postgres pg_dump \
@@ -20,7 +40,8 @@ chmod 0600 "$temp_path"
 mv -- "$temp_path" "$final_path"
 trap - EXIT
 
-find "$backup_dir" -type f -name 'petpack_studio-*.dump' -mtime "+$retention_days" -delete
+find "$backup_dir" -maxdepth 1 -type f -name 'petpack_studio-*.dump' \
+  -mtime "+$retention_days" -delete
 
 if [[ "${1:-}" == "--verify-restore" ]]; then
   restore_db="petpack_restore_check_${timestamp//[^0-9]/}"

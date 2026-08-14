@@ -1,6 +1,8 @@
+name: petpack-data
+
 services:
   postgres:
-    image: postgres:18.4-bookworm
+    image: ${PETPACK_POSTGRES_IMAGE:?Set PETPACK_POSTGRES_IMAGE to repository@sha256 digest}
     container_name: petpack-postgres
     restart: unless-stopped
     environment:
@@ -14,11 +16,15 @@ services:
       - -c
       - ssl=on
       - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
       - ssl_cert_file=/run/tls/postgres.crt
       - -c
       - ssl_key_file=/run/tls/postgres.key
       - -c
       - ssl_ca_file=/run/tls/ca.crt
+      - -c
+      - hba_file=/etc/postgresql/petpack-pg_hba.conf
       - -c
       - password_encryption=scram-sha-256
       - -c
@@ -39,9 +45,19 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./initdb:/docker-entrypoint-initdb.d:ro
-      - ./tls:/run/tls:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/petpack-pg_hba.conf:ro
+      - ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/runtime-tls/postgres/ca.crt:/run/tls/ca.crt:ro
+      - ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/runtime-tls/postgres/postgres.crt:/run/tls/postgres.crt:ro
+      - ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/runtime-tls/postgres/postgres.key:/run/tls/postgres.key:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready --host=127.0.0.1 --username=petpack_admin --dbname=petpack_studio"]
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$(cat /run/secrets/postgres_admin_password)"
+          PGSSLMODE=verify-full
+          PGSSLROOTCERT=/run/tls/ca.crt
+          psql --host=postgres --username=petpack_admin --dbname=petpack_studio
+          --tuples-only --no-align --command='SELECT 1' | grep -qx 1
       interval: 10s
       timeout: 5s
       retries: 12
@@ -58,21 +74,32 @@ services:
       - petpack-data
 
   redis:
-    image: redis:8.2.7-bookworm
+    image: ${PETPACK_REDIS_IMAGE:?Set PETPACK_REDIS_IMAGE to repository@sha256 digest}
     container_name: petpack-redis
     restart: unless-stopped
     entrypoint: ["/usr/local/bin/start-petpack-redis.sh"]
+    environment:
+      PETPACK_REDIS_KEY_PREFIX: ${PETPACK_REDIS_KEY_PREFIX:-petpack}
     secrets:
       - redis_password
     volumes:
       - redis_data:/data
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - ./redis/start-petpack-redis.sh:/usr/local/bin/start-petpack-redis.sh:ro
-      - ./tls:/run/tls:ro
+      - ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/runtime-tls/redis/ca.crt:/run/tls/ca.crt:ro
+      - ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/runtime-tls/redis/redis.crt:/run/tls/redis.crt:ro
+      - ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/runtime-tls/redis/redis.key:/run/tls/redis.key:ro
+    read_only: true
     tmpfs:
-      - /run/petpack-redis:mode=0700
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+      - /run/petpack-redis:size=2m,mode=0700,nosuid,nodev
     healthcheck:
-      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/redis_password)\" redis-cli --tls --cacert /run/tls/ca.crt --user petpack ping | grep -qx PONG"]
+      test:
+        - CMD-SHELL
+        - >-
+          REDISCLI_AUTH="$$(cat /run/secrets/redis_password)"
+          redis-cli --tls --cacert /run/tls/ca.crt --user petpack -h redis ping |
+          grep -qx PONG
       interval: 10s
       timeout: 5s
       retries: 12
@@ -101,8 +128,8 @@ volumes:
 
 secrets:
   postgres_admin_password:
-    file: ./secrets/postgres_admin_password
+    file: ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/secrets/postgres_admin_password
   postgres_app_password:
-    file: ./secrets/postgres_app_password
+    file: ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/secrets/postgres_app_password
   redis_password:
-    file: ./secrets/redis_password
+    file: ${PETPACK_DATA_CONFIG_ROOT:?Set absolute PETPACK_DATA_CONFIG_ROOT}/secrets/redis_password
