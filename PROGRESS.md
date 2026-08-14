@@ -52,6 +52,7 @@
 - 2026-08-13：基础运行时镜像 `petpack-platform-runtime:9c7a2a6` 已从固定 Node 22.22.2 builder 与固定 distroless runtime 构建，约 59 MB，本地镜像 ID 为 `sha256:a7cb0c3c155005de32240a45edd3ffe6d18ea21593935379bac724a93980494d`；最终镜像无 shell/npm，运行用户为 `10001:10001`，Docker Scout 当次结果为 0C/0H/0M/0L。
 - 2026-08-13：媒体 Worker 镜像 `petpack-studio-worker:9c7a2a6` 约 163 MB，本地镜像 ID 为 `sha256:a8533e69938d3acd325b300dc15217df7756314f8de5ff3c51d05f913d394ef8`；最小化复制 FFmpeg/ffprobe 的实际动态依赖并写入 190 个包、210 个文件的运行时清单，隔离容器内已真实完成 VP9 WebM 编码和 ffprobe。Scout 当次同样报告 0 项，但人工清单仍包含 `libjxl0.7`，其未修复 jpeg-xl 高危通告按 fail-closed 继续作为正式上线阻塞，不能用 Scout 的零项结果覆盖人工审计。
 - 2026-08-13：Dockerfile 静态检查无警告，生产 Compose 使用合成非秘密参数真实 `config --quiet` 解析通过；Docker/心跳/Compose 聚焦测试 25/25，通过后全量回归 71 个测试文件、804 项通过，2 项 opt-in 数据库测试按设计跳过。桌宠 Vite 构建（67 modules）、落地页 Vite 构建（7 modules）及网站 Next.js 构建（21 routes）全部成功。构建期间未执行 prune、volume rm 或递归删除，未挂载盘根、`D:\桌宠` 或项目根；此前安全检查留下的停止容器也未自动删除。
+- 2026-08-13：容器加固里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-container-hardening-73a3985.bundle`，27,348,374 字节，包含至提交 `73a39857a5bd77f57c625001cf3511664b72ab1f` 的完整历史；`git bundle verify` 通过，SHA-256 为 `93376CD32ACB681610AA185A6A7B36F2F2FAF003714F09073E15D569D18EC177`。
 
 ## In progress
 
