@@ -47,6 +47,7 @@
 - 2026-08-13：最新完整报告 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814031907-ffb0737a\report.json` 已通过硬断言：3 张来源照、3 张母图、7 个动作、12/12 份 QA、38/38 个执行任务、39/39 个 outbox、10 次 fixture provider usage、0 个未完成任务、0 个未发送 outbox、0 次外部调用；运行态为 `deliverable`，Worker 已安全重启一次，下载的 8 文件 PetPack 已被原版客户端 `importPetpack` 实际导入成功。
 - 2026-08-13：Docker 仅复用隔离 Redis 容器 `petpack-rebuild-redis-20260813`；宿主挂载严格限定为项目 `.tmp\redis-rehearsal-20260813\data`（读写）和同级 `tls`（只读），没有挂载盘根、`D:\桌宠` 或项目根，也没有执行 prune、volume rm 或递归清理。Docker Desktop 数据仍位于 `D:\Docker\wsl`。
 - 2026-08-13：本里程碑全量回归 67 个测试文件、790 项通过；两项 PostgreSQL opt-in 集成测试另在真实 PG18 隔离库 2/2 通过。桌宠 Vite 构建（67 modules）、落地页 Vite 构建（7 modules）和网站 Next.js 构建（21 routes）全部成功。
+- 2026-08-13：零费用完整闭环提交为 `189f0564534dfd9bb09170519d46430d18143d1b`；完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-zero-cost-189f056.bundle`，27,330,171 字节，`git bundle verify` 通过，SHA-256 为 `4BFBC573C1F375D0F48C2143C27C32EDBFF193031AC09A86D2582FF39BFE7435`。
 
 ## In progress
 
