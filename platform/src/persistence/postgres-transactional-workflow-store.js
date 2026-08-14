@@ -582,6 +582,7 @@ class PostgresOutboxDispatcher {
     baseRetrySeconds = 5,
     maxRetrySeconds = 600,
     afterClaim = null,
+    afterEnqueue = null,
     logger = console
   } = {}) {
     this.database = requireDatabase(database);
@@ -599,12 +600,16 @@ class PostgresOutboxDispatcher {
     if (afterClaim !== null && typeof afterClaim !== "function") {
       throw new Error("Outbox after-claim hook must be a function");
     }
+    if (afterEnqueue !== null && typeof afterEnqueue !== "function") {
+      throw new Error("Outbox after-enqueue hook must be a function");
+    }
     this.queue = queue;
     this.leaseTokenFactory = leaseTokenFactory;
     this.maxAttempts = maxAttempts;
     this.baseRetrySeconds = baseRetrySeconds;
     this.maxRetrySeconds = maxRetrySeconds;
     this.afterClaim = afterClaim;
+    this.afterEnqueue = afterEnqueue;
     this.logger = logger;
   }
 
@@ -665,6 +670,13 @@ class PostgresOutboxDispatcher {
       try {
         assertWorkflowJob({ ...message.payload, dedupeKey: message.dedupeKey });
         await this.queue.enqueue({ ...message.payload, dedupeKey: message.dedupeKey });
+        if (this.afterEnqueue) {
+          await this.afterEnqueue(Object.freeze({
+            id: message.id,
+            jobName: message.payload?.name || null,
+            dedupeKey: message.dedupeKey
+          }));
+        }
         await this.database.transaction(async (transaction) => {
           const tx = requireTransactionQuery(transaction);
           await tx.query(

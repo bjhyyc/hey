@@ -58,11 +58,86 @@ describe("outbox hard-kill checkpoint", () => {
     expect(order).toEqual(["claim", "checkpoint", "enqueue", "mark-sent"]);
   });
 
+  it("runs the post-enqueue hook before the durable sent marker", async () => {
+    const order = [];
+    const database = {
+      async transaction(callback) {
+        return callback({
+          async query(sql) {
+            if (sql.includes("WITH candidates")) {
+              order.push("claim");
+              return { rows: [{
+                id: "10000000-0000-4000-8000-000000000001",
+                payload: {
+                  name: "petpack.generate-front-master",
+                  data: { runId: "20000000-0000-4000-8000-000000000001" },
+                  options: { jobId: "petpack:front", attempts: 3, backoff: { type: "exponential", delay: 5000 } }
+                },
+                dedupe_key: "petpack:front",
+                lease_token: "30000000-0000-4000-8000-000000000001",
+                attempts: 1
+              }] };
+            }
+            order.push("mark-sent");
+            return { rows: [] };
+          }
+        });
+      }
+    };
+    const queue = { enqueue: vi.fn(async () => { order.push("enqueue"); }) };
+    const afterEnqueue = vi.fn(async (message) => {
+      order.push("checkpoint");
+      expect(message).toEqual({
+        id: "10000000-0000-4000-8000-000000000001",
+        jobName: "petpack.generate-front-master",
+        dedupeKey: "petpack:front"
+      });
+    });
+    const dispatcher = new PostgresOutboxDispatcher({ database, queue, afterEnqueue });
+
+    await expect(dispatcher.dispatchBatch({ limit: 1, leaseSeconds: 5 })).resolves.toEqual({ claimed: 1 });
+    expect(order).toEqual(["claim", "enqueue", "checkpoint", "mark-sent"]);
+  });
+
   it("rejects an injected after-claim hook in production before opening resources", async () => {
     await expect(createOutboxDispatcherRuntime({
       environment: { PETPACK_PLATFORM_MODE: "production" },
-      afterClaim() {}
+      afterEnqueue() {}
     })).rejects.toThrow(/forbidden in production/i);
+  });
+
+  it("does not emit a post-enqueue checkpoint when the queue rejects the publish", async () => {
+    const database = {
+      async transaction(callback) {
+        return callback({
+          async query(sql) {
+            if (sql.includes("WITH candidates")) {
+              return { rows: [{
+                id: "10000000-0000-4000-8000-000000000001",
+                payload: {
+                  name: "petpack.generate-front-master",
+                  data: { runId: "20000000-0000-4000-8000-000000000001" },
+                  options: { jobId: "petpack:front", attempts: 3, backoff: { type: "exponential", delay: 5000 } }
+                },
+                dedupe_key: "petpack:front",
+                lease_token: "30000000-0000-4000-8000-000000000001",
+                attempts: 1
+              }] };
+            }
+            return { rows: [] };
+          }
+        });
+      }
+    };
+    const afterEnqueue = vi.fn();
+    const dispatcher = new PostgresOutboxDispatcher({
+      database,
+      queue: { enqueue: vi.fn(async () => { throw new Error("redis unavailable"); }) },
+      afterEnqueue
+    });
+
+    await expect(dispatcher.dispatchBatch({ limit: 1, leaseSeconds: 5 })).resolves.toEqual({ claimed: 1 });
+    expect(afterEnqueue).not.toHaveBeenCalled();
   });
 
   it("pins owned child records to the exact Node executable and role entry", () => {
@@ -96,6 +171,7 @@ describe("outbox hard-kill checkpoint", () => {
     expect(wrapper).toContain("$Process.Kill($true)");
     expect(wrapper).toContain("& $pgCtl stop -D $dataDir -m fast");
     expect(wrapper).toContain("& $dockerExe inspect");
+    expect(wrapper).toContain('[ValidateSet("all", "outbox-after-enqueue")]');
     expect(wrapper).not.toMatch(/\b(?:taskkill|Stop-Process|FLUSHALL|FLUSHDB|Remove-Item|Clear-Content)\b/i);
     expect(wrapper).not.toMatch(/docker\s+(?:rm|prune|stop|restart|volume)/i);
     expect(wrapper).not.toMatch(/\brm\s+-/i);

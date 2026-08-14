@@ -225,12 +225,13 @@ async function createOutboxDispatcherRuntime({
   dispatcher,
   reconciler,
   afterClaim,
+  afterEnqueue,
   logger = console,
   waitController
 } = {}) {
   const hydrated = hydrateEnvironmentFromSecretFiles({ environment });
-  if (afterClaim !== undefined && hydrated.PETPACK_PLATFORM_MODE === "production") {
-    throw new Error("Outbox after-claim hooks are forbidden in production");
+  if ((afterClaim !== undefined || afterEnqueue !== undefined) && hydrated.PETPACK_PLATFORM_MODE === "production") {
+    throw new Error("Outbox failure-injection hooks are forbidden in production");
   }
   const runtimeDatabase = database || createPostgresDatabase({ environment: hydrated, PoolClass, logger });
   try {
@@ -243,6 +244,7 @@ async function createOutboxDispatcherRuntime({
       database: runtimeDatabase,
       queue: runtimeQueue,
       afterClaim: afterClaim || null,
+      afterEnqueue: afterEnqueue || null,
       logger
     });
     const runtimeReconciler = reconciler === undefined

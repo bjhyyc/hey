@@ -65,13 +65,17 @@ function uniqueRehearsalId(now = new Date()) {
 function normalizeFaultPlan(value) {
   const input = value === undefined || value === null ? {} : value;
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Rehearsal fault plan must be an object");
-  const allowed = new Set(["apiAfterPhotos", "outboxAfterClaim", "workerActiveLease"]);
+  const allowed = new Set(["apiAfterPhotos", "outboxAfterClaim", "outboxAfterEnqueue", "workerActiveLease"]);
   for (const [key, enabled] of Object.entries(input)) {
     if (!allowed.has(key) || typeof enabled !== "boolean") throw new Error("Rehearsal fault plan is invalid");
+  }
+  if (input.outboxAfterClaim === true && input.outboxAfterEnqueue === true) {
+    throw new Error("Rehearsal outbox fault checkpoints must run in separate processes");
   }
   return Object.freeze({
     apiAfterPhotos: input.apiAfterPhotos === true,
     outboxAfterClaim: input.outboxAfterClaim === true,
+    outboxAfterEnqueue: input.outboxAfterEnqueue === true,
     workerActiveLease: input.workerActiveLease === true
   });
 }
@@ -374,6 +378,76 @@ async function collectDatabaseReport(database, projectId) {
   return { run: runResult.rows[0], delivery: delivery.rows[0] };
 }
 
+async function collectOutboxFaultEvidence(database, checkpoint) {
+  if (!checkpoint?.outboxId || !checkpoint?.dedupeKey) return null;
+  const result = await database.query(
+    `SELECT outbox.id, outbox.status, outbox.attempts, outbox.dedupe_key,
+            outbox.payload #>> '{options,jobId}' AS payload_job_id,
+            execution.job_id AS execution_job_id,
+            execution.status AS execution_status,
+            execution.attempts AS execution_attempts,
+            generation.provider_request_id
+       FROM outbox_job outbox
+       LEFT JOIN production_job_execution execution ON execution.job_id = outbox.dedupe_key
+       LEFT JOIN master_image_generation generation ON generation.job_id = outbox.dedupe_key
+      WHERE outbox.id = $1 AND outbox.dedupe_key = $2`,
+    [checkpoint.outboxId, checkpoint.dedupeKey]
+  );
+  if (result.rows.length !== 1) throw new Error("Rehearsal outbox fault evidence is unavailable");
+  const row = result.rows[0];
+  return Object.freeze({
+    outboxId: row.id,
+    dedupeKey: row.dedupe_key,
+    payloadJobId: row.payload_job_id,
+    outboxStatus: row.status,
+    outboxAttempts: Number(row.attempts),
+    executionJobId: row.execution_job_id,
+    executionStatus: row.execution_status,
+    executionAttempts: Number(row.execution_attempts),
+    providerRequestId: row.provider_request_id
+  });
+}
+
+async function collectOutboxCheckpointEvidence(database, checkpoint) {
+  if (!checkpoint?.outboxId || !checkpoint?.dedupeKey) {
+    throw new Error("Rehearsal outbox checkpoint identity is incomplete");
+  }
+  const result = await database.query(
+    `SELECT id, status, attempts, lease_token IS NOT NULL AS has_lease_token,
+            dedupe_key, payload #>> '{options,jobId}' AS payload_job_id
+       FROM outbox_job
+      WHERE id = $1 AND dedupe_key = $2`,
+    [checkpoint.outboxId, checkpoint.dedupeKey]
+  );
+  if (result.rows.length !== 1) throw new Error("Rehearsal outbox checkpoint row is unavailable");
+  const row = result.rows[0];
+  return Object.freeze({
+    outboxId: row.id,
+    status: row.status,
+    attempts: Number(row.attempts),
+    hasLeaseToken: row.has_lease_token === true,
+    dedupeKey: row.dedupe_key,
+    payloadJobId: row.payload_job_id
+  });
+}
+
+function hasExactOutboxReplayEvidence(evidence) {
+  return Boolean(evidence) &&
+    evidence.preKillStatus === "leased" &&
+    evidence.preKillAttempts === 1 &&
+    evidence.preKillHasLeaseToken === true &&
+    evidence.preKillDedupeKey === evidence.dedupeKey &&
+    evidence.preKillPayloadJobId === evidence.dedupeKey &&
+    evidence.outboxStatus === "sent" &&
+    evidence.outboxAttempts === 2 &&
+    evidence.executionStatus === "succeeded" &&
+    evidence.executionAttempts === 1 &&
+    evidence.dedupeKey === evidence.payloadJobId &&
+    evidence.dedupeKey === evidence.executionJobId &&
+    typeof evidence.providerRequestId === "string" && evidence.providerRequestId.length > 0 &&
+    evidence.frontProviderCalls === 1;
+}
+
 function hasFinalDatabaseContract(databaseReport) {
   const run = databaseReport?.run || {};
   return Number(run.confirmed_source_photos) === 3 &&
@@ -450,17 +524,21 @@ async function runZeroCostRehearsal({
 
     apiRecord = await startChild({ role: "api", entry: API_ENTRY, environment: config.environment, logger });
     children.push(apiRecord);
-    const initialOutboxEnvironment = faults.outboxAfterClaim
+    const initialOutboxEnvironment = faults.outboxAfterClaim || faults.outboxAfterEnqueue
       ? {
         ...config.environment,
-        PETPACK_REHEARSAL_OUTBOX_HARD_KILL: "true",
+        PETPACK_REHEARSAL_OUTBOX_HARD_KILL: faults.outboxAfterClaim ? "true" : "false",
+        PETPACK_REHEARSAL_OUTBOX_POST_ENQUEUE_HARD_KILL: faults.outboxAfterEnqueue ? "true" : "false",
         PETPACK_OUTBOX_LEASE_SECONDS: "5"
       }
       : config.environment;
     outboxRecord = await startChild({ role: "outbox", entry: OUTBOX_ENTRY, environment: initialOutboxEnvironment, logger });
     children.push(outboxRecord);
-    const outboxClaimCheckpoint = faults.outboxAfterClaim
-      ? waitForChildCheckpoint(outboxRecord, "claimed_before_enqueue")
+    const outboxClaimCheckpoint = faults.outboxAfterClaim || faults.outboxAfterEnqueue
+      ? waitForChildCheckpoint(
+        outboxRecord,
+        faults.outboxAfterClaim ? "claimed_before_enqueue" : "enqueued_before_mark_sent"
+      )
       : null;
     const initialWorkerEnvironment = faults.workerActiveLease
       ? { ...config.environment, PETPACK_REHEARSAL_VIDEO_POLL_HOLD_MS: "20000" }
@@ -518,8 +596,16 @@ async function runZeroCostRehearsal({
       });
     }
 
-    if (faults.outboxAfterClaim) {
-      faultCheckpoints.outbox = await outboxClaimCheckpoint;
+    if (faults.outboxAfterClaim || faults.outboxAfterEnqueue) {
+      const checkpoint = await outboxClaimCheckpoint;
+      const checkpointDatabase = createPostgresDatabase({ environment: config.environment, logger });
+      let databaseEvidence;
+      try {
+        databaseEvidence = await collectOutboxCheckpointEvidence(checkpointDatabase, checkpoint);
+      } finally {
+        await checkpointDatabase.close();
+      }
+      faultCheckpoints.outbox = Object.freeze({ ...checkpoint, database: databaseEvidence });
       await hardKillChild(outboxRecord);
       const outboxIndex = children.indexOf(outboxRecord);
       if (outboxIndex < 0) throw new Error("Hard-killed outbox child was not tracked");
@@ -530,6 +616,7 @@ async function runZeroCostRehearsal({
         environment: {
           ...config.environment,
           PETPACK_REHEARSAL_OUTBOX_HARD_KILL: "false",
+          PETPACK_REHEARSAL_OUTBOX_POST_ENQUEUE_HARD_KILL: "false",
           PETPACK_OUTBOX_LEASE_SECONDS: "5"
         },
         logger
@@ -629,12 +716,14 @@ async function runZeroCostRehearsal({
 
     const reportDatabase = createPostgresDatabase({ environment: config.environment, logger });
     let databaseReport;
+    let outboxFaultEvidence;
     try {
       databaseReport = await waitForFinalDatabaseContract({
         database: reportDatabase,
         projectId,
         timeoutMs: faults.workerActiveLease ? 60_000 : 30_000
       });
+      outboxFaultEvidence = await collectOutboxFaultEvidence(reportDatabase, faultCheckpoints.outbox);
     } finally {
       await reportDatabase.close();
     }
@@ -643,6 +732,21 @@ async function runZeroCostRehearsal({
     const fixtureEvents = Object.fromEntries(
       [...new Set(audit.map((entry) => entry.event))].sort().map((event) => [event, audit.filter((entry) => entry.event === event).length])
     );
+    if (outboxFaultEvidence) {
+      const preKillEvidence = faultCheckpoints.outbox?.database;
+      outboxFaultEvidence = Object.freeze({
+        ...outboxFaultEvidence,
+        preKillStatus: preKillEvidence?.status,
+        preKillAttempts: preKillEvidence?.attempts,
+        preKillHasLeaseToken: preKillEvidence?.hasLeaseToken,
+        preKillDedupeKey: preKillEvidence?.dedupeKey,
+        preKillPayloadJobId: preKillEvidence?.payloadJobId,
+        frontProviderCalls: audit.filter((entry) =>
+          entry.event === "fixture.seedream" && entry.kind === "front" &&
+          entry.requestId === outboxFaultEvidence.providerRequestId
+        ).length
+      });
+    }
     const report = {
       rehearsalId: config.rehearsalId,
       completedAt: new Date().toISOString(),
@@ -652,8 +756,11 @@ async function runZeroCostRehearsal({
       faultInjection: {
         apiHardKilled,
         outboxHardKilled,
+        outboxAfterClaimHardKilled: outboxHardKilled && faults.outboxAfterClaim,
+        outboxAfterEnqueueHardKilled: outboxHardKilled && faults.outboxAfterEnqueue,
         workerHardKilled,
-        checkpoints: faultCheckpoints
+        checkpoints: faultCheckpoints,
+        outboxReplayEvidence: outboxFaultEvidence || null
       },
       projectId,
       orderId,
@@ -695,7 +802,10 @@ async function runZeroCostRehearsal({
          report.workflow.fixtureUsageAttempts !== 10 || report.workflow.runState !== "deliverable" || report.delivery.status !== "ready" ||
          report.delivery.clientImport.packageId !== report.delivery.packageId || report.delivery.clientImport.fileCount !== report.delivery.archiveFileCount ||
          (faults.apiAfterPhotos && !report.faultInjection.apiHardKilled) ||
-         (faults.outboxAfterClaim && !report.faultInjection.outboxHardKilled) ||
+         (faults.outboxAfterClaim && (!report.faultInjection.outboxHardKilled ||
+           !hasExactOutboxReplayEvidence(report.faultInjection.outboxReplayEvidence))) ||
+         (faults.outboxAfterEnqueue && (!report.faultInjection.outboxAfterEnqueueHardKilled ||
+           !hasExactOutboxReplayEvidence(report.faultInjection.outboxReplayEvidence))) ||
          (faults.workerActiveLease && !report.faultInjection.workerHardKilled)) {
       throw Object.assign(new Error("Zero-cost rehearsal completed with an invalid final contract"), { report });
     }
@@ -718,11 +828,15 @@ async function runZeroCostRehearsal({
 
 if (require.main === module) {
   const hardKillAll = process.env.PETPACK_REHEARSAL_HARD_KILL_ALL === "true";
+  const hardKillPostEnqueue = process.env.PETPACK_REHEARSAL_HARD_KILL_OUTBOX_AFTER_ENQUEUE === "true";
+  if (hardKillAll && hardKillPostEnqueue) throw new Error("Only one rehearsal hard-kill mode may be enabled");
   runZeroCostRehearsal({
-    restartWorker: hardKillAll ? false : process.env.PETPACK_REHEARSAL_RESTART_WORKER !== "false",
+    restartWorker: hardKillAll || hardKillPostEnqueue ? false : process.env.PETPACK_REHEARSAL_RESTART_WORKER !== "false",
     faultPlan: hardKillAll
       ? { apiAfterPhotos: true, outboxAfterClaim: true, workerActiveLease: true }
-      : undefined
+      : hardKillPostEnqueue
+        ? { outboxAfterEnqueue: true }
+        : undefined
   }).then((report) => {
     console.log(JSON.stringify({
       ok: true,
@@ -742,8 +856,11 @@ if (require.main === module) {
 module.exports = {
   CHILD_ENTRY_BY_ROLE,
   collectDatabaseReport,
+  collectOutboxCheckpointEvidence,
+  collectOutboxFaultEvidence,
   createRehearsalEnvironment,
   hardKillChild,
+  hasExactOutboxReplayEvidence,
   hasFinalDatabaseContract,
   normalizeFaultPlan,
   readAudit,

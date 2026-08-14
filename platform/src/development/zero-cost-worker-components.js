@@ -279,9 +279,10 @@ function createAuditRecorder(environment) {
   let chain = Promise.resolve();
   return {
     record(event, details = {}) {
-      if (!auditPath) return;
+      if (!auditPath) return Promise.resolve();
       const entry = `${JSON.stringify({ at: new Date().toISOString(), event, external: false, ...details })}\n`;
       chain = chain.then(() => fsp.appendFile(auditPath, entry, { encoding: "utf8" }));
+      return chain;
     },
     async close() { await chain; }
   };
@@ -428,27 +429,27 @@ async function createWorkerComponents({ environment = process.env, logger = cons
     "Zero-cost video poll hold"
   );
   const modelArkClient = {
-    async createFrontMaster() {
-      recorder.record("fixture.seedream", { kind: "front" });
+    async createFrontMaster({ requestId } = {}) {
+      await recorder.record("fixture.seedream", { kind: "front", requestId });
       return { outputUrls: [`${artifactServer.origin}/masters/front.png`] };
     },
-    async createSideMaster() {
-      recorder.record("fixture.seedream", { kind: "side" });
+    async createSideMaster({ requestId } = {}) {
+      await recorder.record("fixture.seedream", { kind: "side", requestId });
       return { outputUrls: [`${artifactServer.origin}/masters/side.png`] };
     },
-    async createSleepingMaster() {
-      recorder.record("fixture.seedream", { kind: "sleep" });
+    async createSleepingMaster({ requestId } = {}) {
+      await recorder.record("fixture.seedream", { kind: "sleep", requestId });
       return { outputUrls: [`${artifactServer.origin}/masters/sleep.png`] };
     },
     async createVideoTask({ runId, actionId, duration }) {
       const providerTaskId = encodeVideoTask({ runId, actionId, duration: Number(duration) });
-      recorder.record("fixture.seedance_create", { runId, actionId, duration: Number(duration) });
+      await recorder.record("fixture.seedance_create", { runId, actionId, duration: Number(duration) });
       return { providerTaskId };
     },
     async getVideoTask({ providerTaskId }) {
       const task = decodeVideoTask(providerTaskId);
       const encodedTask = Buffer.from(providerTaskId, "utf8").toString("base64url");
-      recorder.record("fixture.seedance_poll", { runId: task.runId, actionId: task.actionId });
+      await recorder.record("fixture.seedance_poll", { runId: task.runId, actionId: task.actionId });
       await wait(videoPollHoldMs);
       return {
         providerTaskId,

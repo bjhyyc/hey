@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const {
   hasFinalDatabaseContract,
+  hasExactOutboxReplayEvidence,
   normalizeFaultPlan,
   waitForActiveVideoPollLease,
   waitForFinalDatabaseContract,
@@ -86,8 +87,11 @@ describe("zero-cost worker restart checkpoint", () => {
     expect(normalizeFaultPlan({ apiAfterPhotos: true, outboxAfterClaim: true })).toEqual({
       apiAfterPhotos: true,
       outboxAfterClaim: true,
+      outboxAfterEnqueue: false,
       workerActiveLease: false
     });
+    expect(normalizeFaultPlan({ outboxAfterEnqueue: true })).toMatchObject({ outboxAfterEnqueue: true });
+    expect(() => normalizeFaultPlan({ outboxAfterClaim: true, outboxAfterEnqueue: true })).toThrow(/separate/i);
     expect(() => normalizeFaultPlan({ workerActiveLease: "true" })).toThrow(/fault plan/i);
     expect(() => normalizeFaultPlan({ deleteDocker: true })).toThrow(/fault plan/i);
   });
@@ -121,5 +125,30 @@ describe("zero-cost worker restart checkpoint", () => {
       collectReport
     })).resolves.toEqual(finalDatabaseReport());
     expect(collectReport).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires a second outbox publish without a second business execution or provider call", () => {
+    const evidence = {
+      preKillStatus: "leased",
+      preKillAttempts: 1,
+      preKillHasLeaseToken: true,
+      preKillDedupeKey: "petpack:front",
+      preKillPayloadJobId: "petpack:front",
+      outboxStatus: "sent",
+      outboxAttempts: 2,
+      executionStatus: "succeeded",
+      executionAttempts: 1,
+      dedupeKey: "petpack:front",
+      payloadJobId: "petpack:front",
+      executionJobId: "petpack:front",
+      providerRequestId: "10000000-0000-4000-8000-000000000099",
+      frontProviderCalls: 1
+    };
+    expect(hasExactOutboxReplayEvidence(evidence)).toBe(true);
+    expect(hasExactOutboxReplayEvidence({ ...evidence, preKillStatus: "sent" })).toBe(false);
+    expect(hasExactOutboxReplayEvidence({ ...evidence, preKillAttempts: 2 })).toBe(false);
+    expect(hasExactOutboxReplayEvidence({ ...evidence, outboxAttempts: 1 })).toBe(false);
+    expect(hasExactOutboxReplayEvidence({ ...evidence, executionAttempts: 2 })).toBe(false);
+    expect(hasExactOutboxReplayEvidence({ ...evidence, frontProviderCalls: 2 })).toBe(false);
   });
 });

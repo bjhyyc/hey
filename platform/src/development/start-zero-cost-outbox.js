@@ -16,7 +16,8 @@ function createClaimPause(environment = process.env) {
   process.once("SIGTERM", release);
   process.once("SIGINT", release);
   return async (messages) => {
-    if (triggered || !messages.some((message) => message.jobName === HARD_KILL_TARGET_JOB)) return;
+    const target = messages.find((message) => message.jobName === HARD_KILL_TARGET_JOB);
+    if (triggered || !target) return;
     triggered = true;
     if (typeof process.send === "function") {
       process.send({
@@ -24,7 +25,33 @@ function createClaimPause(environment = process.env) {
         role: "outbox",
         checkpoint: "claimed_before_enqueue",
         jobName: HARD_KILL_TARGET_JOB,
+        outboxId: target.id,
+        dedupeKey: target.dedupeKey,
         claimedCount: messages.length
+      });
+    }
+    await released;
+  };
+}
+
+function createPostEnqueuePause(environment = process.env) {
+  if (environment.PETPACK_REHEARSAL_OUTBOX_POST_ENQUEUE_HARD_KILL !== "true") return null;
+  let triggered = false;
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
+  process.once("SIGTERM", release);
+  process.once("SIGINT", release);
+  return async (message) => {
+    if (triggered || message.jobName !== HARD_KILL_TARGET_JOB) return;
+    triggered = true;
+    if (typeof process.send === "function") {
+      process.send({
+        type: "checkpoint",
+        role: "outbox",
+        checkpoint: "enqueued_before_mark_sent",
+        jobName: HARD_KILL_TARGET_JOB,
+        outboxId: message.id,
+        dedupeKey: message.dedupeKey
       });
     }
     await released;
@@ -36,7 +63,8 @@ async function main({ environment = process.env, logger = console } = {}) {
   const runtime = await createOutboxDispatcherRuntime({
     environment: safeEnvironment,
     logger,
-    afterClaim: createClaimPause(safeEnvironment) || undefined
+    afterClaim: createClaimPause(safeEnvironment) || undefined,
+    afterEnqueue: createPostEnqueuePause(safeEnvironment) || undefined
   });
   const close = installGracefulShutdown({ label: "outbox", logger, close: () => runtime.close() });
   const status = await runtime.start();
@@ -51,4 +79,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { HARD_KILL_TARGET_JOB, createClaimPause, main };
+module.exports = { HARD_KILL_TARGET_JOB, createClaimPause, createPostEnqueuePause, main };

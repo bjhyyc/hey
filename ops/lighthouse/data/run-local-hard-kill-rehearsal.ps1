@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$PostgresBin = "D:\PostgreSQL 15\bin",
-  [string]$RedisContainer = "petpack-rebuild-redis-20260813"
+  [string]$RedisContainer = "petpack-rebuild-redis-20260813",
+  [ValidateSet("all", "outbox-after-enqueue")][string]$RehearsalMode = "all"
 )
 
 Set-StrictMode -Version Latest
@@ -172,7 +173,8 @@ password_encryption = 'scram-sha-256'
   $env:PETPACK_REDIS_CA_PEM = Get-Content -LiteralPath $redisCaPath -Raw
   $env:PETPACK_REHEARSAL_API_PORT = [string]$apiPort
   $env:PETPACK_REHEARSAL_OBJECT_PORT = [string]$objectPort
-  $env:PETPACK_REHEARSAL_HARD_KILL_ALL = "true"
+  $env:PETPACK_REHEARSAL_HARD_KILL_ALL = if ($RehearsalMode -eq "all") { "true" } else { "false" }
+  $env:PETPACK_REHEARSAL_HARD_KILL_OUTBOX_AFTER_ENQUEUE = if ($RehearsalMode -eq "outbox-after-enqueue") { "true" } else { "false" }
   $env:TEMP = $runRoot
   $env:TMP = $runRoot
   $stdoutPath = Join-Path $runRoot "harness.stdout.log"
@@ -194,6 +196,7 @@ password_encryption = 'scram-sha-256'
   }
   $report = [ordered]@{
     schemaVersion = "petpack-local-hard-kill-rehearsal/v1"
+    rehearsalMode = $RehearsalMode
     runRoot = $runRoot
     workflowReport = [string]$result.reportPath
     postgresVersion = $versionText
@@ -202,6 +205,7 @@ password_encryption = 'scram-sha-256'
     redisPort = $redisPort
     apiHardKilled = [bool]$result.faultInjection.apiHardKilled
     outboxHardKilled = [bool]$result.faultInjection.outboxHardKilled
+    outboxReplayEvidence = $result.faultInjection.outboxReplayEvidence
     workerHardKilled = [bool]$result.faultInjection.workerHardKilled
     externalProviderCallCount = [int]$result.externalCallCount
     exactOwnedChildHandlesOnly = $true
@@ -210,8 +214,24 @@ password_encryption = 'scram-sha-256'
     hostPathDeleted = $false
     retainedForAudit = $true
   }
-  if (-not $report.apiHardKilled -or -not $report.outboxHardKilled -or -not $report.workerHardKilled -or
-      $report.externalProviderCallCount -ne 0) {
+  $expectedFaultsObserved = if ($RehearsalMode -eq "all") {
+    $report.apiHardKilled -and $report.outboxHardKilled -and $report.workerHardKilled
+  } else {
+    -not $report.apiHardKilled -and $report.outboxHardKilled -and -not $report.workerHardKilled -and
+      [bool]$result.faultInjection.outboxAfterEnqueueHardKilled
+  }
+  $replayEvidence = $report.outboxReplayEvidence
+  $exactReplayObserved = $replayEvidence -and $replayEvidence.preKillStatus -eq "leased" -and
+    [int]$replayEvidence.preKillAttempts -eq 1 -and [bool]$replayEvidence.preKillHasLeaseToken -and
+    $replayEvidence.preKillDedupeKey -eq $replayEvidence.dedupeKey -and
+    $replayEvidence.preKillPayloadJobId -eq $replayEvidence.dedupeKey -and
+    $replayEvidence.outboxStatus -eq "sent" -and
+    [int]$replayEvidence.outboxAttempts -eq 2 -and $replayEvidence.executionStatus -eq "succeeded" -and
+    [int]$replayEvidence.executionAttempts -eq 1 -and [int]$replayEvidence.frontProviderCalls -eq 1 -and
+    -not [string]::IsNullOrWhiteSpace([string]$replayEvidence.providerRequestId) -and
+    $replayEvidence.dedupeKey -eq $replayEvidence.payloadJobId -and
+    $replayEvidence.dedupeKey -eq $replayEvidence.executionJobId
+  if (-not $expectedFaultsObserved -or -not $exactReplayObserved -or $report.externalProviderCallCount -ne 0) {
     throw "Hard-kill rehearsal result is incomplete"
   }
   $reportPath = Join-Path $runRoot "report.json"
@@ -229,7 +249,8 @@ password_encryption = 'scram-sha-256'
   }
   foreach ($name in @(
     "PGPASSWORD", "PETPACK_POSTGRES_URL", "PETPACK_REDIS_URL", "PETPACK_REDIS_CA_PEM",
-    "PETPACK_REHEARSAL_API_PORT", "PETPACK_REHEARSAL_OBJECT_PORT", "PETPACK_REHEARSAL_HARD_KILL_ALL"
+    "PETPACK_REHEARSAL_API_PORT", "PETPACK_REHEARSAL_OBJECT_PORT", "PETPACK_REHEARSAL_HARD_KILL_ALL",
+    "PETPACK_REHEARSAL_HARD_KILL_OUTBOX_AFTER_ENQUEUE"
   )) {
     [System.Environment]::SetEnvironmentVariable($name, $null, "Process")
   }
