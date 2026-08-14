@@ -68,14 +68,17 @@
 - 2026-08-13：硬中断里程碑最终回归为 76 个测试文件、843 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；桌宠 Vite、落地页 Vite 和网站 Next.js 三项生产构建全部成功，PowerShell 语法与 `git diff --check` 通过。
 - 2026-08-13：精确硬中断代码提交为 `e133817a023142007ec358412831706016fb29e3`。
 - 2026-08-13：精确硬中断里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-hard-kill-e300e84.bundle`，27,401,054 字节，包含至提交 `e300e84cf24f3197f0bdf4a9ca7b4f56e7d77208` 的完整历史；`git bundle verify` 通过，SHA-256 为 `F9E4B49D73ED68E654F2A318FBEFAE0D728560C0B639A39BC076F47ACEDD7FF1`。
+- 2026-08-13：Outbox 第二崩溃窗口已通过精确硬中断验证。`generate-front-master` 在 BullMQ 入队成功、PostgreSQL 尚未标记 `sent` 时被硬杀；硬杀前同一行严格为 `leased`、`attempts=1` 且租约令牌存在，重启后同一行变为 `sent`、`attempts=2`。同一确定性 job ID 的业务执行仍为 `succeeded`、`attempts=1`，正面母图 fixture 调用由持久化 `providerRequestId` 绑定且严格为 1 次，没有重复供应商效果。
+- 2026-08-13：第二窗口独立报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\hard-kill-rehearsals\hard-kill-20260813234255-1e161303\report.json`，工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814064304-d985fb98\report.json`。当前代码的组合硬杀复验报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\hard-kill-rehearsals\hard-kill-20260813234458-cfdd3340\report.json`，工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814064509-f5660a0f\report.json`；API、Outbox 与 Worker 三类硬杀全部恢复，最终仍为 3 来源照、3 母图、7 动作、12/12 QA、38/38 执行、39/39 Outbox、10 次 fixture usage、0 外部调用，8 文件 PetPack 通过原版客户端导入。
+- 2026-08-13：Outbox 第二窗口代码提交为 `7a0593e7fb548815b7419e77df4ed6c45bf39287`。最终全量回归为 77 个测试文件、846 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；桌宠 Vite、落地页 Vite 和网站 Next.js 三项生产构建全部成功，PowerShell 语法与 `git diff --check` 通过。两轮隔离 PostgreSQL 18.4 均已确认停止；Docker mutation、破坏性 Redis 命令、宿主路径删除和真实外部调用均为 0。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker、完整零费用多进程闭环、第一阶段生产容器边界、数据层 TLS-only、Redis 队列丢失重放、PostgreSQL 短断恢复，以及 API/outbox/Worker 三类精确硬中断均已验证。当前继续做 outbox 入队后/标记 sent 前的第二崩溃窗口、Redis AOF 保留重启、生产视觉处理器/validator、正式镜像选型与真实供应商适配；真实付费能力和 `studio-production` profile 仍保持关闭，数据层新配置尚未部署 Lighthouse。
+- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker、完整零费用多进程闭环、第一阶段生产容器边界、数据层 TLS-only、Redis 队列丢失重放、PostgreSQL 短断恢复，以及 API/outbox/Worker 四个精确崩溃窗口均已验证。当前继续做 Redis AOF 保留重启、生产视觉处理器/validator、正式镜像选型与真实供应商适配；真实付费能力和 `studio-production` profile 仍保持关闭，数据层新配置尚未部署 Lighthouse。
 
 ## Next
 
-1. 补 outbox 在 BullMQ 入队成功、PostgreSQL 尚未标记 `sent` 的第二崩溃窗口，并以确定性 job ID 证明重投只产生一次业务效果；随后用本轮专属、可保留的 Redis 实例做 AOF 保留重启，断言等待/延迟任务恢复、0 外部调用、0 数据删除，并补队列积压/死信监控。
+1. 用本轮专属、可保留的 Redis 实例做 AOF 保留重启，断言等待/延迟任务在同一容器和同一 AOF 数据目录恢复、0 外部调用、0 数据删除；随后补队列积压/死信监控。
 2. 选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口；只在完整备份/恢复演练通过后将新的 TLS-only 数据配置部署到 Lighthouse。
 3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
 4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。

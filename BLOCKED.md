@@ -13,7 +13,7 @@
 ## 需要重新盘点的生产基础设施
 
 - PostgreSQL 18.4 的 TLS-only、TLS 1.2+、独立 CA、运行时证书隔离、迁移并发锁及明文拒绝已在本机真实演练通过，Lighthouse 发布代码也已完成；但正式 PostgreSQL 18 不可变镜像 digest、应用端新 CA 配置、完整备份/恢复演练和维护窗口尚未确定，因此尚未部署现网。
-- Redis 8 的 TLS-only、独立 CA、最小权限前缀 ACL、越界 key/`FLUSHALL` 拒绝已在隔离容器真实通过；`sent` outbox 对账、全新空队列命名空间的确定性重放，以及 API/outbox/Worker 三类精确 hard-kill 也已通过，且未清空或删除 Redis 数据。本次 Alpine 镜像仍仅作功能验证；尚需选择并扫描正式不可变镜像、部署持久化实例，完成 AOF 保留重启、outbox 入队后/标记 sent 前崩溃窗口、死信与积压告警演练。
+- Redis 8 的 TLS-only、独立 CA、最小权限前缀 ACL、越界 key/`FLUSHALL` 拒绝已在隔离容器真实通过；`sent` outbox 对账、全新空队列命名空间的确定性重放，以及 API、Outbox 两个边界和 Worker 活跃租约四个精确 hard-kill 也已通过，且未清空或删除 Redis 数据。本次 Alpine 镜像仍仅作功能验证；尚需选择并扫描正式不可变镜像、部署持久化实例，完成 AOF 保留重启、死信与积压告警演练。
 - COS 生产 CAM 最小权限、生命周期、删除和审计策略。
 - 私有 outbox/Worker Compose、运行时心跳、非 root/read-only/资源上限及最小化 distroless 镜像已完成；镜像尚未推送生产仓库并以 registry digest 部署，队列积压/死信告警与水平扩容仍未完成。
 - 当前媒体 Worker 的人工运行时清单仍包含 `libjxl0.7`；即使 Docker Scout 报告 0 项，先前识别的未修复 jpeg-xl `CVE-2025-70103` 仍按高危阻塞正式发布。必须换成不含该库的最小 FFmpeg 或验证过的已修复版本，并重新扫描、生成 SBOM、实测 VP9/alpha 后才能解除。
