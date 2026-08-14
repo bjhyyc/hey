@@ -42,17 +42,22 @@
 - 2026-08-13：新增独立 outbox dispatcher、完整 Studio API 与统一 Studio Worker 运行时入口。API 在监听前强制确认业务数据库已到迁移 014；开发只绑定 loopback，生产才允许容器内部网。Worker 将三母图、七视频/后处理和 PetPack 四段流水线统一挂到单 BullMQ consumer，开发模式强制使用 fixture ModelArk，避免误调用真实付费 API；组件、数据库、队列与临时目录均 fail-closed 并支持安全关闭。
 - 2026-08-13：新增 `INTEGRATION_GATES.md`，固定真实服务接入顺序及每一门需要向用户索取的精确资料：先零费用本地闭环，再 Kaipay 协议、ModelArk 小额分阶段验收、生产 COS、CloudBase 复核和最终发布；禁止在官方协议缺失时猜字段或自动无限付费重试。
 - 2026-08-13：运行时里程碑完整回归 59 个测试文件、760 项通过，2 项 opt-in PostgreSQL 测试在新建隔离库 `petpack_runtime_20260813_1844` 中按 001–014 全迁移后 2/2 通过；测试数据库随后正常停机。桌宠 Vite 生产构建（67 modules）与网站 Next.js 生产构建（21 routes）均成功。
+- 2026-08-13：建立只允许 development、loopback 与项目 `.tmp` 子目录的零费用多进程彩排。API、outbox dispatcher、单队列统一 Worker、PostgreSQL、TLS Redis、本地 HMAC 私有对象存储、模拟 Kaipay、fixture Seedream/Seedance、后处理、质检、打包与客户端导入均走真实运行时边界；所有生产密钥文件变量都会从子进程环境移除，任何非 loopback 网络请求 fail-closed。
+- 2026-08-13：彩排先后发现并修复四个真实集成缺口：迁移 012 遗留的自动命名旧 CHECK 约束、BullMQ 安全 jobId 与业务原始 dedupeKey 不一致、母图完成器漏载冻结的 `model_registry_version`、以及 Worker 重启发生在供应商任务 ID 落库之前。新重启门只在 7 个 provider task ID 全部持久化且不存在 reconciliation 状态时开启，避免为了恢复测试而制造重复付费或未知订单。
+- 2026-08-13：最新完整报告 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814031907-ffb0737a\report.json` 已通过硬断言：3 张来源照、3 张母图、7 个动作、12/12 份 QA、38/38 个执行任务、39/39 个 outbox、10 次 fixture provider usage、0 个未完成任务、0 个未发送 outbox、0 次外部调用；运行态为 `deliverable`，Worker 已安全重启一次，下载的 8 文件 PetPack 已被原版客户端 `importPetpack` 实际导入成功。
+- 2026-08-13：Docker 仅复用隔离 Redis 容器 `petpack-rebuild-redis-20260813`；宿主挂载严格限定为项目 `.tmp\redis-rehearsal-20260813\data`（读写）和同级 `tls`（只读），没有挂载盘根、`D:\桌宠` 或项目根，也没有执行 prune、volume rm 或递归清理。Docker Desktop 数据仍位于 `D:\Docker\wsl`。
+- 2026-08-13：本里程碑全量回归 67 个测试文件、790 项通过；两项 PostgreSQL opt-in 集成测试另在真实 PG18 隔离库 2/2 通过。桌宠 Vite 构建（67 modules）、落地页 Vite 构建（7 modules）和网站 Next.js 构建（21 routes）全部成功。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站源码、3–4 图/三母图/480p 核心合同、Kaipay 安全边界、COS 私有读取、Studio API、独立 outbox dispatcher 与统一 Worker 入口已恢复并完成聚焦验证。当前进入本地多进程模拟闭环和崩溃恢复。
+- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker 及完整零费用多进程闭环已恢复并验证。当前进入生产容器、监控、故障恢复与真实供应商适配阶段；真实付费能力仍保持关闭。
 
 ## Next
 
-1. 用 PostgreSQL + Redis + 本地合成媒体跑通模拟支付后的 3 图、三母图、七视频并行、后处理、质检、PetPack 打包下载多进程闭环。
-2. 验证 API/outbox/Worker 与 Redis 重启、租约过期重投、同一 jobId 去重和未知供应商提交结果的人工对账状态。
-3. 补齐 Worker 镜像、健康检查、资源上限、队列积压/死信监控与安全部署配置。
-4. 按 `INTEGRATION_GATES.md` 在到达门槛时向用户一次性索要 Kaipay 或 ModelArk 所需资料，执行有费用上限的真实验收。
+1. 补齐 Worker 镜像、健康检查、资源上限、队列积压/死信监控与安全部署配置，继续保持 Studio 业务路由不对公网开放。
+2. 做 API/outbox/Worker 强制终止、Redis 重启/数据丢失、PostgreSQL 短暂中断与租约过期重投测试；补确定性队列重放/对账工具，保证不会丢任务或重复付费。
+3. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
+4. 到达 `INTEGRATION_GATES.md` 第一项真实门槛时，向用户索取 Kaipay API 调试器协议资料并实现正式 wire adapter；之后才依次进行有费用上限的 ModelArk、COS、CloudBase 和最终上线验收。
 
 ## Working rules
 

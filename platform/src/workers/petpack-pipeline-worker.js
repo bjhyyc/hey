@@ -79,7 +79,12 @@ class RetryablePetpackJobError extends Error {
     super("The PetPack pipeline job can be retried safely");
     this.name = "RetryablePetpackJobError";
     this.code = code;
-    this.retryAfterMs = Number.isFinite(Number(retryAfterMs)) ? Math.max(1000, Number(retryAfterMs)) : null;
+    const parsedRetryAfterMs = retryAfterMs === null || retryAfterMs === undefined
+      ? Number.NaN
+      : Number(retryAfterMs);
+    this.retryAfterMs = Number.isFinite(parsedRetryAfterMs) && parsedRetryAfterMs > 0
+      ? Math.max(1000, Math.ceil(parsedRetryAfterMs))
+      : null;
   }
 }
 
@@ -229,7 +234,11 @@ class PetpackPipelineWorker {
 
   _nonClaimedResult(claim, runId) {
     if (claim.outcome === "busy") {
-      throw new RetryablePetpackJobError("petpack_execution_busy", claim.retryAfterMs);
+      const reported = Number(claim.retryAfterMs);
+      const remaining = Number.isFinite(reported) && reported > 0
+        ? reported
+        : this.leaseSeconds * 1000;
+      throw new RetryablePetpackJobError("petpack_execution_busy", Math.ceil(remaining) + 1000);
     }
     return { status: claim.outcome, runId };
   }

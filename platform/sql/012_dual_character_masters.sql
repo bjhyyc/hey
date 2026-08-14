@@ -105,6 +105,25 @@ ALTER TABLE provider_price_rate DROP CONSTRAINT IF EXISTS provider_price_rate_op
 ALTER TABLE provider_usage_attempt DROP CONSTRAINT IF EXISTS provider_usage_attempt_operation_check;
 ALTER TABLE provider_usage_attempt DROP CONSTRAINT IF EXISTS provider_usage_attempt_check;
 
+-- PostgreSQL may assign an implementation-dependent suffix (for example
+-- provider_usage_attempt_check1) to an inline CHECK constraint.  Drop every
+-- legacy operation constraint by its definition before rewriting existing
+-- rows; relying only on historical names leaves fresh 001 -> 014 databases
+-- unable to record seedream_front usage.
+DO $$
+DECLARE constraint_row record;
+BEGIN
+  FOR constraint_row IN
+    SELECT conname
+      FROM pg_constraint
+     WHERE conrelid = 'provider_usage_attempt'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) ILIKE '%operation%seedream_awake%'
+  LOOP
+    EXECUTE format('ALTER TABLE provider_usage_attempt DROP CONSTRAINT %I', constraint_row.conname);
+  END LOOP;
+END $$;
+
 UPDATE provider_price_rate SET operation = 'seedream_front' WHERE operation = 'seedream_awake';
 UPDATE provider_usage_attempt SET operation = 'seedream_front' WHERE operation = 'seedream_awake';
 

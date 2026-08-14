@@ -14,7 +14,11 @@ const {
   normalizeSha256
 } = require("../storage/private-object-store");
 const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflow");
-const { RetryableProductionJobError, safeErrorCode } = require("./production-job-worker");
+const {
+  RetryableProductionJobError,
+  createLeaseBusyError,
+  safeErrorCode
+} = require("./production-job-worker");
 
 const MASTER_IMAGE_PROCESSOR_CONTRACT_VERSION = "character-canvas-v1-master-processor/v1";
 const GENERATION_JOB_NAMES = new Set([
@@ -444,7 +448,9 @@ class ImageMasterWorker {
       modelReference: createModelReference(this.modelRegistry, "image"),
       outputSize: this.modelRegistry.modelArk.image.outputSize || null
     });
-    if (claim.outcome === "busy") throw new RetryableProductionJobError("master_image_busy");
+    if (claim.outcome === "busy") {
+      throw createLeaseBusyError("master_image_busy", claim, this.leaseSeconds);
+    }
     if (claim.outcome !== "claimed") return { status: claim.outcome, runId: input.runId, kind: claim.kind };
     const heartbeat = this._createHeartbeat(input, claim);
     try {
@@ -567,7 +573,9 @@ class ImageMasterWorker {
       leaseSeconds: Math.min(this.leaseSeconds, 300),
       leaseOwner: this.workerId
     });
-    if (claim.outcome === "busy") throw new RetryableProductionJobError("master_finalization_busy");
+    if (claim.outcome === "busy") {
+      throw createLeaseBusyError("master_finalization_busy", claim, Math.min(this.leaseSeconds, 300));
+    }
     if (claim.outcome !== "claimed") return { status: claim.outcome, runId: input.runId, kind: claim.kind };
     try {
       if (claim.kind === "front" || claim.kind === "side") {

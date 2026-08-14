@@ -5,6 +5,8 @@ const { assertWorkflowJob } = require("../persistence/postgres-transactional-wor
 const DEFAULT_QUEUE_NAME = "petpack-production";
 const DEFAULT_QUEUE_PREFIX = "petpack";
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MIN_DEFERRED_RETRY_MS = 1000;
+const MAX_DEFERRED_RETRY_MS = 24 * 60 * 60 * 1000;
 
 function requiredString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required`);
@@ -93,7 +95,11 @@ class BullMqWorkflowQueue {
     const jobId = safeBullJobId(safeJob.options.jobId);
     const queued = await this.queue.add(safeJob.name, safeJob.data, {
       ...safeJob.options,
-      jobId
+      jobId,
+      // BullMQ reserves ':' in job IDs, while PostgreSQL stores the original
+      // workflow dedupe key. Preserve that source ID in job options so workers
+      // can address the same durable execution after validating its mapping.
+      sourceDedupeKey: safeJob.dedupeKey
     });
     this.logger.info?.("petpack.queue.job_enqueued", { name: safeJob.name, jobId });
     return { jobId: String(queued?.id || jobId), sourceDedupeKey: safeJob.dedupeKey, name: safeJob.name };
@@ -111,28 +117,45 @@ class BullMqWorkflowQueue {
 }
 
 function normalizeBullMqJob(job) {
-  const jobId = safeBullJobId(String(job?.id || ""));
-  const options = { ...(job?.opts || {}), jobId };
+  const bullJobId = safeBullJobId(String(job?.id || ""));
+  const configuredSource = job?.opts?.sourceDedupeKey;
+  const sourceDedupeKey = configuredSource === undefined
+    ? bullJobId
+    : requiredString(configuredSource, "BullMQ source dedupe key");
+  if (safeBullJobId(sourceDedupeKey) !== bullJobId) {
+    throw new Error("BullMQ source dedupe key does not match its queue job ID");
+  }
+  const options = { ...(job?.opts || {}), jobId: sourceDedupeKey };
+  delete options.sourceDedupeKey;
   return {
     name: requiredString(job?.name, "BullMQ job name"),
     data: job?.data,
-    id: jobId,
+    id: sourceDedupeKey,
     opts: options,
     options,
-    dedupeKey: jobId
+    dedupeKey: sourceDedupeKey
   };
 }
 
+function deferredRetryDelayMs(error) {
+  const value = Number(error?.retryAfterMs);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.min(MAX_DEFERRED_RETRY_MS, Math.max(MIN_DEFERRED_RETRY_MS, Math.ceil(value)));
+}
+
 class BullMqWorkflowWorker {
-  constructor({ config, handler, WorkerClass, logger = console } = {}) {
+  constructor({ config, handler, WorkerClass, DelayedErrorClass, logger = console } = {}) {
     this.config = config || loadBullMqConfig();
     if (!handler || typeof handler.process !== "function") throw new Error("A production job handler is required");
     const Worker = WorkerClass || require("bullmq").Worker;
+    const DelayedError = DelayedErrorClass || require("bullmq").DelayedError;
+    if (typeof DelayedError !== "function") throw new Error("BullMQ DelayedError is required");
     this.handler = handler;
     this.logger = logger;
+    this.DelayedError = DelayedError;
     this.worker = new Worker(
       this.config.queueName,
-      (job) => this.handler.process(normalizeBullMqJob(job)),
+      (job, token) => this._process(job, token),
       {
         connection: createRedisConnectionOptions(this.config, { worker: true }),
         prefix: this.config.prefix,
@@ -152,6 +175,32 @@ class BullMqWorkflowWorker {
     this.worker.on?.("error", (error) => {
       this.logger.error?.("petpack.queue.worker_error", { errorName: error?.name || "Error" });
     });
+  }
+
+  async _process(job, token) {
+    try {
+      return await this.handler.process(normalizeBullMqJob(job));
+    } catch (error) {
+      const retryAfterMs = deferredRetryDelayMs(error);
+      if (retryAfterMs === null || typeof job?.moveToDelayed !== "function" ||
+          typeof token !== "string" || !token) {
+        throw error;
+      }
+      const delayedUntil = Date.now() + retryAfterMs;
+      await job.moveToDelayed(delayedUntil, token);
+      try {
+        this.logger.info?.("petpack.queue.job_deferred_for_lease", {
+          name: job?.name || "unknown",
+          jobId: job?.id ? String(job.id) : "unknown",
+          retryAfterMs,
+          errorCode: typeof error?.code === "string" ? error.code : "lease_busy"
+        });
+      } catch {
+        // Once the active job has moved, BullMQ must receive DelayedError even
+        // if an injected logger is unhealthy.
+      }
+      throw new this.DelayedError();
+    }
   }
 
   async start() {
@@ -178,6 +227,7 @@ module.exports = {
   DEFAULT_QUEUE_NAME,
   DEFAULT_QUEUE_PREFIX,
   createRedisConnectionOptions,
+  deferredRetryDelayMs,
   loadBullMqConfig,
   normalizeBullMqJob,
   safeBullJobId

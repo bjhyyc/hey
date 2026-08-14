@@ -93,11 +93,32 @@ function safeErrorCode(error, fallback) {
 }
 
 class RetryableProductionJobError extends Error {
-  constructor(code) {
+  constructor(code, retryAfterMs = null) {
     super("The production job can be retried safely");
     this.name = "RetryableProductionJobError";
     this.code = code;
+    const parsedRetryAfterMs = retryAfterMs === null || retryAfterMs === undefined
+      ? Number.NaN
+      : Number(retryAfterMs);
+    this.retryAfterMs = Number.isFinite(parsedRetryAfterMs) && parsedRetryAfterMs > 0
+      ? Math.max(1000, Math.ceil(parsedRetryAfterMs))
+      : null;
   }
+}
+
+function leaseBusyRetryAfterMs(claim, leaseSeconds) {
+  const reported = Number(claim?.retryAfterMs);
+  const fallback = Number(leaseSeconds) * 1000;
+  const remaining = Number.isFinite(reported) && reported > 0 ? reported : fallback;
+  if (!Number.isFinite(remaining) || remaining <= 0) {
+    throw new Error("A busy lease requires a positive retry delay");
+  }
+  // Do not race the database clock at the exact lease boundary.
+  return Math.max(1000, Math.ceil(remaining) + 1000);
+}
+
+function createLeaseBusyError(code, claim, leaseSeconds) {
+  return new RetryableProductionJobError(code, leaseBusyRetryAfterMs(claim, leaseSeconds));
 }
 
 /**
@@ -183,6 +204,9 @@ class ProductionJobWorker {
       leaseSeconds: this.leaseSeconds,
       leaseOwner: this.workerId
     });
+    if (claim.outcome === "busy") {
+      throw createLeaseBusyError("video_submission_busy", claim, this.leaseSeconds);
+    }
     if (claim.outcome !== "claimed") {
       return { status: claim.outcome, runId: input.runId, actionId: input.actionId };
     }
@@ -301,6 +325,9 @@ class ProductionJobWorker {
       leaseSeconds: this.leaseSeconds,
       leaseOwner: this.workerId
     });
+    if (claim.outcome === "busy") {
+      throw createLeaseBusyError("video_poll_busy", claim, this.leaseSeconds);
+    }
     if (claim.outcome !== "claimed") {
       return { status: claim.outcome, runId: input.runId, actionId: input.actionId };
     }
@@ -547,6 +574,9 @@ class ProductionJobWorker {
       leaseSeconds: this.processingLeaseSeconds,
       leaseOwner: this.workerId
     });
+    if (claim.outcome === "busy") {
+      throw createLeaseBusyError("action_media_processing_busy", claim, this.processingLeaseSeconds);
+    }
     if (!["claimed", "finalize_pending"].includes(claim.outcome)) {
       return { status: claim.outcome, runId: input.runId, actionId: input.actionId };
     }
@@ -690,6 +720,8 @@ class ProductionJobWorker {
 module.exports = {
   ProductionJobWorker,
   RetryableProductionJobError,
+  createLeaseBusyError,
+  leaseBusyRetryAfterMs,
   MEDIA_PROCESSOR_VERSION,
   VIDEO_TASK_STATUS,
   classifyVideoTaskStatus,

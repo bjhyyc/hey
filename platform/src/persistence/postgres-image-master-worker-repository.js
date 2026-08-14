@@ -181,6 +181,7 @@ function mapRun(row) {
     id: row.run_id,
     projectId: row.project_id,
     orderId: row.order_id,
+    modelRegistryVersion: row.model_registry_version,
     characterRevisionId: row.character_revision_id || null,
     state: row.run_state,
     frontGenerationAttempts: Number(row.front_generation_attempts || 0),
@@ -234,6 +235,7 @@ class PostgresImageMasterWorkerRepository {
   async _loadRun(tx, runId) {
     const run = oneRow(await tx.query(
       `SELECT run.id AS run_id, run.project_id, run.order_id, run.character_revision_id,
+              run.model_registry_version,
               run.state AS run_state, run.front_generation_attempts, run.side_generation_attempts,
               run.front_user_regenerations_used, run.side_user_regenerations_used,
               run.front_qa_retries, run.side_qa_retries, run.sleep_generation_attempts,
