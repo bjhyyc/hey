@@ -165,6 +165,7 @@ class BullMqWorkflowWorker {
     );
     this.running = false;
     this.runPromise = null;
+    this.runFailure = null;
     this.worker.on?.("failed", (job, error) => {
       this.logger.warn?.("petpack.queue.job_failed", {
         name: job?.name || "unknown",
@@ -206,11 +207,36 @@ class BullMqWorkflowWorker {
   async start() {
     if (this.running) throw new Error("BullMQ workflow worker is already running");
     this.running = true;
-    this.runPromise = Promise.resolve(this.worker.run()).catch((error) => {
-      if (this.running) this.logger.error?.("petpack.queue.worker_stopped", { errorName: error?.name || "Error" });
-    });
+    this.runFailure = null;
+    this.runPromise = Promise.resolve(this.worker.run()).then(
+      () => {
+        if (this.running) {
+          this.runFailure = new Error("BullMQ workflow worker stopped unexpectedly");
+          this.running = false;
+          this.logger.error?.("petpack.queue.worker_stopped", { errorName: this.runFailure.name });
+        }
+      },
+      (error) => {
+        if (this.running) {
+          this.runFailure = error instanceof Error ? error : new Error("BullMQ workflow worker failed");
+          this.running = false;
+          this.logger.error?.("petpack.queue.worker_stopped", { errorName: this.runFailure.name });
+        }
+      }
+    );
     if (typeof this.worker.waitUntilReady === "function") await this.worker.waitUntilReady();
     return Object.freeze({ ready: true, concurrency: this.config.concurrency });
+  }
+
+  async assertReady() {
+    if (!this.running || this.runFailure) throw new Error("BullMQ workflow worker is not running");
+    if (typeof this.worker.waitUntilReady === "function") await this.worker.waitUntilReady();
+    const client = this.worker.client ? await this.worker.client : null;
+    if (client && typeof client.ping === "function") {
+      const pong = await client.ping();
+      if (pong !== "PONG") throw new Error("BullMQ Redis readiness probe failed");
+    }
+    return Object.freeze({ ok: true });
   }
 
   async close() {

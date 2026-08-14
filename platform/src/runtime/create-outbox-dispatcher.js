@@ -149,6 +149,14 @@ class OutboxDispatcherRuntime {
     });
   }
 
+  async assertReady() {
+    if (!this.running || this.closed) throw new Error("Outbox runtime is not running");
+    if (this.consecutiveFailures >= 3) throw new Error("Outbox runtime has repeated dispatch failures");
+    await this.database.assertReady();
+    await this.queue.assertReady();
+    return Object.freeze({ ready: true, consecutiveFailures: this.consecutiveFailures });
+  }
+
   async close() {
     if (this.closed) return;
     this.running = false;

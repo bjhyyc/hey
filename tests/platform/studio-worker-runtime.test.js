@@ -99,6 +99,7 @@ describe("Studio Worker runtime", () => {
     const database = fakeDatabase();
     const queueWorker = {
       start: vi.fn(async () => ({ ready: true, concurrency: 4 })),
+      assertReady: vi.fn(async () => ({ ok: true })),
       close: vi.fn(async () => undefined)
     };
     const components = { close: vi.fn(async () => undefined) };
@@ -110,6 +111,7 @@ describe("Studio Worker runtime", () => {
       logger: { info: vi.fn() }
     });
     await expect(runtime.start()).resolves.toMatchObject({ ready: true, concurrency: 4 });
+    await expect(runtime.assertReady()).resolves.toMatchObject({ ready: true, mode: "development" });
     expect(database.assertReady.mock.invocationCallOrder[0]).toBeLessThan(queueWorker.start.mock.invocationCallOrder[0]);
     await runtime.close();
     expect(queueWorker.close).toHaveBeenCalledOnce();
@@ -122,6 +124,7 @@ describe("Studio Worker runtime", () => {
     database.query.mockResolvedValue({ rows: [readySchemaRow({ has_execution: false })] });
     const queueWorker = {
       start: vi.fn(async () => ({ ready: true, concurrency: 4 })),
+      assertReady: vi.fn(async () => ({ ok: true })),
       close: vi.fn(async () => undefined)
     };
     const runtime = new StudioWorkerRuntime({

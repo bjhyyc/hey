@@ -67,6 +67,7 @@ describe("outbox dispatcher runtime", () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(deps.dispatcher.dispatchBatch).toHaveBeenCalledTimes(2);
     expect(runtime.status()).toMatchObject({ running: true, consecutiveFailures: 0 });
+    await expect(runtime.assertReady()).resolves.toMatchObject({ ready: true, consecutiveFailures: 0 });
 
     await runtime.close();
     expect(deps.queue.close).toHaveBeenCalledOnce();
@@ -103,6 +104,20 @@ describe("outbox dispatcher runtime", () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(deps.dispatcher.dispatchBatch).toHaveBeenCalledTimes(2);
     expect(runtime.status().consecutiveFailures).toBe(0);
+    await runtime.close();
+  });
+
+  it("fails readiness after repeated dispatch errors", async () => {
+    const deps = dependencies();
+    const runtime = new OutboxDispatcherRuntime({
+      ...deps,
+      config: loadOutboxRuntimeConfig(),
+      logger: { warn: vi.fn() }
+    });
+    runtime.running = true;
+    runtime.consecutiveFailures = 3;
+    await expect(runtime.assertReady()).rejects.toThrow(/repeated dispatch failures/);
+    runtime.running = false;
     await runtime.close();
   });
 

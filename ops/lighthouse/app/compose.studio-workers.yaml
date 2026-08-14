@@ -1,0 +1,190 @@
+services:
+  outbox-dispatcher:
+    profiles: ["studio-production"]
+    image: ${PETPACK_RUNTIME_IMAGE:?Set PETPACK_RUNTIME_IMAGE to an immutable image digest}
+    container_name: petpack-outbox-dispatcher
+    command: ["src/runtime/start-outbox-dispatcher.js"]
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    environment:
+      NODE_ENV: production
+      PETPACK_PLATFORM_MODE: production
+      PETPACK_POSTGRES_URL_FILE: /run/secrets/postgres_url
+      PETPACK_POSTGRES_CA_PEM_FILE: /run/secrets/postgres_ca
+      PETPACK_POSTGRES_APPLICATION_NAME: petpack-production-outbox
+      PETPACK_POSTGRES_POOL_MAX: "4"
+      PETPACK_POSTGRES_CONNECTION_TIMEOUT_MS: "5000"
+      PETPACK_POSTGRES_IDLE_TIMEOUT_MS: "10000"
+      PETPACK_POSTGRES_STATEMENT_TIMEOUT_MS: "15000"
+      PETPACK_REDIS_URL_FILE: /run/secrets/redis_url
+      PETPACK_REDIS_CA_PEM_FILE: /run/secrets/redis_ca
+      PETPACK_QUEUE_NAME: ${PETPACK_QUEUE_NAME:-petpack-production}
+      PETPACK_QUEUE_PREFIX: ${PETPACK_QUEUE_PREFIX:-petpack}
+      PETPACK_OUTBOX_POLL_INTERVAL_MS: "1000"
+      PETPACK_OUTBOX_BUSY_INTERVAL_MS: "25"
+      PETPACK_OUTBOX_MAX_ERROR_BACKOFF_MS: "30000"
+      PETPACK_OUTBOX_BATCH_LIMIT: "25"
+      PETPACK_OUTBOX_LEASE_SECONDS: "60"
+      PETPACK_RUNTIME_ROLE: outbox-dispatcher
+      PETPACK_RUNTIME_HEARTBEAT_FILE: /run/petpack/outbox-heartbeat.json
+      PETPACK_RUNTIME_HEARTBEAT_INTERVAL_MS: "10000"
+      PETPACK_RUNTIME_HEARTBEAT_MAX_AGE_MS: "45000"
+    secrets:
+      - postgres_url
+      - postgres_ca
+      - redis_url
+      - redis_ca
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777,noexec,nosuid,nodev
+      - /run/petpack:size=2m,mode=0700,uid=10001,gid=10001,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: "0.50"
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "src/runtime/check-runtime-heartbeat.js"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - petpack-data
+
+  studio-worker:
+    profiles: ["studio-production"]
+    image: ${PETPACK_WORKER_IMAGE:?Set PETPACK_WORKER_IMAGE to an immutable image digest}
+    container_name: petpack-studio-worker
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    environment:
+      NODE_ENV: production
+      PETPACK_PLATFORM_MODE: production
+      PETPACK_POSTGRES_URL_FILE: /run/secrets/postgres_url
+      PETPACK_POSTGRES_CA_PEM_FILE: /run/secrets/postgres_ca
+      PETPACK_POSTGRES_APPLICATION_NAME: petpack-production-worker
+      PETPACK_POSTGRES_POOL_MAX: "8"
+      PETPACK_POSTGRES_CONNECTION_TIMEOUT_MS: "5000"
+      PETPACK_POSTGRES_IDLE_TIMEOUT_MS: "10000"
+      PETPACK_POSTGRES_STATEMENT_TIMEOUT_MS: "30000"
+      PETPACK_REDIS_URL_FILE: /run/secrets/redis_url
+      PETPACK_REDIS_CA_PEM_FILE: /run/secrets/redis_ca
+      PETPACK_QUEUE_NAME: ${PETPACK_QUEUE_NAME:-petpack-production}
+      PETPACK_QUEUE_PREFIX: ${PETPACK_QUEUE_PREFIX:-petpack}
+      PETPACK_QUEUE_WORKER_CONCURRENCY: "4"
+      PETPACK_WORKER_COMPONENTS_MODULE: ${PETPACK_WORKER_COMPONENTS_MODULE:?Set the absolute in-image production components module}
+      PETPACK_WORKER_TEMP_ROOT: /work
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
+      PETPACK_MASTER_JOB_LEASE_SECONDS: "900"
+      PETPACK_VIDEO_JOB_LEASE_SECONDS: "120"
+      PETPACK_VIDEO_PROCESSING_LEASE_SECONDS: "900"
+      PETPACK_PETPACK_JOB_LEASE_SECONDS: "180"
+      PETPACK_PROVIDER_POLL_DELAY_SECONDS: "15"
+      PETPACK_PROVIDER_POLL_QUERY_ATTEMPTS: "3"
+      PETPACK_MAX_PROVIDER_POLLS: "120"
+      PETPACK_HEAVY_JOB_CONCURRENCY: "1"
+      PETPACK_DELIVERY_RETENTION_DAYS: ${PETPACK_DELIVERY_RETENTION_DAYS:-30}
+      PETPACK_OBJECT_STORE_ENDPOINT: ${PETPACK_OBJECT_STORE_ENDPOINT:?Set the production COS HTTPS endpoint}
+      PETPACK_OBJECT_STORE_BUCKET: ${PETPACK_OBJECT_STORE_BUCKET:?Set the production COS bucket}
+      PETPACK_OBJECT_STORE_REGION: ${PETPACK_OBJECT_STORE_REGION:?Set the production COS region}
+      PETPACK_OBJECT_STORE_ACCESS_KEY_ID_FILE: /run/secrets/cos_access_key_id
+      PETPACK_OBJECT_STORE_SECRET_ACCESS_KEY_FILE: /run/secrets/cos_secret_access_key
+      PETPACK_COS_MAX_VERIFIED_OBJECT_BYTES: "335544320"
+      PETPACK_COS_MAX_ARCHIVE_OBJECT_BYTES: "335544320"
+      MODEL_REGISTRY_VERSION: ${MODEL_REGISTRY_VERSION:?Set the frozen model registry version}
+      MODELARK_BASE_URL: ${MODELARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      MODELARK_REGION: ${MODELARK_REGION:?Set the ModelArk region}
+      MODELARK_API_KEY_FILE: /run/secrets/modelark_api_key
+      MODELARK_SEEDREAM_ENDPOINT_ID: ${MODELARK_SEEDREAM_ENDPOINT_ID:?Set the Seedream endpoint ID}
+      MODELARK_SEEDANCE_ENDPOINT_ID: ${MODELARK_SEEDANCE_ENDPOINT_ID:?Set the Seedance endpoint ID}
+      MODELARK_SEEDREAM_OUTPUT_SIZE: ${MODELARK_SEEDREAM_OUTPUT_SIZE:-1280x720}
+      MODELARK_VIDEO_RESOLUTION: "480p"
+      MODELARK_IMAGE_MAX_CONCURRENT: "1"
+      MODELARK_VIDEO_MAX_CONCURRENT: "1"
+      MODELARK_IMAGE_MAX_RETRIES: "2"
+      MODELARK_VIDEO_MAX_RETRIES: "2"
+      MODELARK_VIDEO_CALLBACK_BASE_URL: ${MODELARK_VIDEO_CALLBACK_BASE_URL:?Set the HTTPS ModelArk callback base URL}
+      MODELARK_VIDEO_CALLBACK_SECRET_FILE: /run/secrets/modelark_callback_secret
+      PETPACK_RUNTIME_ROLE: studio-worker
+      PETPACK_RUNTIME_HEARTBEAT_FILE: /run/petpack/worker-heartbeat.json
+      PETPACK_RUNTIME_HEARTBEAT_INTERVAL_MS: "10000"
+      PETPACK_RUNTIME_HEARTBEAT_MAX_AGE_MS: "45000"
+    secrets:
+      - postgres_url
+      - postgres_ca
+      - redis_url
+      - redis_ca
+      - cos_access_key_id
+      - cos_secret_access_key
+      - modelark_api_key
+      - modelark_callback_secret
+    read_only: true
+    volumes:
+      - petpack-worker-work:/work
+    tmpfs:
+      - /tmp:size=128m,mode=1777,noexec,nosuid,nodev
+      - /run/petpack:size=2m,mode=0700,uid=10001,gid=10001,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 3g
+    cpus: "3.00"
+    stop_grace_period: 2m
+    healthcheck:
+      test: ["CMD", "node", "src/runtime/check-runtime-heartbeat.js"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks:
+      - petpack-data
+      - petpack-egress
+
+networks:
+  petpack-data:
+    external: true
+    name: petpack-data
+  petpack-egress:
+    external: true
+    name: petpack-egress
+
+volumes:
+  petpack-worker-work:
+    name: petpack-worker-work
+
+secrets:
+  postgres_url:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/postgres_url
+  postgres_ca:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/postgres_ca.pem
+  redis_url:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/redis_url
+  redis_ca:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/redis_ca.pem
+  cos_access_key_id:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/cos_access_key_id
+  cos_secret_access_key:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/cos_secret_access_key
+  modelark_api_key:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/modelark_api_key
+  modelark_callback_secret:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/modelark_callback_secret

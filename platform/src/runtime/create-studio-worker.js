@@ -196,6 +196,16 @@ class StudioWorkerRuntime {
     }
   }
 
+  async assertReady() {
+    if (!this.started || this.closed) throw new Error("Studio Worker runtime is not running");
+    await this.database.assertReady();
+    if (typeof this.queueWorker.assertReady !== "function") {
+      throw new Error("BullMQ workflow worker readiness probe is unavailable");
+    }
+    await this.queueWorker.assertReady();
+    return Object.freeze({ ready: true, mode: this.config.mode });
+  }
+
   async close() {
     if (this.closed) return;
     const failures = [];
