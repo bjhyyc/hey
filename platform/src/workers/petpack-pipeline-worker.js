@@ -11,6 +11,7 @@ const {
   requiredString
 } = require("../petpack/package-contract");
 const { PetpackValidationError, isProductionAssuredValidator } = require("../petpack/delivery-validator");
+const { isPostgresInfrastructureError } = require("../persistence/postgres-database");
 const { OBJECT_CLASSES, createProjectObjectKey } = require("../storage/private-object-store");
 const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflow");
 
@@ -86,6 +87,14 @@ class RetryablePetpackJobError extends Error {
       ? Math.max(1000, Math.ceil(parsedRetryAfterMs))
       : null;
   }
+}
+
+function postgresInfrastructureFailure(...errors) {
+  return errors.find((error) => isPostgresInfrastructureError(error)) || null;
+}
+
+function retryablePetpackFailure(code, ...errors) {
+  return postgresInfrastructureFailure(...errors) || new RetryablePetpackJobError(code);
 }
 
 class PetpackPipelineWorker {
@@ -190,9 +199,10 @@ class PetpackPipelineWorker {
           leaseToken: claim.leaseToken,
           leaseSeconds: this.leaseSeconds
         }).catch((error) => {
-          lostError = Object.assign(new Error("PetPack pipeline lease was lost"), {
-            code: safeErrorCode(error, "package_lease_lost")
-          });
+          lostError = postgresInfrastructureFailure(error) || Object.assign(
+            new Error("PetPack pipeline lease was lost", { cause: error }),
+            { code: safeErrorCode(error, "package_lease_lost") }
+          );
           throw lostError;
         }).finally(() => {
           renewal = null;
@@ -219,17 +229,19 @@ class PetpackPipelineWorker {
 
   async _releaseForRetry(input, claim, error, fallbackCode) {
     const code = safeErrorCode(error, fallbackCode);
+    let releaseError = null;
     try {
       await this.repository.releaseRunJobForRetry({
         jobId: input.jobId,
         leaseToken: claim.leaseToken,
         errorCode: code
       });
-    } catch {
+    } catch (caught) {
       // The lease remains recoverable after expiry if PostgreSQL is temporarily
       // unavailable during this best-effort release.
+      releaseError = caught;
     }
-    throw new RetryablePetpackJobError(code);
+    throw retryablePetpackFailure(code, error, releaseError);
   }
 
   _nonClaimedResult(claim, runId) {
@@ -462,6 +474,8 @@ module.exports = {
   PetpackPipelineWorker,
   RetryablePetpackJobError,
   HeavyJobAdmission,
+  postgresInfrastructureFailure,
   parseRunJob,
+  retryablePetpackFailure,
   safeErrorCode
 };

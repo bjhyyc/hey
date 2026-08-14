@@ -12,7 +12,7 @@ const {
 function dependencies({ dispatchResults = [{ claimed: 0 }] } = {}) {
   const database = {
     assertReady: vi.fn(async () => ({ ready: true })),
-    query: vi.fn(async () => ({ rows: [{ has_outbox: true, has_run: true }] })),
+    query: vi.fn(async () => ({ rows: [{ has_outbox: true, has_run: true, has_execution: true }] })),
     close: vi.fn(async () => undefined)
   };
   const queue = {

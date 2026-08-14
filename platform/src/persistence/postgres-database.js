@@ -4,6 +4,24 @@ const DEFAULT_IDLE_TIMEOUT_MS = 10_000;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 15_000;
 const MINIMUM_POSTGRES_VERSION = 150_000;
 const APPLICATION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const POSTGRES_INFRASTRUCTURE_RETRY_MS = 5_000;
+const TRANSIENT_SYSTEM_ERROR_CODES = new Set([
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT"
+]);
+const TRANSIENT_POSTGRES_ERROR_CODES = new Set([
+  "53300",
+  "57P01",
+  "57P02",
+  "57P03"
+]);
 const ISOLATION_LEVELS = new Map([
   ["read committed", "READ COMMITTED"],
   ["repeatable read", "REPEATABLE READ"],
@@ -82,25 +100,72 @@ function isolationLevel(value) {
   return sql;
 }
 
+function isTransientPostgresError(error) {
+  const code = typeof error?.code === "string" ? error.code.toUpperCase() : "";
+  return TRANSIENT_SYSTEM_ERROR_CODES.has(code) || TRANSIENT_POSTGRES_ERROR_CODES.has(code) || code.startsWith("08");
+}
+
+class PostgresInfrastructureError extends Error {
+  constructor(cause) {
+    super("PostgreSQL is temporarily unavailable", { cause });
+    this.name = "PostgresInfrastructureError";
+    this.code = "postgres_temporarily_unavailable";
+    this.retryAfterMs = POSTGRES_INFRASTRUCTURE_RETRY_MS;
+  }
+}
+
+function isPostgresInfrastructureError(error) {
+  return error instanceof PostgresInfrastructureError || (
+    error?.name === "PostgresInfrastructureError" &&
+    error?.code === "postgres_temporarily_unavailable" &&
+    Number.isFinite(Number(error?.retryAfterMs)) &&
+    Number(error.retryAfterMs) > 0
+  );
+}
+
+function normalizePostgresError(error) {
+  if (isPostgresInfrastructureError(error) || !isTransientPostgresError(error)) return error;
+  return new PostgresInfrastructureError(error);
+}
+
 class PostgresDatabase {
   constructor({ pool, statementTimeoutMs = DEFAULT_STATEMENT_TIMEOUT_MS, logger = console } = {}) {
     this.pool = requirePool(pool);
     this.statementTimeoutMs = boundedInteger(statementTimeoutMs, DEFAULT_STATEMENT_TIMEOUT_MS, 1_000, 120_000, "PostgreSQL statement timeout");
     this.logger = logger;
     this.closed = false;
+    this.poolErrorHandler = (error) => {
+      this.logger.error?.("petpack.postgres.pool_error", {
+        errorName: error?.name || "Error",
+        errorCode: isTransientPostgresError(error)
+          ? "postgres_temporarily_unavailable"
+          : "postgres_pool_error"
+      });
+    };
+    this.pool.on?.("error", this.poolErrorHandler);
   }
 
   async query(text, values) {
     if (this.closed) throw new Error("PostgreSQL database is closed");
-    return this.pool.query(text, values);
+    try {
+      return await this.pool.query(text, values);
+    } catch (error) {
+      throw normalizePostgresError(error);
+    }
   }
 
   async transaction(callback, { isolation = "read committed" } = {}) {
     if (this.closed) throw new Error("PostgreSQL database is closed");
     if (typeof callback !== "function") throw new Error("PostgreSQL transaction callback is required");
-    const client = await this.pool.connect();
+    let client;
+    try {
+      client = await this.pool.connect();
+    } catch (error) {
+      throw normalizePostgresError(error);
+    }
     const startedAt = Date.now();
     let began = false;
+    let discardClient = false;
     try {
       await client.query("BEGIN");
       began = true;
@@ -112,10 +177,12 @@ class PostgresDatabase {
       this.logger.debug?.("petpack.postgres.transaction_committed", { durationMs: Date.now() - startedAt });
       return result;
     } catch (error) {
+      discardClient = isPostgresInfrastructureError(error) || isTransientPostgresError(error);
       if (began) {
         try {
           await client.query("ROLLBACK");
         } catch (rollbackError) {
+          discardClient = true;
           this.logger.error?.("petpack.postgres.rollback_failed", {
             errorName: rollbackError && rollbackError.name ? rollbackError.name : "Error"
           });
@@ -125,9 +192,9 @@ class PostgresDatabase {
         durationMs: Date.now() - startedAt,
         errorName: error && error.name ? error.name : "Error"
       });
-      throw error;
+      throw normalizePostgresError(error);
     } finally {
-      client.release();
+      client.release(discardClient);
     }
   }
 
@@ -147,7 +214,12 @@ class PostgresDatabase {
   async close() {
     if (this.closed) return;
     this.closed = true;
-    await this.pool.end();
+    try {
+      await this.pool.end();
+    } finally {
+      this.pool.off?.("error", this.poolErrorHandler);
+      this.pool.removeListener?.("error", this.poolErrorHandler);
+    }
   }
 }
 
@@ -174,7 +246,11 @@ module.exports = {
   DEFAULT_POOL_MAX,
   DEFAULT_STATEMENT_TIMEOUT_MS,
   MINIMUM_POSTGRES_VERSION,
+  POSTGRES_INFRASTRUCTURE_RETRY_MS,
   PostgresDatabase,
+  PostgresInfrastructureError,
   createPostgresDatabase,
+  isPostgresInfrastructureError,
+  isTransientPostgresError,
   loadPostgresDatabaseConfig
 };

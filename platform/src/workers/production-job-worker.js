@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 
 const { assertActionId } = require("../domain/action-catalog");
+const { isPostgresInfrastructureError } = require("../persistence/postgres-database");
 const { CHARACTER_CANVAS_V1, createDevelopmentQaPolicy, requireQaPolicy } = require("../qa/character-canvas-v1");
 const { OBJECT_CLASSES, createProjectObjectKey, normalizeSha256 } = require("../storage/private-object-store");
 const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflow");
@@ -104,6 +105,14 @@ class RetryableProductionJobError extends Error {
       ? Math.max(1000, Math.ceil(parsedRetryAfterMs))
       : null;
   }
+}
+
+function postgresInfrastructureFailure(...errors) {
+  return errors.find((error) => isPostgresInfrastructureError(error)) || null;
+}
+
+function retryableProductionFailure(code, ...errors) {
+  return postgresInfrastructureFailure(...errors) || new RetryableProductionJobError(code);
 }
 
 function leaseBusyRetryAfterMs(claim, leaseSeconds) {
@@ -228,8 +237,13 @@ class ProductionJobWorker {
       ]);
     } catch (error) {
       const code = safeErrorCode(error, "frame_grant_failed");
-      await this.repository.releaseVideoClaimForRetry({ jobId: input.jobId, leaseToken: claim.leaseToken, errorCode: code });
-      throw new RetryableProductionJobError(code);
+      let releaseError = null;
+      try {
+        await this.repository.releaseVideoClaimForRetry({ jobId: input.jobId, leaseToken: claim.leaseToken, errorCode: code });
+      } catch (caught) {
+        releaseError = caught;
+      }
+      throw retryableProductionFailure(code, error, releaseError);
     }
 
     const providerRequestId = createProviderRequestId(input.jobId, claim.attempt);
@@ -241,13 +255,15 @@ class ProductionJobWorker {
       });
     } catch (error) {
       const code = safeErrorCode(error, "submission_intent_failed");
+      let releaseError = null;
       try {
         await this.repository.releaseVideoClaimForRetry({ jobId: input.jobId, leaseToken: claim.leaseToken, errorCode: code });
-      } catch {
+      } catch (caught) {
         // The lease will expire and become recoverable even if PostgreSQL is
         // unavailable for this immediate best-effort release.
+        releaseError = caught;
       }
-      throw new RetryableProductionJobError(code);
+      throw retryableProductionFailure(code, error, releaseError);
     }
 
     let created;
@@ -309,9 +325,9 @@ class ProductionJobWorker {
           pollJob,
           pollDelaySeconds: this.pollDelaySeconds
         });
-      } catch {
+      } catch (retryError) {
         this.logger.warn?.("petpack.worker.video_task_binding_failed", { runId: input.runId, actionId: input.actionId });
-        throw error;
+        throw postgresInfrastructureFailure(error, retryError) || error;
       }
     }
     this.logger.info?.("petpack.worker.video_submitted", { runId: input.runId, actionId: input.actionId, attempt: claim.attempt });
@@ -340,8 +356,13 @@ class ProductionJobWorker {
       });
     } catch (error) {
       const code = safeErrorCode(error, "modelark_poll_failed");
-      await this.repository.releaseVideoPollForRetry({ jobId: input.jobId, leaseToken: claim.leaseToken, errorCode: code });
-      throw new RetryableProductionJobError(code);
+      let releaseError = null;
+      try {
+        await this.repository.releaseVideoPollForRetry({ jobId: input.jobId, leaseToken: claim.leaseToken, errorCode: code });
+      } catch (caught) {
+        releaseError = caught;
+      }
+      throw retryableProductionFailure(code, error, releaseError);
     }
 
     const providerState = classifyVideoTaskStatus(task.status);
@@ -402,12 +423,13 @@ class ProductionJobWorker {
         providerTaskId: claim.providerTaskId
       });
     } catch (error) {
+      if (isPostgresInfrastructureError(error)) throw error;
       const code = safeErrorCode(error, "modelark_output_accounting_failed");
       await this.repository.markVideoPollUnknown({
         jobId: input.jobId,
         leaseToken: claim.leaseToken,
         errorCode: code
-      }).catch(() => {});
+      });
       return { status: "reconciliation_required", runId: input.runId, actionId: input.actionId };
     }
     const objectKey = createProjectObjectKey({
@@ -428,8 +450,13 @@ class ProductionJobWorker {
       }
     } catch (error) {
       const code = safeErrorCode(error, "provider_output_archive_failed");
-      await this.repository.releaseVideoPollForRetry({ jobId: input.jobId, leaseToken: claim.leaseToken, errorCode: code });
-      throw new RetryableProductionJobError(code);
+      let releaseError = null;
+      try {
+        await this.repository.releaseVideoPollForRetry({ jobId: input.jobId, leaseToken: claim.leaseToken, errorCode: code });
+      } catch (caught) {
+        releaseError = caught;
+      }
+      throw retryableProductionFailure(code, error, releaseError);
     }
     const processJob = createActionJob({
       name: JOB_NAMES.PROCESS_VIDEO_ACTION,
@@ -474,9 +501,10 @@ class ProductionJobWorker {
           leaseToken: claim.leaseToken,
           leaseSeconds: this.processingLeaseSeconds
         }).catch((error) => {
-          lostError = Object.assign(new Error("Video processing lease was lost"), {
-            code: safeErrorCode(error, "processing_lease_lost")
-          });
+          lostError = postgresInfrastructureFailure(error) || Object.assign(
+            new Error("Video processing lease was lost", { cause: error }),
+            { code: safeErrorCode(error, "processing_lease_lost") }
+          );
           throw lostError;
         }).finally(() => {
           renewal = null;
@@ -546,6 +574,7 @@ class ProductionJobWorker {
 
   async _releaseProcessingForRetry(input, claim, error) {
     const code = safeErrorCode(error, "action_media_processing_failed");
+    let releaseError = null;
     try {
       const settled = await this.repository.releaseVideoProcessingForRetry({
         jobId: input.jobId,
@@ -555,11 +584,12 @@ class ProductionJobWorker {
       if (settled && settled.status === "succeeded") {
         return { status: "processed", runId: input.runId, actionId: input.actionId };
       }
-    } catch {
+    } catch (caught) {
       // An expired lease is recoverable by redelivery; a concurrently committed
       // qa_passed action remains the durable source of truth.
+      releaseError = caught;
     }
-    throw new RetryableProductionJobError(code);
+    throw retryableProductionFailure(code, error, releaseError);
   }
 
   async _processVideoAction(job) {
@@ -730,5 +760,7 @@ module.exports = {
   createProcessedArtifactFileName,
   createProviderRequestId,
   parseVideoJob,
+  postgresInfrastructureFailure,
+  retryableProductionFailure,
   safeErrorCode
 };

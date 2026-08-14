@@ -17,6 +17,8 @@ const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflo
 const {
   RetryableProductionJobError,
   createLeaseBusyError,
+  postgresInfrastructureFailure,
+  retryableProductionFailure,
   safeErrorCode
 } = require("./production-job-worker");
 
@@ -203,9 +205,10 @@ class ImageMasterWorker {
           leaseToken: claim.leaseToken,
           leaseSeconds: this.leaseSeconds
         }).catch((error) => {
-          lostError = Object.assign(new Error("Master-image lease was lost"), {
-            code: safeErrorCode(error, "master_lease_lost")
-          });
+          lostError = postgresInfrastructureFailure(error) || Object.assign(
+            new Error("Master-image lease was lost", { cause: error }),
+            { code: safeErrorCode(error, "master_lease_lost") }
+          );
           throw lostError;
         }).finally(() => {
           renewal = null;
@@ -259,16 +262,34 @@ class ImageMasterWorker {
 
   async _releaseGenerationForRetry(input, claim, error) {
     const code = safeErrorCode(error, "master_image_processing_failed");
+    let releaseError = null;
     try {
       await this.repository.releaseMasterClaimForRetry({
         jobId: input.jobId,
         leaseToken: claim.leaseToken,
         errorCode: code
       });
-    } catch {
+    } catch (caught) {
       // An expired lease remains recoverable through normal queue redelivery.
+      releaseError = caught;
     }
-    throw new RetryableProductionJobError(code);
+    throw retryableProductionFailure(code, error, releaseError);
+  }
+
+  async _markSubmissionUnknown(input, claim, error, fallbackCode) {
+    const infrastructureError = postgresInfrastructureFailure(error);
+    if (infrastructureError) throw infrastructureError;
+    const code = safeErrorCode(error, fallbackCode);
+    try {
+      await this.repository.markMasterSubmissionUnknown({
+        jobId: input.jobId,
+        leaseToken: claim.leaseToken,
+        errorCode: code
+      });
+    } catch (persistenceError) {
+      throw retryableProductionFailure(code, persistenceError);
+    }
+    return { reconciliationRequired: true };
   }
 
   async _submitSeedream(input, claim, heartbeat) {
@@ -374,13 +395,7 @@ class ImageMasterWorker {
         providerRequestId
       });
     } catch (error) {
-      const code = safeErrorCode(error, "seedream_acceptance_accounting_failed");
-      await this.repository.markMasterSubmissionUnknown({
-        jobId: input.jobId,
-        leaseToken: claim.leaseToken,
-        errorCode: code
-      }).catch(() => {});
-      return { reconciliationRequired: true };
+      return this._markSubmissionUnknown(input, claim, error, "seedream_acceptance_accounting_failed");
     }
     if (!Array.isArray(created.outputUrls) || created.outputUrls.length !== 1) {
       await this.repository.markMasterSubmissionUnknown({
@@ -397,13 +412,7 @@ class ImageMasterWorker {
         providerRequestId
       });
     } catch (error) {
-      const code = safeErrorCode(error, "seedream_output_accounting_failed");
-      await this.repository.markMasterSubmissionUnknown({
-        jobId: input.jobId,
-        leaseToken: claim.leaseToken,
-        errorCode: code
-      }).catch(() => {});
-      return { reconciliationRequired: true };
+      return this._markSubmissionUnknown(input, claim, error, "seedream_output_accounting_failed");
     }
     const objectKey = createProjectObjectKey({
       projectId: claim.projectId,
@@ -428,13 +437,7 @@ class ImageMasterWorker {
         artifact
       });
     } catch (error) {
-      const code = safeErrorCode(error, "seedream_output_archive_failed");
-      await this.repository.markMasterSubmissionUnknown({
-        jobId: input.jobId,
-        leaseToken: claim.leaseToken,
-        errorCode: code
-      }).catch(() => {});
-      return { reconciliationRequired: true };
+      return this._markSubmissionUnknown(input, claim, error, "seedream_output_archive_failed");
     }
     return { reconciliationRequired: false };
   }
@@ -613,12 +616,17 @@ class ImageMasterWorker {
       };
     } catch (error) {
       const code = safeErrorCode(error, "master_finalization_failed");
-      await this.repository.releaseMasterFinalizationForRetry({
-        jobId: input.jobId,
-        leaseToken: claim.leaseToken,
-        errorCode: code
-      }).catch(() => {});
-      throw new RetryableProductionJobError(code);
+      let releaseError = null;
+      try {
+        await this.repository.releaseMasterFinalizationForRetry({
+          jobId: input.jobId,
+          leaseToken: claim.leaseToken,
+          errorCode: code
+        });
+      } catch (caught) {
+        releaseError = caught;
+      }
+      throw retryableProductionFailure(code, error, releaseError);
     }
   }
 }

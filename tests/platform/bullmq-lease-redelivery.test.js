@@ -5,12 +5,14 @@ import workflowModule from "../../platform/src/workflow/production-workflow.js";
 import productionWorkerModule from "../../platform/src/workers/production-job-worker.js";
 import imageWorkerModule from "../../platform/src/workers/image-master-worker.js";
 import petpackWorkerModule from "../../platform/src/workers/petpack-pipeline-worker.js";
+import postgresModule from "../../platform/src/persistence/postgres-database.js";
 
 const { BullMqWorkflowWorker } = queueModule;
 const { JOB_NAMES } = workflowModule;
 const { ProductionJobWorker, RetryableProductionJobError } = productionWorkerModule;
 const { ImageMasterWorker, MASTER_IMAGE_PROCESSOR_CONTRACT_VERSION } = imageWorkerModule;
 const { PetpackPipelineWorker, RetryablePetpackJobError } = petpackWorkerModule;
+const { PostgresInfrastructureError } = postgresModule;
 
 const QUEUE_CONFIG = Object.freeze({
   queueName: "petpack-test",
@@ -259,5 +261,80 @@ describe("worker busy-lease semantics", () => {
 
     await expect(worker.process(queueJob(JOB_NAMES.PROCESS_MEDIA, "media-gate-job")))
       .rejects.toMatchObject({ code: "petpack_execution_busy", retryAfterMs: 181_000 });
+  });
+});
+
+describe("worker PostgreSQL infrastructure propagation", () => {
+  function infrastructureError() {
+    return new PostgresInfrastructureError(
+      Object.assign(new Error("database connection dropped"), { code: "08006" })
+    );
+  }
+
+  it("preserves the delayed-retry signal when video submission intent persistence fails", async () => {
+    const repository = createProductionRepository();
+    const error = infrastructureError();
+    repository.claimVideoSubmission.mockResolvedValue({
+      outcome: "claimed",
+      leaseToken: "video-lease",
+      attempt: 1,
+      firstFrameObjectKey: "private/front.png",
+      lastFrameObjectKey: "private/front.png"
+    });
+    repository.prepareVideoSubmission.mockRejectedValue(error);
+    repository.releaseVideoClaimForRetry.mockResolvedValue({ status: "retryable" });
+    const worker = createProductionWorker(repository);
+
+    await expect(worker.process(queueJob(JOB_NAMES.GENERATE_VIDEO, "video-postgres-outage")))
+      .rejects.toBe(error);
+    expect(repository.releaseVideoClaimForRetry).toHaveBeenCalledOnce();
+  });
+
+  it("preserves PostgreSQL failures across master release and reconciliation persistence", async () => {
+    const repository = createImageRepository();
+    const worker = createImageWorker(repository);
+    const error = infrastructureError();
+    const input = { jobId: "master-postgres-outage", runId: "run-1" };
+    const claim = { leaseToken: "master-lease" };
+    repository.releaseMasterClaimForRetry.mockResolvedValue({ status: "retryable" });
+
+    await expect(worker._releaseGenerationForRetry(input, claim, error)).rejects.toBe(error);
+
+    repository.markMasterSubmissionUnknown.mockRejectedValue(error);
+    await expect(worker._markSubmissionUnknown(input, claim, new Error("accounting mismatch"), "accounting_failed"))
+      .rejects.toBe(error);
+
+    repository.markMasterSubmissionUnknown.mockClear();
+    await expect(worker._markSubmissionUnknown(input, claim, error, "accounting_failed"))
+      .rejects.toBe(error);
+    expect(repository.markMasterSubmissionUnknown).not.toHaveBeenCalled();
+  });
+
+  it("returns reconciliation only after the master unknown state is durably recorded", async () => {
+    const repository = createImageRepository();
+    const worker = createImageWorker(repository);
+    repository.markMasterSubmissionUnknown.mockResolvedValue({ status: "reconciliation_required" });
+
+    await expect(worker._markSubmissionUnknown(
+      { jobId: "master-accounting", runId: "run-1" },
+      { leaseToken: "master-lease" },
+      Object.assign(new Error("accounting mismatch"), { code: "master_accounting_mismatch" }),
+      "accounting_failed"
+    )).resolves.toEqual({ reconciliationRequired: true });
+    expect(repository.markMasterSubmissionUnknown).toHaveBeenCalledOnce();
+  });
+
+  it("preserves PostgreSQL failures across the PetPack release path", async () => {
+    const repository = createPetpackRepository();
+    const worker = createPetpackWorker(repository);
+    const error = infrastructureError();
+    repository.releaseRunJobForRetry.mockResolvedValue({ status: "retryable" });
+
+    await expect(worker._releaseForRetry(
+      { jobId: "petpack-postgres-outage", runId: "run-1" },
+      { leaseToken: "petpack-lease" },
+      error,
+      "petpack_failed"
+    )).rejects.toBe(error);
   });
 });

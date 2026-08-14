@@ -1,5 +1,8 @@
 const { createPostgresDatabase } = require("../persistence/postgres-database");
-const { PostgresOutboxDispatcher } = require("../persistence/postgres-transactional-workflow-store");
+const {
+  PostgresOutboxDispatcher,
+  PostgresSentOutboxReconciler
+} = require("../persistence/postgres-transactional-workflow-store");
 const { BullMqWorkflowQueue, loadBullMqConfig } = require("../queue/bullmq-workflow-queue");
 const { hydrateEnvironmentFromSecretFiles } = require("./load-secret-files");
 
@@ -17,7 +20,9 @@ function loadOutboxRuntimeConfig(environment = process.env) {
     busyIntervalMs: boundedInteger(environment.PETPACK_OUTBOX_BUSY_INTERVAL_MS, 25, 0, 1_000, "Outbox busy interval"),
     maximumErrorBackoffMs: boundedInteger(environment.PETPACK_OUTBOX_MAX_ERROR_BACKOFF_MS, 30_000, 1_000, 300_000, "Outbox maximum error backoff"),
     batchLimit: boundedInteger(environment.PETPACK_OUTBOX_BATCH_LIMIT, 25, 1, 100, "Outbox batch limit"),
-    leaseSeconds: boundedInteger(environment.PETPACK_OUTBOX_LEASE_SECONDS, 60, 5, 600, "Outbox lease duration")
+    leaseSeconds: boundedInteger(environment.PETPACK_OUTBOX_LEASE_SECONDS, 60, 5, 600, "Outbox lease duration"),
+    reconcileIntervalMs: boundedInteger(environment.PETPACK_OUTBOX_RECONCILE_INTERVAL_MS, 60_000, 5_000, 3_600_000, "Outbox reconciliation interval"),
+    reconcileBatchLimit: boundedInteger(environment.PETPACK_OUTBOX_RECONCILE_BATCH_LIMIT, 100, 1, 100, "Outbox reconciliation batch limit")
   });
 }
 
@@ -29,10 +34,13 @@ function requireMethod(value, method, label) {
 async function assertOutboxSchemaReady(database) {
   const result = await database.query(
     `SELECT to_regclass('public.outbox_job') IS NOT NULL AS has_outbox,
-            to_regclass('public.production_run') IS NOT NULL AS has_run`
+            to_regclass('public.production_run') IS NOT NULL AS has_run,
+            to_regclass('public.production_job_execution') IS NOT NULL AS has_execution`
   );
   const row = result && Array.isArray(result.rows) ? result.rows[0] : null;
-  if (!row || row.has_outbox !== true || row.has_run !== true) throw new Error("PostgreSQL outbox schema is not ready");
+  if (!row || row.has_outbox !== true || row.has_run !== true || row.has_execution !== true) {
+    throw new Error("PostgreSQL outbox schema is not ready");
+  }
   return Object.freeze({ ready: true });
 }
 
@@ -64,21 +72,28 @@ function createInterruptibleWait({ setTimeoutImpl = setTimeout, clearTimeoutImpl
 }
 
 class OutboxDispatcherRuntime {
-  constructor({ database, queue, dispatcher, config, logger = console, waitController } = {}) {
+  constructor({ database, queue, dispatcher, reconciler = null, config, logger = console, waitController, now = Date.now } = {}) {
     this.database = requireMethod(requireMethod(database, "assertReady", "PostgreSQL database"), "close", "PostgreSQL database");
     requireMethod(this.database, "query", "PostgreSQL database");
     this.queue = requireMethod(requireMethod(queue, "assertReady", "BullMQ queue"), "close", "BullMQ queue");
     this.dispatcher = requireMethod(dispatcher, "dispatchBatch", "Outbox dispatcher");
+    this.reconciler = reconciler === null ? null : requireMethod(reconciler, "replayBatch", "Sent outbox reconciler");
     this.config = config || loadOutboxRuntimeConfig();
     this.logger = logger;
     this.waitController = waitController || createInterruptibleWait();
     requireMethod(requireMethod(this.waitController, "wait", "Outbox wait controller"), "wake", "Outbox wait controller");
+    if (typeof now !== "function") throw new Error("Outbox runtime clock is required");
+    this.now = now;
     this.running = false;
     this.closed = false;
     this.loopPromise = null;
     this.consecutiveFailures = 0;
     this.lastDispatchAt = null;
     this.lastErrorAt = null;
+    this.lastReconcileAt = null;
+    this.lastReplayed = 0;
+    this.reconcileCursor = null;
+    this.nextReconcileAt = 0;
   }
 
   _errorBackoffMs() {
@@ -99,13 +114,40 @@ class OutboxDispatcherRuntime {
     return Object.freeze({ claimed });
   }
 
+  async reconcileOnce() {
+    if (!this.reconciler) return Object.freeze({ replayed: 0, complete: true });
+    const result = await this.reconciler.replayBatch({
+      limit: this.config.reconcileBatchLimit,
+      cursor: this.reconcileCursor
+    });
+    const replayed = Number(result?.replayed);
+    if (!Number.isSafeInteger(replayed) || replayed < 0 || replayed > this.config.reconcileBatchLimit) {
+      throw new Error("Outbox reconciler returned an invalid replay count");
+    }
+    if (typeof result?.complete !== "boolean") throw new Error("Outbox reconciler returned an invalid completion state");
+    if (!result.complete && (!result.nextCursor || typeof result.nextCursor !== "object")) {
+      throw new Error("Outbox reconciler omitted its continuation cursor");
+    }
+    const currentTime = this.now();
+    this.lastReconcileAt = new Date(currentTime).toISOString();
+    this.lastReplayed = replayed;
+    this.reconcileCursor = result.complete ? null : result.nextCursor;
+    this.nextReconcileAt = result.complete ? currentTime + this.config.reconcileIntervalMs : currentTime;
+    return Object.freeze({ replayed, complete: result.complete });
+  }
+
   async _runLoop() {
     while (this.running) {
       let delay = this.config.pollIntervalMs;
       try {
         const result = await this.dispatchOnce();
+        const reconciliation = this.reconciler && this.now() >= this.nextReconcileAt
+          ? await this.reconcileOnce()
+          : { replayed: 0, complete: true };
         this.consecutiveFailures = 0;
-        delay = result.claimed > 0 ? this.config.busyIntervalMs : this.config.pollIntervalMs;
+        delay = result.claimed > 0 || reconciliation.replayed > 0 || !reconciliation.complete
+          ? this.config.busyIntervalMs
+          : this.config.pollIntervalMs;
       } catch (error) {
         this.consecutiveFailures += 1;
         this.lastErrorAt = new Date().toISOString();
@@ -145,7 +187,10 @@ class OutboxDispatcherRuntime {
       closed: this.closed,
       consecutiveFailures: this.consecutiveFailures,
       lastDispatchAt: this.lastDispatchAt,
-      lastErrorAt: this.lastErrorAt
+      lastErrorAt: this.lastErrorAt,
+      lastReconcileAt: this.lastReconcileAt,
+      lastReplayed: this.lastReplayed,
+      reconciliationInProgress: this.reconcileCursor !== null
     });
   }
 
@@ -178,6 +223,7 @@ async function createOutboxDispatcherRuntime({
   database,
   queue,
   dispatcher,
+  reconciler,
   logger = console,
   waitController
 } = {}) {
@@ -194,10 +240,14 @@ async function createOutboxDispatcherRuntime({
       queue: runtimeQueue,
       logger
     });
+    const runtimeReconciler = reconciler === undefined
+      ? new PostgresSentOutboxReconciler({ database: runtimeDatabase, queue: runtimeQueue, logger })
+      : reconciler;
     return new OutboxDispatcherRuntime({
       database: runtimeDatabase,
       queue: runtimeQueue,
       dispatcher: runtimeDispatcher,
+      reconciler: runtimeReconciler,
       config: loadOutboxRuntimeConfig(hydrated),
       logger,
       waitController

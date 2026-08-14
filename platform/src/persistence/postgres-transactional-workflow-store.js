@@ -689,8 +689,91 @@ class PostgresOutboxDispatcher {
   }
 }
 
+/**
+ * Re-publishes durable `sent` outbox rows whose PostgreSQL execution has not
+ * reached a terminal outcome. This is the recovery path after Redis loses its
+ * queue data: BullMQ receives the original deterministic job ID, so an intact
+ * queue treats the publish as a no-op while an empty queue is reconstructed.
+ * Completed, dead, and reconciliation-required executions are never replayed.
+ */
+class PostgresSentOutboxReconciler {
+  constructor({ database, queue, logger = console } = {}) {
+    this.database = requireDatabase(database);
+    if (!queue || typeof queue.enqueue !== "function") throw new Error("An idempotent queue is required for outbox reconciliation");
+    this.queue = queue;
+    this.logger = logger;
+  }
+
+  async replayBatch({ limit = 100, cursor = null } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Outbox reconciliation limit must be between 1 and 100");
+    }
+    const cursorCreatedAt = cursor === null ? null : requireId(cursor?.createdAt, "Outbox reconciliation cursor timestamp");
+    const cursorId = cursor === null ? null : requireId(cursor?.id, "Outbox reconciliation cursor ID");
+    if (cursorCreatedAt !== null && !Number.isFinite(Date.parse(cursorCreatedAt))) {
+      throw new Error("Outbox reconciliation cursor timestamp is invalid");
+    }
+
+    const rows = await this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      const result = await tx.query(
+        `SELECT outbox.id, outbox.job_name, outbox.payload, outbox.dedupe_key, outbox.created_at
+           FROM outbox_job AS outbox
+           JOIN production_run AS run
+             ON run.id = outbox.aggregate_id
+            AND outbox.aggregate_type = 'production_run'
+           LEFT JOIN production_job_execution AS execution
+             ON execution.job_id = outbox.dedupe_key
+          WHERE outbox.status = 'sent'
+            AND outbox.job_name <> 'petpack.await-photos'
+            AND run.state NOT IN ('deliverable', 'failed')
+            AND (
+              execution.id IS NULL
+              OR execution.status IN ('pending', 'leased', 'retryable')
+            )
+            AND (
+              $2::timestamptz IS NULL
+              OR outbox.created_at > $2::timestamptz
+              OR (outbox.created_at = $2::timestamptz AND outbox.id > $3::uuid)
+            )
+          ORDER BY outbox.created_at, outbox.id
+          LIMIT $1`,
+        [limit, cursorCreatedAt, cursorId]
+      );
+      return result.rows;
+    });
+
+    let replayed = 0;
+    for (const row of rows) {
+      const payload = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+      const job = assertWorkflowJob({ ...payload, dedupeKey: row.dedupe_key });
+      if (job.name !== row.job_name) throw new Error("Outbox reconciliation payload does not match its durable job name");
+      await this.queue.enqueue(job);
+      replayed += 1;
+    }
+
+    const last = rows.at(-1);
+    const nextCursor = last
+      ? Object.freeze({
+        createdAt: new Date(last.created_at).toISOString(),
+        id: requireId(last.id, "Outbox reconciliation row ID")
+      })
+      : null;
+    if (replayed > 0) {
+      this.logger.info?.("petpack.persistence.sent_outbox_replayed", { replayed });
+    }
+    return Object.freeze({
+      scanned: rows.length,
+      replayed,
+      complete: rows.length < limit,
+      nextCursor
+    });
+  }
+}
+
 module.exports = {
   PostgresOutboxDispatcher,
+  PostgresSentOutboxReconciler,
   PostgresTransactionalWorkflowStore,
   assertWorkflowJob
 };
