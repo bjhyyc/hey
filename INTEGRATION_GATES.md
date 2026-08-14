@@ -2,7 +2,7 @@
 
 本文固定真实外部服务的接入顺序。未通过上一道门，不启用下一项，也不把真实密钥写进 Git、聊天、日志或构建产物。
 
-## Gate 0：本地零费用闭环（当前）
+## Gate 0：本地零费用闭环（已通过）
 
 目标：使用 PostgreSQL、Redis、合成图片/视频、模拟 Kaipay 和本地处理器，跑通：
 
@@ -12,13 +12,13 @@
 
 通过条件：多进程运行、重复任务幂等、Worker/Redis 重启可恢复、七动作齐全、PetPack 可由原版客户端导入。
 
-当前状态：完整零费用多进程闭环、Worker 安全点重启、空 Redis 命名空间确定性重放、PostgreSQL 18 短断恢复、原版客户端导入，以及 API、Outbox 领取前后两个边界和 Worker 活跃租约四类 hard-kill 均已通过。Gate 0 仅剩 Redis AOF 保留重启；在它通过前，不向用户索取 Kaipay 或 ModelArk 生产凭据。
+当前状态：完整零费用多进程闭环、Worker 安全点重启、空 Redis 命名空间确定性重放、PostgreSQL 18 短断恢复、原版客户端导入，以及 API、Outbox 领取前后两个边界和 Worker 活跃租约四类 hard-kill 均已通过。Redis AOF 同容器停止/启动实测也已通过：6 个 waiting 与 1 个 delayed Job 在同一数据目录恢复，重启前后完整规范化队列 SHA-256 一致，最终 39 个 Job 全部 completed，外部调用与数据删除均为 0。证据为 `D:\PetPackStudio-Rebuild-20260813\.tmp\redis-aof-rehearsals\redis-aof-20260814044430-71f00321\report.json`。
 
-## Gate 1：Kaipay 正式协议冻结
+## Gate 1：Kaipay 正式协议冻结（当前）
 
 到达条件：Gate 0 全部通过，支付之外的订单和生产工作流已经稳定。
 
-届时一次性向用户索要或请用户在本机安全文件中配置：
+现在一次性向用户索要或请用户在本机安全文件中配置：
 
 1. API 调试器导出的创建订单、查单、退款三类完整请求/响应样例；
 2. 异步通知的原始 body、相关请求头、签名字段、字符集与验签规则；

@@ -1,9 +1,15 @@
+import fs from "node:fs";
 import { createRequire } from "node:module";
 
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
+const runnerSource = fs.readFileSync(
+  new URL("../../platform/src/development/run-zero-cost-rehearsal.js", import.meta.url),
+  "utf8"
+);
 const {
+  finalDatabaseContractTimeoutMs,
   hasFinalDatabaseContract,
   hasExactOutboxReplayEvidence,
   normalizeFaultPlan,
@@ -125,6 +131,44 @@ describe("zero-cost worker restart checkpoint", () => {
       collectReport
     })).resolves.toEqual(finalDatabaseReport());
     expect(collectReport).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives the fixed Redis AOF delay a bounded final-contract recovery margin", () => {
+    expect(finalDatabaseContractTimeoutMs({ redisAof: true })).toBe(120_000);
+    expect(finalDatabaseContractTimeoutMs({ workerActiveLease: true })).toBe(60_000);
+    expect(finalDatabaseContractTimeoutMs()).toBe(30_000);
+    expect(() => finalDatabaseContractTimeoutMs({ redisAof: "true" })).toThrow(/timeout mode/i);
+    expect(runnerSource).toContain("timeoutMs: finalDatabaseContractTimeoutMs({");
+    expect(runnerSource).toContain("redisAof: Boolean(redisAofConfig)");
+  });
+
+  it("pauses after the sleeping-master finalizer creates seven video rows before freezing Redis", () => {
+    const targetIndex = runnerSource.indexOf(
+      "PETPACK_REHEARSAL_OUTBOX_POST_ENQUEUE_TARGET_JOB: JOB_NAMES.FINALIZE_SLEEP"
+    );
+    const confirmIndex = runnerSource.indexOf("/character/confirm");
+    const finalizerCheckpointIndex = runnerSource.indexOf(
+      'waitForChildCheckpoint(\n        outboxRecord,\n        "enqueued_before_mark_sent"',
+      confirmIndex
+    );
+    const pendingRowsIndex = runnerSource.indexOf("waitForPendingRedisAofVideoOutboxRows", finalizerCheckpointIndex);
+    const stopWorkerIndex = runnerSource.indexOf(
+      'stopTrackedChild(workerRecord, "Redis AOF worker after sleeping-master finalization")',
+      pendingRowsIndex
+    );
+    const prepareIndex = runnerSource.indexOf("prepareRedisAofVideoJobs", stopWorkerIndex);
+    const stopOutboxIndex = runnerSource.indexOf(
+      'stopTrackedChild(outboxRecord, "Redis AOF sleeping-master checkpoint outbox")',
+      prepareIndex
+    );
+
+    expect(targetIndex).toBeGreaterThan(-1);
+    expect(confirmIndex).toBeGreaterThan(targetIndex);
+    expect(finalizerCheckpointIndex).toBeGreaterThan(confirmIndex);
+    expect(pendingRowsIndex).toBeGreaterThan(finalizerCheckpointIndex);
+    expect(stopWorkerIndex).toBeGreaterThan(pendingRowsIndex);
+    expect(prepareIndex).toBeGreaterThan(stopWorkerIndex);
+    expect(stopOutboxIndex).toBeGreaterThan(prepareIndex);
   });
 
   it("requires a second outbox publish without a second business execution or provider call", () => {

@@ -6,8 +6,18 @@ const { spawn } = require("node:child_process");
 const { createPostgresDatabase } = require("../persistence/postgres-database");
 const { verifyPetpackArchive } = require("../petpack/build");
 const { REQUIRED_ACTION_IDS } = require("../domain/action-catalog");
+const { JOB_NAMES } = require("../workflow/production-workflow");
 const { createFixturePng } = require("./zero-cost-worker-components");
 const { seedZeroCostDatabase } = require("./seed-zero-cost-rehearsal");
+const {
+  collectFinalRedisAofQueueContract,
+  collectFrozenRedisAofQueueSnapshot,
+  loadRedisAofCheckpointConfig,
+  performRedisAofRestartHandshake,
+  prepareRedisAofVideoJobs,
+  waitForPendingRedisAofVideoOutboxRows,
+  waitForRedisAofQueueCheckpoint
+} = require("./redis-aof-rehearsal-checkpoint");
 const {
   PROJECT_ROOT,
   buildZeroCostEnvironment,
@@ -489,6 +499,13 @@ async function waitForFinalDatabaseContract({
   });
 }
 
+function finalDatabaseContractTimeoutMs({ redisAof = false, workerActiveLease = false } = {}) {
+  if (typeof redisAof !== "boolean" || typeof workerActiveLease !== "boolean") {
+    throw new Error("Final database contract timeout mode is invalid");
+  }
+  return redisAof ? 120_000 : workerActiveLease ? 60_000 : 30_000;
+}
+
 async function runZeroCostRehearsal({
   environment = process.env,
   logger = console,
@@ -497,6 +514,10 @@ async function runZeroCostRehearsal({
 } = {}) {
   const faults = normalizeFaultPlan(faultPlan);
   const config = await createRehearsalEnvironment(environment);
+  const redisAofConfig = loadRedisAofCheckpointConfig(config.environment);
+  if (redisAofConfig && Object.values(faults).some(Boolean)) {
+    throw new Error("Redis AOF restart must run without another rehearsal fault plan");
+  }
   const database = createPostgresDatabase({ environment: config.environment, logger });
   const children = [];
   let apiRecord;
@@ -506,6 +527,8 @@ async function runZeroCostRehearsal({
   let apiHardKilled = false;
   let outboxHardKilled = false;
   let workerHardKilled = false;
+  let redisAofCheckpoint = null;
+  let redisAofRunId = null;
   const faultCheckpoints = {};
   const stopAll = async () => {
     const failures = [];
@@ -515,6 +538,12 @@ async function runZeroCostRehearsal({
     if (failures.length) throw failures[0];
   };
   const signalHandler = () => stopAll().catch(() => undefined);
+  const stopTrackedChild = async (record, label) => {
+    const index = children.indexOf(record);
+    if (index < 0) throw new Error(`${label} child was not tracked`);
+    await stopChild(record);
+    children.splice(index, 1);
+  };
   process.once("SIGINT", signalHandler);
   process.once("SIGTERM", signalHandler);
   try {
@@ -524,11 +553,14 @@ async function runZeroCostRehearsal({
 
     apiRecord = await startChild({ role: "api", entry: API_ENTRY, environment: config.environment, logger });
     children.push(apiRecord);
-    const initialOutboxEnvironment = faults.outboxAfterClaim || faults.outboxAfterEnqueue
+    const initialOutboxEnvironment = faults.outboxAfterClaim || faults.outboxAfterEnqueue || redisAofConfig
       ? {
         ...config.environment,
         PETPACK_REHEARSAL_OUTBOX_HARD_KILL: faults.outboxAfterClaim ? "true" : "false",
-        PETPACK_REHEARSAL_OUTBOX_POST_ENQUEUE_HARD_KILL: faults.outboxAfterEnqueue ? "true" : "false",
+        PETPACK_REHEARSAL_OUTBOX_POST_ENQUEUE_HARD_KILL: faults.outboxAfterEnqueue || redisAofConfig ? "true" : "false",
+        ...(redisAofConfig
+          ? { PETPACK_REHEARSAL_OUTBOX_POST_ENQUEUE_TARGET_JOB: JOB_NAMES.FINALIZE_SLEEP }
+          : {}),
         PETPACK_OUTBOX_LEASE_SECONDS: "5"
       }
       : config.environment;
@@ -654,7 +686,58 @@ async function runZeroCostRehearsal({
       body: { frontMasterRevisionId, sideMasterRevisionId }
     });
 
-    if (faults.workerActiveLease) {
+    if (redisAofConfig) {
+      const finalizeCheckpoint = await waitForChildCheckpoint(
+        outboxRecord,
+        "enqueued_before_mark_sent",
+        { timeoutMs: 180_000 }
+      );
+      if (finalizeCheckpoint.jobName !== JOB_NAMES.FINALIZE_SLEEP || !finalizeCheckpoint.outboxId ||
+          !finalizeCheckpoint.dedupeKey) {
+        throw new Error("Redis AOF outbox did not pause on the exact sleeping-master finalizer");
+      }
+      const checkpointDatabase = createPostgresDatabase({ environment: config.environment, logger });
+      try {
+        const runRows = await checkpointDatabase.query("SELECT id FROM production_run WHERE project_id = $1", [projectId]);
+        redisAofRunId = runRows.rows[0]?.id;
+        if (!redisAofRunId) throw new Error("Rehearsal run ID is unavailable at the Redis AOF checkpoint");
+        await waitForPendingRedisAofVideoOutboxRows({ database: checkpointDatabase, runId: redisAofRunId });
+        await stopTrackedChild(workerRecord, "Redis AOF worker after sleeping-master finalization");
+        workerRecord = null;
+        const prepared = await prepareRedisAofVideoJobs({ database: checkpointDatabase, runId: redisAofRunId });
+        await stopTrackedChild(outboxRecord, "Redis AOF sleeping-master checkpoint outbox");
+        outboxRecord = null;
+        outboxRecord = await startChild({ role: "outbox", entry: OUTBOX_ENTRY, environment: config.environment, logger });
+        children.push(outboxRecord);
+        await waitForRedisAofQueueCheckpoint({
+          database: checkpointDatabase,
+          environment: config.environment,
+          prepared,
+          logger
+        });
+        await stopTrackedChild(outboxRecord, "Redis AOF checkpoint outbox");
+        outboxRecord = null;
+        const before = await collectFrozenRedisAofQueueSnapshot({
+          environment: config.environment,
+          prepared,
+          logger
+        });
+        redisAofCheckpoint = await performRedisAofRestartHandshake({
+          config: redisAofConfig,
+          environment: config.environment,
+          prepared,
+          before,
+          logger
+        });
+      } finally {
+        await checkpointDatabase.close();
+      }
+      outboxRecord = await startChild({ role: "outbox", entry: OUTBOX_ENTRY, environment: config.environment, logger });
+      children.push(outboxRecord);
+      workerRecord = await startChild({ role: "worker", entry: WORKER_ENTRY, environment: config.environment, logger });
+      children.push(workerRecord);
+      workerRestarted = true;
+    } else if (faults.workerActiveLease) {
       const runLookup = createPostgresDatabase({ environment: config.environment, logger });
       try {
         const runRows = await runLookup.query("SELECT id FROM production_run WHERE project_id = $1", [projectId]);
@@ -717,13 +800,25 @@ async function runZeroCostRehearsal({
     const reportDatabase = createPostgresDatabase({ environment: config.environment, logger });
     let databaseReport;
     let outboxFaultEvidence;
+    let redisAofFinalQueue;
     try {
       databaseReport = await waitForFinalDatabaseContract({
         database: reportDatabase,
         projectId,
-        timeoutMs: faults.workerActiveLease ? 60_000 : 30_000
+        timeoutMs: finalDatabaseContractTimeoutMs({
+          redisAof: Boolean(redisAofConfig),
+          workerActiveLease: faults.workerActiveLease
+        })
       });
       outboxFaultEvidence = await collectOutboxFaultEvidence(reportDatabase, faultCheckpoints.outbox);
+      if (redisAofCheckpoint) {
+        redisAofFinalQueue = await collectFinalRedisAofQueueContract({
+          database: reportDatabase,
+          environment: config.environment,
+          runId: redisAofRunId,
+          logger
+        });
+      }
     } finally {
       await reportDatabase.close();
     }
@@ -762,6 +857,9 @@ async function runZeroCostRehearsal({
         checkpoints: faultCheckpoints,
         outboxReplayEvidence: outboxFaultEvidence || null
       },
+      redisAofRestart: redisAofCheckpoint
+        ? { ...redisAofCheckpoint, finalQueue: redisAofFinalQueue }
+        : null,
       projectId,
       orderId,
       workflow: {
@@ -806,7 +904,10 @@ async function runZeroCostRehearsal({
            !hasExactOutboxReplayEvidence(report.faultInjection.outboxReplayEvidence))) ||
          (faults.outboxAfterEnqueue && (!report.faultInjection.outboxAfterEnqueueHardKilled ||
            !hasExactOutboxReplayEvidence(report.faultInjection.outboxReplayEvidence))) ||
-         (faults.workerActiveLease && !report.faultInjection.workerHardKilled)) {
+         (faults.workerActiveLease && !report.faultInjection.workerHardKilled) ||
+         (redisAofConfig && (!report.redisAofRestart?.sameContainerRestarted ||
+           report.redisAofRestart.restoredJobCount !== REQUIRED_ACTION_IDS.length ||
+           report.redisAofRestart.finalQueue?.counts?.completed !== 39))) {
       throw Object.assign(new Error("Zero-cost rehearsal completed with an invalid final contract"), { report });
     }
     await fsp.writeFile(config.reportPath, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
@@ -844,6 +945,7 @@ if (require.main === module) {
       externalCallCount: report.externalCallCount,
       workerRestarted: report.workerRestarted,
       faultInjection: report.faultInjection,
+      redisAofRestart: report.redisAofRestart,
       reportPath: report.artifacts.reportPath,
       petpackPath: report.artifacts.petpackPath
     }));
@@ -859,6 +961,7 @@ module.exports = {
   collectOutboxCheckpointEvidence,
   collectOutboxFaultEvidence,
   createRehearsalEnvironment,
+  finalDatabaseContractTimeoutMs,
   hardKillChild,
   hasExactOutboxReplayEvidence,
   hasFinalDatabaseContract,
