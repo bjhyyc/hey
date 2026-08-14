@@ -12,7 +12,7 @@
 
 通过条件：多进程运行、重复任务幂等、Worker/Redis 重启可恢复、七动作齐全、PetPack 可由原版客户端导入。
 
-当前状态：完整零费用多进程闭环、Worker 安全点重启、空 Redis 命名空间确定性重放、PostgreSQL 18 短断恢复和原版客户端导入已经通过；仍需完成 API、outbox claim/enqueue 边界和 Worker 活跃租约的 hard-kill，以及 Redis AOF 保留重启。Gate 0 未全部关闭前，不向用户索取 Kaipay 或 ModelArk 生产凭据。
+当前状态：完整零费用多进程闭环、Worker 安全点重启、空 Redis 命名空间确定性重放、PostgreSQL 18 短断恢复、原版客户端导入，以及 API、outbox claim/enqueue 边界和 Worker 活跃租约三类 hard-kill 均已通过。仍需完成 outbox 入队后/标记 sent 前的第二崩溃窗口与 Redis AOF 保留重启。Gate 0 未全部关闭前，不向用户索取 Kaipay 或 ModelArk 生产凭据。
 
 ## Gate 1：Kaipay 正式协议冻结
 
