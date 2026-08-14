@@ -10,7 +10,8 @@
     "start:production-auth": "node src/runtime/start-production-auth-api.js",
     "start:studio-api": "node src/runtime/start-studio-api.js",
     "start:outbox": "node src/runtime/start-outbox-dispatcher.js",
-    "start:studio-worker": "node src/runtime/start-studio-worker.js"
+    "start:studio-worker": "node src/runtime/start-studio-worker.js",
+    "verify:kaipay": "node src/runtime/verify-kaipay-runtime.js"
   },
   "engines": {
     "node": ">=20.9.0"

@@ -7,6 +7,7 @@ import factoryModule from "../../platform/src/providers/payment-provider-factory
 import httpModule from "../../platform/src/http/petpack-studio-http-api.js";
 import secretModule from "../../platform/src/runtime/load-secret-files.js";
 import repositoryModule from "../../platform/src/persistence/postgres-petpack-studio-repository.js";
+import studioServiceModule from "../../platform/src/api/petpack-studio-service.js";
 
 const { assertPaymentMethod, providerStatusToPaymentState } = paymentStateMachine;
 const {
@@ -20,6 +21,7 @@ const { createPaymentProvider } = factoryModule;
 const { createPetPackStudioHttpApi } = httpModule;
 const { DEFAULT_SECRET_FILE_MAPPINGS } = secretModule;
 const { encryptPaymentNotification, normalizePaymentNotificationEncryptionKey } = repositoryModule;
+const { PetPackStudioService } = studioServiceModule;
 
 function order(overrides = {}) {
   return {
@@ -46,11 +48,14 @@ function stores(value = order()) {
 function productionConfig(overrides = {}) {
   return {
     mode: "production",
-    merchantId: "merchant-1",
-    credentialsJson: '{"token":"not-a-real-secret"}',
+    merchantId: "1001",
+    credentialsJson: '{"epayKey":"not-a-real-secret"}',
+    apiBaseUrl: "https://api.kaipay.cn",
     notifyBaseUrl: "https://api.heyirmy.com/api/payments/kaipay/notify",
     returnBaseUrl: "https://heyirmy.com/projects/payment-return",
-    adapterVersion: "kaipay-api-debugger/v1",
+    adapterVersion: "kaipay-epay-v1-md5/1",
+    defaultChannel: "ALIPAY",
+    requestTimeoutMs: "15000",
     allowSimulatedPayments: false,
     ...overrides
   };
@@ -70,18 +75,22 @@ describe("Kaipay payment contract", () => {
   it("loads production config only with pinned adapter, valid opaque credentials, and HTTPS callbacks", () => {
     const config = loadKaipayConfig({
       PETPACK_PLATFORM_MODE: "production",
-      KAIPAY_MERCHANT_ID: "merchant-1",
-      KAIPAY_CREDENTIALS_JSON: '{"credential":"value"}',
+      KAIPAY_MERCHANT_ID: "1001",
+      KAIPAY_CREDENTIALS_JSON: '{"epayKey":"not-a-real-secret"}',
+      KAIPAY_API_BASE_URL: "https://api.kaipay.cn",
       KAIPAY_NOTIFY_BASE_URL: "https://api.heyirmy.com/api/payments/kaipay/notify",
       KAIPAY_RETURN_BASE_URL: "https://heyirmy.com/projects/payment-return",
-      KAIPAY_ADAPTER_VERSION: "kaipay-api-debugger/v1"
+      KAIPAY_ADAPTER_VERSION: "kaipay-epay-v1-md5/1",
+      KAIPAY_DEFAULT_CHANNEL: "ALIPAY",
+      KAIPAY_REQUEST_TIMEOUT_MS: "15000"
     });
     expect(config.mode).toBe("production");
     expect(Object.isFrozen(config)).toBe(true);
     expect(() => loadKaipayConfig({
       PETPACK_PLATFORM_MODE: "production",
-      KAIPAY_MERCHANT_ID: "merchant-1",
+      KAIPAY_MERCHANT_ID: "1001",
       KAIPAY_CREDENTIALS_JSON: "not-json",
+      KAIPAY_API_BASE_URL: "https://example.com",
       KAIPAY_NOTIFY_BASE_URL: "http://api.heyirmy.com/notify",
       KAIPAY_RETURN_BASE_URL: "https://heyirmy.com/return",
       KAIPAY_ADAPTER_VERSION: "v1",
@@ -122,7 +131,7 @@ describe("Kaipay payment contract", () => {
     const protocol = {
       verify: vi.fn(async () => ({
         valid: true,
-        merchantId: "merchant-1",
+        merchantId: "1001",
         platformOrderId: "order-1",
         providerOrderId: "kp-order-1",
         status: "PAID"
@@ -144,6 +153,7 @@ describe("Kaipay payment contract", () => {
     const provider = new KaipayPaymentProvider({ config: productionConfig(), kaipayClient: client, notificationProtocol: protocol, ...state });
     const result = await provider.handleNotification({ platformOrderId: "order-1", rawNotification: Buffer.from("signed-provider-body") });
     expect(result.state).toBe("paid");
+    expect(result.applyToOrder).toBe(true);
     expect(result.acknowledgement.body).toBe("provider-defined-ok");
     expect(state.eventStore.storeEncryptedNotification).toHaveBeenCalledOnce();
     expect(client.queryOrder).toHaveBeenCalledOnce();
@@ -171,7 +181,39 @@ describe("Kaipay payment contract", () => {
     });
     const result = await provider.handleNotification({ platformOrderId: "order-1", rawNotification: "invalid" });
     expect(result.state).toBe("payment_review");
+    expect(result.applyToOrder).toBe(false);
     expect(provider.client.queryOrder).not.toHaveBeenCalled();
+  });
+
+  it("does not let an unauthenticated callback move a customer order into review", async () => {
+    const repository = Object.fromEntries([
+      "createProjectOrder", "listUserProjects", "getProjectBundle", "reserveSourcePhoto",
+      "getReservedSourcePhoto", "acceptSourcePhoto", "getRunByProject", "getSourcePhotoRevision",
+      "getCharacterCandidate", "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload",
+      "markOrderPaymentState"
+    ].map((name) => [name, vi.fn()]));
+    const paymentProvider = {
+      createCheckout: vi.fn(),
+      handleNotification: vi.fn(async () => ({
+        state: "payment_review",
+        applyToOrder: false,
+        acknowledgement: { status: 400, contentType: "text/plain", body: "fail" }
+      }))
+    };
+    const objectStore = {
+      createUploadGrant: vi.fn(), createDownloadGrant: vi.fn(), verifyUploadedObject: vi.fn()
+    };
+    const workflow = {
+      startPaidOrder: vi.fn(), photosAccepted: vi.fn(), confirmCharacterMasters: vi.fn(), regenerateCharacterMaster: vi.fn()
+    };
+    const service = new PetPackStudioService({ repository, paymentProvider, objectStore, workflow });
+    const result = await service.handlePaymentNotification({ platformOrderId: "order-1", rawNotification: "bad=callback" });
+    expect(result).toEqual({
+      accepted: false,
+      acknowledgement: { status: 400, contentType: "text/plain", body: "fail" }
+    });
+    expect(repository.markOrderPaymentState).not.toHaveBeenCalled();
+    expect(workflow.startPaidOrder).not.toHaveBeenCalled();
   });
 
   it("keeps simulation development-only and production factory fail-closed", () => {
@@ -183,10 +225,11 @@ describe("Kaipay payment contract", () => {
     expect(simulated.constructor.name).toBe("SimulatedPaymentProvider");
     expect(typeof simulated.handleNotification).toBe("function");
     expect(() => new SimulatedPaymentProvider({ mode: "production", ...state })).toThrow(/development/);
-    expect(() => createPaymentProvider({
+    const production = createPaymentProvider({
       config: productionConfig(),
       ...state
-    })).toThrow(/Kaipay client adapter/);
+    });
+    expect(production.constructor.name).toBe("KaipayPaymentProvider");
   });
 
   it("uses the acknowledgement supplied by the adapter and leaves the old Alipay route closed", async () => {
@@ -209,6 +252,15 @@ describe("Kaipay payment contract", () => {
       status: 202,
       headers: expect.objectContaining({ "content-type": "text/plain; charset=utf-8" }),
       body: "kaipay-protocol-ack"
+    }));
+    const officialGet = await api.handle({
+      method: "GET",
+      path: "/api/payments/kaipay/notify/order-1?pid=1001&trade_no=kp-1&sign=abc"
+    });
+    expect(officialGet.status).toBe(202);
+    expect(requiredMethods.handlePaymentNotification).toHaveBeenLastCalledWith(expect.objectContaining({
+      platformOrderId: "order-1",
+      rawNotification: "pid=1001&trade_no=kp-1&sign=abc"
     }));
     const legacy = await api.handle({ method: "POST", path: "/api/payments/alipay/notify/order-1", rawBody: Buffer.from("x") });
     expect(legacy.status).toBe(404);

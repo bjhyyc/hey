@@ -179,6 +179,7 @@ async function createStudioApiRuntime({
       config: loadKaipayConfig(hydrated),
       kaipayClient,
       notificationProtocol,
+      fetchImpl,
       eventStore: runtimeRepository,
       orderStore: runtimeRepository,
       logger

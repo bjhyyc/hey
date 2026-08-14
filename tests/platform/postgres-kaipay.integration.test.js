@@ -65,7 +65,7 @@ integration("PostgreSQL Kaipay persistence integration", () => {
         expect(Buffer.isBuffer(rawBytes)).toBe(true);
         return {
           valid: true,
-          merchantId: "merchant-integration",
+          merchantId: "1001",
           platformOrderId: ids.order,
           providerOrderId,
           status: "PAID"
@@ -88,11 +88,14 @@ integration("PostgreSQL Kaipay persistence integration", () => {
     const provider = new KaipayPaymentProvider({
       config: {
         mode: "production",
-        merchantId: "merchant-integration",
-        credentialsJson: '{"fixture":"integration-only"}',
+        merchantId: "1001",
+        credentialsJson: '{"epayKey":"integration-only-key"}',
+        apiBaseUrl: "https://api.kaipay.cn",
         notifyBaseUrl: "https://api.heyirmy.com/api/payments/kaipay/notify",
         returnBaseUrl: "https://heyirmy.com/projects/payment-return",
-        adapterVersion: "integration/v1",
+        adapterVersion: "kaipay-epay-v1-md5/1",
+        defaultChannel: "ALIPAY",
+        requestTimeoutMs: "15000",
         allowSimulatedPayments: false
       },
       kaipayClient: client,
@@ -121,7 +124,7 @@ integration("PostgreSQL Kaipay persistence integration", () => {
       provider: "KAIPAY",
       payment_method: "KAIPAY",
       amount_fen: 1990,
-      adapter_version: "integration/v1"
+      adapter_version: "kaipay-epay-v1-md5/1"
     }]);
     const encrypted = await pool.query(
       `SELECT raw_notification_ciphertext, raw_notification_digest

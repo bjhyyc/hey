@@ -18,7 +18,8 @@ const HTTP_API_ROUTES = Object.freeze({
   CONFIRM_CHARACTER: "POST /api/projects/:projectId/character/confirm",
   GET_PROJECT: "GET /api/projects/:projectId",
   CREATE_PETPACK_DOWNLOAD: "POST /api/projects/:projectId/petpack-download",
-  KAIPAY_NOTIFICATION: "POST /api/payments/kaipay/notify/:platformOrderId",
+  KAIPAY_NOTIFICATION: "GET /api/payments/kaipay/notify/:platformOrderId",
+  KAIPAY_NOTIFICATION_LEGACY_POST: "POST /api/payments/kaipay/notify/:platformOrderId",
   ADMIN_OPERATIONS: "GET /api/admin/operations",
   ADMIN_OPERATION_COSTS: "GET /api/admin/operations/costs",
   ADMIN_RETENTION_PLAN: "GET /api/admin/retention/plan",
@@ -121,12 +122,14 @@ function decodeJsonObject(value, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES } = {})
   return parsed;
 }
 
-// Payment signatures are calculated over the provider's original form body.
-// This boundary must not parse and re-serialize it before the server-side
-// Kaipay's versioned verifier receives it. It only enforces a bounded,
-// non-empty payload and never parses/re-serializes signed provider bytes.
-function readBoundedRawNotification(request, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES } = {}) {
-  const rawNotification = request.rawBody;
+// Kaipay EPay V1 signs the decoded fields delivered in its GET query. Preserve
+// the bounded original query bytes for encrypted audit storage and let the
+// pinned protocol adapter perform duplicate-field rejection and verification.
+// The POST branch remains only for the development simulator and older tests.
+function readBoundedRawNotification(request, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES, rawSearch = "" } = {}) {
+  const rawNotification = String(request?.method || "").toUpperCase() === "GET"
+    ? rawSearch
+    : request.rawBody;
   if (typeof rawNotification === "string" || Buffer.isBuffer(rawNotification)) {
     if (!rawNotification.length || Buffer.byteLength(rawNotification) > maxJsonBytes) throw badRequest("支付通知内容无效");
     return rawNotification;
@@ -199,7 +202,7 @@ function parseRequestTarget(request) {
       throw badRequest("请求路径无效");
     }
   });
-  return { segments, searchParams: url.searchParams, hasSearch: Boolean(url.search) };
+  return { segments, searchParams: url.searchParams, rawSearch: url.search ? url.search.slice(1) : "", hasSearch: Boolean(url.search) };
 }
 
 function parseRequestPath(request) {
@@ -233,11 +236,14 @@ function parsePhotoUploadGrantsBody(body) {
 }
 
 function parseCheckoutBody(body) {
-  assertExactKeys(body, { allowed: ["planCode", "displayName", "paymentMethod", "idempotencyKey"] });
+  assertExactKeys(body, { allowed: ["planCode", "displayName", "paymentMethod", "paymentChannel", "idempotencyKey"] });
+  const paymentChannel = requireString(body.paymentChannel, { maxLength: 16 }).toUpperCase();
+  if (!["ALIPAY", "WXPAY"].includes(paymentChannel)) throw badRequest("支付渠道无效");
   return {
     planCode: requireString(body.planCode, { maxLength: 128 }),
     displayName: requireString(body.displayName, { maxLength: 120 }),
     paymentMethod: requireString(body.paymentMethod, { maxLength: 16 }),
+    paymentChannel,
     idempotencyKey: requireString(body.idempotencyKey, { maxLength: 256 })
   };
 }
@@ -830,8 +836,8 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
   if (normalService && method === "POST" && projectPrefix && segments.length === 4 && segments[2] && segments[3] === "petpack-download") {
     return { id: "petpack_download", requiresActor: true, projectId: requirePathParameter(segments[2], "项目 ID") };
   }
-  if (normalService && method === "POST" && ((is("api", "payments", "kaipay", "notify", segments[4])) || (is("api", "payments", "kaipay", "notifications", segments[4])))) {
-    return { id: "kaipay_notification", platformOrderId: requirePathParameter(segments[4], "平台订单 ID") };
+  if (normalService && ["GET", "POST"].includes(method) && ((is("api", "payments", "kaipay", "notify", segments[4])) || (is("api", "payments", "kaipay", "notifications", segments[4])))) {
+    return { id: "kaipay_notification", acceptsQuery: method === "GET", callbackMethod: method, platformOrderId: requirePathParameter(segments[4], "平台订单 ID") };
   }
   if (method === "GET" && is("api", "admin", "operations") && typeof adminOperationsService?.listOperations === "function") {
     return { id: "admin_operations", requiresActor: true, acceptsQuery: true };
@@ -966,7 +972,8 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         return { status: 200, body: serializeDownload(await normalService.createPetpackDownload({ actor, projectId: route.projectId })) };
       }
       case "kaipay_notification": {
-        const rawNotification = readBoundedRawNotification(request, { maxJsonBytes });
+        if (route.callbackMethod === "GET") assertNoBody(request);
+        const rawNotification = readBoundedRawNotification(request, { maxJsonBytes, rawSearch: route.rawSearch });
         const result = await normalService.handlePaymentNotification({ platformOrderId: route.platformOrderId, rawNotification });
         // The exact Kaipay acknowledgement is supplied by the pinned protocol
         // adapter. The HTTP layer validates it but never guesses provider text.
@@ -1056,7 +1063,9 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
           throw integrationDisabled("手机号登录暂未开放");
         }
         if (target.hasSearch && !route.acceptsQuery) throw badRequest("请求路径无效");
-        if (route.acceptsQuery) {
+        if (route.id === "kaipay_notification") {
+          route.rawSearch = target.rawSearch;
+        } else if (route.acceptsQuery) {
           if (route.id === "admin_operation_costs") route.query = parseAdminCostQuery(target.searchParams);
           else if (route.id === "admin_retention_plan") route.query = parseAdminRetentionQuery(target.searchParams);
           else route.query = parseAdminOperationsQuery(target.searchParams);

@@ -103,7 +103,7 @@ class PetPackStudioService {
     this.logger = logger;
   }
 
-  async createCheckout({ actor, planCode, displayName, paymentMethod, idempotencyKey }) {
+  async createCheckout({ actor, planCode, displayName, paymentMethod, paymentChannel, idempotencyKey }) {
     const user = requireActor(actor);
     const order = await this.repository.createProjectOrder({
       userId: user.id,
@@ -114,13 +114,14 @@ class PetPackStudioService {
     });
     const checkout = await this.paymentProvider.createCheckout({
       platformOrderId: order.id,
+      paymentChannel: requiredString(paymentChannel, "Payment channel"),
       idempotencyKey: `checkout:${idempotencyKey}`
     });
     this.logger.info?.("petpack.api.checkout_created", { orderId: order.id, userId: user.id, paymentMethod: order.paymentMethod });
     return {
       project: { id: order.projectId },
       order: { id: order.id, status: checkout.state, paymentMethod: checkout.paymentMethod, amountFen: order.amountFen },
-      checkout: { provider: checkout.provider, providerOrderId: checkout.providerOrderId, checkoutUrl: checkout.checkoutUrl }
+      checkout: { provider: checkout.provider, providerOrderId: checkout.providerOrderId, checkoutUrl: checkout.checkoutUrl, paymentChannel: checkout.paymentChannel }
     };
   }
 
@@ -319,6 +320,9 @@ class PetPackStudioService {
 
   async handlePaymentNotification({ platformOrderId, rawNotification }) {
     const reconciliation = await this.paymentProvider.handleNotification({ platformOrderId, rawNotification });
+    if (reconciliation.applyToOrder === false) {
+      return { accepted: false, acknowledgement: reconciliation.acknowledgement };
+    }
     const order = await this.repository.markOrderPaymentState({ platformOrderId, reconciliation });
     if (reconciliation.state === "paid" && order.productionRunNeeded) {
       await this.workflow.startPaidOrder({ order, projectId: order.projectId, runId: order.productionRunId });

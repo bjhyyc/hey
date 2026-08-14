@@ -589,6 +589,7 @@ async function runZeroCostRehearsal({
         planCode: seed.planCode,
         displayName: "Zero Cost Pet",
         paymentMethod: "KAIPAY",
+        paymentChannel: "ALIPAY",
         idempotencyKey: `checkout-${config.rehearsalId}`
       }
     });

@@ -45,7 +45,7 @@ export const studioBrowserApi = {
     browserStudioRequest<{ items: ProjectSummary[] }>("projects"),
   project: (projectId: string) =>
     browserStudioRequest<ProjectView>(["projects", projectId]),
-  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; idempotencyKey: string }) =>
+  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; paymentChannel: "ALIPAY" | "WXPAY"; idempotencyKey: string }) =>
     browserStudioRequest<{
       project: { id: string };
       order: { id: string; status: string; amountFen?: number };

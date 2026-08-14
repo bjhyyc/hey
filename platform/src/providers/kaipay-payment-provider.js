@@ -6,8 +6,14 @@ const {
   reconcileProviderPayment
 } = require("../domain/payment-state-machine");
 const { digestNotification } = require("./payment-provider-common");
-
-const ADAPTER_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/;
+const {
+  KAIPAY_EPAY_V1_ADAPTER_VERSION,
+  KAIPAY_OFFICIAL_API_ORIGIN,
+  normalizeApiBaseUrl,
+  normalizeMerchantId,
+  normalizePaymentChannel,
+  parseEpayCredentials
+} = require("./kaipay-epay-v1");
 
 function optionalString(env, name) {
   const value = env && env[name];
@@ -43,39 +49,32 @@ function requireHttpsUrl(value, label) {
 }
 
 function validateCredentialsJson(value) {
-  if (!value || Buffer.byteLength(value, "utf8") > 64 * 1024) {
-    throw new Error("KAIPAY_CREDENTIALS_JSON is invalid");
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(value);
-  } catch (_error) {
-    throw new Error("KAIPAY_CREDENTIALS_JSON is invalid");
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).length === 0) {
-    throw new Error("KAIPAY_CREDENTIALS_JSON is invalid");
-  }
+  parseEpayCredentials(value);
   return value;
 }
 
 function assertKaipayRuntimeConfig(config) {
   if (!config || typeof config !== "object") throw new Error("Kaipay server configuration is required");
   if (config.mode === "production" || config.mode === "test") {
-    requireId(config.merchantId, "Kaipay merchant ID");
+    normalizeMerchantId(config.merchantId);
     validateCredentialsJson(config.credentialsJson);
     requireHttpsUrl(config.notifyBaseUrl, "Kaipay notification base URL");
     requireHttpsUrl(config.returnBaseUrl, "Kaipay return base URL");
-    if (!ADAPTER_VERSION_PATTERN.test(config.adapterVersion || "")) throw new Error("A pinned Kaipay adapter version is required outside development");
+    normalizeApiBaseUrl(config.apiBaseUrl, { production: config.mode === "production" });
+    normalizePaymentChannel(config.defaultChannel);
+    const timeoutMs = Number(config.requestTimeoutMs);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 60_000) {
+      throw new Error("Kaipay request timeout must be between 1000 and 60000 milliseconds");
+    }
+    if (config.adapterVersion !== KAIPAY_EPAY_V1_ADAPTER_VERSION) throw new Error(`KAIPAY_ADAPTER_VERSION must be ${KAIPAY_EPAY_V1_ADAPTER_VERSION}`);
     if (config.allowSimulatedPayments === true) throw new Error("Simulated payments are forbidden outside development");
   }
   return config;
 }
 
 /**
- * Loads only the stable deployment boundary. Kaipay wire field names, signing
- * algorithms, endpoint paths, and callback acknowledgement formats belong to
- * the separately versioned adapter obtained from the official API debugger;
- * this module never guesses them.
+ * Loads the stable deployment boundary for the official Kaipay EPay V1 MD5
+ * adapter. The EPay key remains in the server-only credentials JSON secret.
  */
 function loadKaipayConfig(env = process.env) {
   const mode = optionalString(env, "PETPACK_PLATFORM_MODE") || "development";
@@ -83,9 +82,12 @@ function loadKaipayConfig(env = process.env) {
     mode,
     merchantId: optionalString(env, "KAIPAY_MERCHANT_ID"),
     credentialsJson: optionalString(env, "KAIPAY_CREDENTIALS_JSON"),
+    apiBaseUrl: optionalString(env, "KAIPAY_API_BASE_URL"),
     notifyBaseUrl: optionalString(env, "KAIPAY_NOTIFY_BASE_URL"),
     returnBaseUrl: optionalString(env, "KAIPAY_RETURN_BASE_URL"),
     adapterVersion: optionalString(env, "KAIPAY_ADAPTER_VERSION"),
+    defaultChannel: optionalString(env, "KAIPAY_DEFAULT_CHANNEL") || "ALIPAY",
+    requestTimeoutMs: optionalString(env, "KAIPAY_REQUEST_TIMEOUT_MS") || "15000",
     allowSimulatedPayments: optionalString(env, "KAIPAY_ALLOW_SIMULATED_PAYMENTS") === "true"
   };
   if (mode === "production" || mode === "test") {
@@ -95,9 +97,16 @@ function loadKaipayConfig(env = process.env) {
     else {
       try { validateCredentialsJson(config.credentialsJson); } catch (error) { errors.push(error.message); }
     }
+    if (!config.apiBaseUrl) errors.push("KAIPAY_API_BASE_URL is required");
     if (!config.notifyBaseUrl) errors.push("KAIPAY_NOTIFY_BASE_URL is required");
     if (!config.returnBaseUrl) errors.push("KAIPAY_RETURN_BASE_URL is required");
-    if (!ADAPTER_VERSION_PATTERN.test(config.adapterVersion)) errors.push("KAIPAY_ADAPTER_VERSION is invalid");
+    if (config.adapterVersion !== KAIPAY_EPAY_V1_ADAPTER_VERSION) errors.push(`KAIPAY_ADAPTER_VERSION must be ${KAIPAY_EPAY_V1_ADAPTER_VERSION}`);
+    try { normalizeMerchantId(config.merchantId); } catch (error) { errors.push(error.message); }
+    try { normalizeApiBaseUrl(config.apiBaseUrl, { production: mode === "production" }); } catch (error) { errors.push(error.message); }
+    try { normalizePaymentChannel(config.defaultChannel); } catch (error) { errors.push(error.message); }
+    if (!/^[1-9][0-9]{3,4}$/.test(config.requestTimeoutMs) || Number(config.requestTimeoutMs) < 1000 || Number(config.requestTimeoutMs) > 60000) {
+      errors.push("KAIPAY_REQUEST_TIMEOUT_MS must be between 1000 and 60000");
+    }
     if (config.notifyBaseUrl) {
       try { requireHttpsUrl(config.notifyBaseUrl, "KAIPAY_NOTIFY_BASE_URL"); } catch (error) { errors.push(error.message); }
     }
@@ -110,13 +119,14 @@ function loadKaipayConfig(env = process.env) {
   return Object.freeze(assertKaipayRuntimeConfig(config));
 }
 
-function createCheckoutRequest({ order, returnUrl, notifyUrl }) {
+function createCheckoutRequest({ order, returnUrl, notifyUrl, paymentChannel }) {
   if (!order || typeof order !== "object") throw new Error("Order is required");
   return Object.freeze({
     platformOrderId: requireId(order.id, "Platform order ID"),
     amountFen: assertAmountFen(order.amountFen),
     currency: "CNY",
     paymentMethod: assertPaymentMethod(order.paymentMethod),
+    paymentChannel: normalizePaymentChannel(paymentChannel),
     subject: typeof order.displayName === "string" && order.displayName.trim()
       ? `${order.displayName.trim()}的桌宠素材包`.slice(0, 256)
       : "PetPack Studio 桌宠素材包",
@@ -199,12 +209,13 @@ class KaipayPaymentProvider {
     this.logger = logger;
   }
 
-  async createCheckout({ platformOrderId, idempotencyKey }) {
+  async createCheckout({ platformOrderId, idempotencyKey, paymentChannel }) {
     const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
     const request = createCheckoutRequest({
       order,
       returnUrl: createServerReturnUrl(this.config.returnBaseUrl, order.id),
-      notifyUrl: createServerNotificationUrl(this.config.notifyBaseUrl, order.id)
+      notifyUrl: createServerNotificationUrl(this.config.notifyBaseUrl, order.id),
+      paymentChannel: paymentChannel || this.config.defaultChannel
     });
     const response = await this.client.createCheckout({
       ...request,
@@ -219,6 +230,7 @@ class KaipayPaymentProvider {
       platformOrderId: request.platformOrderId,
       providerOrderId,
       paymentMethod: request.paymentMethod,
+      paymentChannel: request.paymentChannel,
       amountFen: request.amountFen,
       provider: "KAIPAY",
       adapterVersion: this.config.adapterVersion
@@ -226,6 +238,7 @@ class KaipayPaymentProvider {
     this.logger.info?.("petpack.kaipay.checkout_created", {
       platformOrderId: request.platformOrderId,
       paymentMethod: request.paymentMethod,
+      paymentChannel: request.paymentChannel,
       adapterVersion: this.config.adapterVersion
     });
     return {
@@ -233,6 +246,7 @@ class KaipayPaymentProvider {
       providerOrderId,
       checkoutUrl,
       paymentMethod: request.paymentMethod,
+      paymentChannel: request.paymentChannel,
       state: PAYMENT_STATES.PENDING_PAYMENT
     };
   }
@@ -326,7 +340,15 @@ class KaipayPaymentProvider {
       state: reconciliation.state,
       reason: reconciliation.reason
     }));
-    return { ...reconciliation, acknowledgement };
+    return {
+      ...reconciliation,
+      // An unauthenticated callback or a temporary query failure is audit
+      // evidence, not authority to mutate the customer order. A verified
+      // notification plus an authoritative query may still move a mismatched
+      // order into manual review.
+      applyToOrder: verifiedNotification.valid && queriedOrder !== null,
+      acknowledgement
+    };
   }
 
   async refund({ platformOrderId, refundId, amountFen, reason, idempotencyKey }) {
@@ -356,7 +378,8 @@ class KaipayPaymentProvider {
 }
 
 module.exports = {
-  ADAPTER_VERSION_PATTERN,
+  KAIPAY_EPAY_V1_ADAPTER_VERSION,
+  KAIPAY_OFFICIAL_API_ORIGIN,
   KaipayPaymentProvider,
   PAYMENT_METHODS,
   assertKaipayRuntimeConfig,

@@ -7,6 +7,7 @@ import { studioBrowserApi } from "@/lib/studio-browser-api";
 export function NewProjectForm() {
   const router = useRouter();
   const [displayName, setDisplayName] = useState("");
+  const [paymentChannel, setPaymentChannel] = useState<"ALIPAY" | "WXPAY">("ALIPAY");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -19,6 +20,7 @@ export function NewProjectForm() {
         planCode: "petpack-seven-action-v1",
         displayName: displayName.trim(),
         paymentMethod: "KAIPAY",
+        paymentChannel,
         idempotencyKey: crypto.randomUUID(),
       });
       if (result.checkout.checkoutUrl) {
@@ -39,6 +41,11 @@ export function NewProjectForm() {
       placeholder="例如：淘淘"
       value={displayName}
     /></label>
+    <fieldset className="payment-channel-picker">
+      <legend>付款方式</legend>
+      <button aria-pressed={paymentChannel === "ALIPAY"} className={paymentChannel === "ALIPAY" ? "is-selected" : ""} disabled={busy} onClick={() => setPaymentChannel("ALIPAY")} type="button">支付宝</button>
+      <button aria-pressed={paymentChannel === "WXPAY"} className={paymentChannel === "WXPAY" ? "is-selected" : ""} disabled={busy} onClick={() => setPaymentChannel("WXPAY")} type="button">微信支付</button>
+    </fieldset>
     <div className="plan-summary"><span>PetPack</span><strong>7 个视频</strong><small>正面与 45° 母图 · 自动睡姿 · 自动打包</small></div>
     <button className="primary-button form-submit" disabled={busy} onClick={() => void submit()} type="button">
       {busy ? "正在创建…" : "购买并开始制作"}

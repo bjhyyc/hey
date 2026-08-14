@@ -6,7 +6,7 @@ Key modules:
 
 - `src/config/model-registry.js` — account-provided ModelArk IDs, region, quotas, retries, and callback configuration.
 - `src/providers/modelark-client.js` — Seedream / Seedance 2.0 request, polling, and callback-ticket contract. Provider output must be archived immediately into private storage.
-- `src/providers/kaipay-payment-provider.js` — fail-closed Kaipay domain adapter. Exact wire fields, signing, verification, query, refund, and callback acknowledgement stay inside a separately pinned protocol adapter; development simulation is isolated in `simulated-payment-provider.js`.
+- `src/providers/kaipay-payment-provider.js` and `src/providers/kaipay-epay-v1.js` — fail-closed Kaipay domain adapter plus the pinned official EPay V1 MD5 wire implementation. It creates `/epay/mapi` checkouts, verifies GET notifications, confirms payment through `/epay/api`, and returns exact plain-text acknowledgements; development simulation remains isolated in `simulated-payment-provider.js`. The public EPay documentation does not define refunds, so automatic refunds remain deliberately disabled rather than guessed.
 - `src/workflow/production-workflow.js` — paid-order to delivery queue plan, deterministic dedupe keys, retries, and prompt-release gate.
 - `src/qa/` and `src/media/` — `character_canvas_v1`, worker-local segmentation/FFmpeg plan, trusted re-probe, and fail-closed action QA.
 - `src/petpack/build.js` — creates a checksummed, seven-action, original-client-compatible archive only after every action passes QA and a post-build probe.
@@ -52,6 +52,23 @@ proxy the raw Kaipay callback. The checkout response includes only the newly
 owned `project.id`, safe order fields, and the temporary cashier URL so the
 browser can resume the real project-ID workflow without learning provider or
 storage identifiers.
+
+### Kaipay EPay V1 production boundary
+
+The current pinned adapter is `kaipay-epay-v1-md5/1`. It accepts only the
+official domestic production origin `https://api.kaipay.cn`, the `ALIPAY` and
+`WXPAY` product channels, positive decimal merchant IDs, and a server-only
+credentials JSON with the exact shape `{ "epayKey": "..." }`. The browser
+never receives the merchant ID or EPay key. Payment is marked paid only after
+both the signed GET notification and an authoritative order query agree on the
+platform order, Kaipay trade number, amount, currency, method, and paid state.
+Invalid callbacks and temporary query failures are audited but cannot mutate a
+customer order.
+
+Deployment values and the secret-file procedure are documented in
+`ops/lighthouse/app/KAIPAY_SETUP.md`. Do not execute a real checkout until the
+merchant ID, secret-file path, callback reachability, and a one-order test
+budget have been explicitly confirmed.
 
 ### Local authentication-only runtime
 

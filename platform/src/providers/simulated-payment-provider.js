@@ -24,10 +24,11 @@ class SimulatedPaymentProvider {
     this.orderStore = requireStore(orderStore, "getPaymentOrder", "An authoritative payment order store");
   }
 
-  async createCheckout({ platformOrderId, idempotencyKey }) {
+  async createCheckout({ platformOrderId, idempotencyKey, paymentChannel = "ALIPAY" }) {
     const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
     if (order.paymentMethod !== "KAIPAY") throw new Error("Simulated checkout requires a KAIPAY order");
     const key = requireId(idempotencyKey, "Checkout idempotency key");
+    if (!["ALIPAY", "WXPAY"].includes(paymentChannel)) throw new Error("Simulated checkout payment channel is invalid");
     const providerOrderId = `sim_${crypto.createHash("sha256").update(`${order.id}|${key}`).digest("hex").slice(0, 24)}`;
     await this.eventStore.appendIdempotent({
       idempotencyKey: `checkout:${key}`,
@@ -35,6 +36,7 @@ class SimulatedPaymentProvider {
       platformOrderId: order.id,
       providerOrderId,
       paymentMethod: order.paymentMethod,
+      paymentChannel,
       amountFen: order.amountFen,
       provider: "KAIPAY",
       adapterVersion: "simulated/v1"
@@ -44,6 +46,7 @@ class SimulatedPaymentProvider {
       providerOrderId,
       checkoutUrl: `petpack-dev://checkout/${encodeURIComponent(providerOrderId)}`,
       paymentMethod: "KAIPAY",
+      paymentChannel,
       state: PAYMENT_STATES.PENDING_PAYMENT
     };
   }

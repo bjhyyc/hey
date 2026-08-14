@@ -131,11 +131,12 @@ function validateProductionEnvironment(environment = process.env) {
   }
   const kaipaySettings = [
     "KAIPAY_MERCHANT_ID", "KAIPAY_CREDENTIALS_JSON", "KAIPAY_ADAPTER_VERSION",
-    "KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL"
+    "KAIPAY_API_BASE_URL", "KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL",
+    "KAIPAY_DEFAULT_CHANNEL", "KAIPAY_REQUEST_TIMEOUT_MS"
   ].map((name) => ({ name, value: setting(environment, name) }));
   addCheck(checks, missing, "payment.kaipay_config", kaipayReady, "kaipay_config_invalid", kaipaySettings);
   addCheck(checks, missing, "payment.kaipay_https",
-    ["KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL"]
+    ["KAIPAY_API_BASE_URL", "KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL"]
       .every((name) => exactHttpsUrl(setting(environment, name))),
     "kaipay_https_required");
   addCheck(checks, missing, "payment.simulation_disabled",
