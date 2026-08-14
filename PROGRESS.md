@@ -61,6 +61,7 @@
 - 2026-08-13：PostgreSQL 短暂不可用现在统一归类为 `postgres_temporarily_unavailable`，通过 BullMQ delayed redelivery 延后 5 秒且不消耗业务 attempts；断连后的有毒连接会从 pool 销毁，idle client 的 pool error 也不再导致 Node 进程崩溃。视频、三母图和 PetPack 三条 Worker 链均保留该基础设施错误，不会误写成供应商状态未知或提前进入人工对账。
 - 2026-08-13：真实 PostgreSQL 18.4 短断/恢复报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-tls-rehearsals\data-tls-20260813223221-8fc6fa7f\outage-control-052a0a75\report.json`：TLSv1.3 连接正常，使用该隔离实例自己的 `pg_ctl` 精确停启后观察到 3 次暂态失败并自动恢复，业务 attempts 消耗 0、外部供应商调用 0、Docker 变更 0、宿主路径删除 0；脚本只可终止自身持有的子进程对象，不按名称或裸 PID 扫描进程。
 - 2026-08-13：故障恢复代码提交为 `5b9d51bb294b55d41ccf1e9a142c5c47adaf5d73`。最终全量回归为 76 个测试文件、834 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；故障恢复聚焦测试 33/33、PowerShell 语法与 `git diff --check` 均通过。桌宠 Vite、落地页 Vite 和网站 Next.js 三项生产构建全部成功。
+- 2026-08-13：故障恢复里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-fault-recovery-8a34c24.bundle`，27,390,163 字节，包含至提交 `8a34c24df0d73c9f5f775682ebadca07fed421ab` 的完整历史；`git bundle verify` 通过，SHA-256 为 `1C875F1DA042349121B0BBCCE0185BB2FE96B9FB1F907A0B3C59932AB92D342C`。
 
 ## In progress
 
