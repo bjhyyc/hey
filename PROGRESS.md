@@ -71,6 +71,7 @@
 - 2026-08-13：Outbox 第二崩溃窗口已通过精确硬中断验证。`generate-front-master` 在 BullMQ 入队成功、PostgreSQL 尚未标记 `sent` 时被硬杀；硬杀前同一行严格为 `leased`、`attempts=1` 且租约令牌存在，重启后同一行变为 `sent`、`attempts=2`。同一确定性 job ID 的业务执行仍为 `succeeded`、`attempts=1`，正面母图 fixture 调用由持久化 `providerRequestId` 绑定且严格为 1 次，没有重复供应商效果。
 - 2026-08-13：第二窗口独立报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\hard-kill-rehearsals\hard-kill-20260813234255-1e161303\report.json`，工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814064304-d985fb98\report.json`。当前代码的组合硬杀复验报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\hard-kill-rehearsals\hard-kill-20260813234458-cfdd3340\report.json`，工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814064509-f5660a0f\report.json`；API、Outbox 与 Worker 三类硬杀全部恢复，最终仍为 3 来源照、3 母图、7 动作、12/12 QA、38/38 执行、39/39 Outbox、10 次 fixture usage、0 外部调用，8 文件 PetPack 通过原版客户端导入。
 - 2026-08-13：Outbox 第二窗口代码提交为 `7a0593e7fb548815b7419e77df4ed6c45bf39287`。最终全量回归为 77 个测试文件、846 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；桌宠 Vite、落地页 Vite 和网站 Next.js 三项生产构建全部成功，PowerShell 语法与 `git diff --check` 通过。两轮隔离 PostgreSQL 18.4 均已确认停止；Docker mutation、破坏性 Redis 命令、宿主路径删除和真实外部调用均为 0。
+- 2026-08-13：Outbox 第二窗口里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-outbox-post-enqueue-df0e681.bundle`，27,406,318 字节，包含至提交 `df0e6815841c071fb0739475f2b200034dd5255c` 的完整历史；`git bundle verify` 通过，SHA-256 为 `1804F93822D8B3CB40ADF5A03269344841CD331C48A5C3A6A9AF74842004572D`。
 
 ## In progress
 
