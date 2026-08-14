@@ -1,4 +1,7 @@
-const CHARACTER_CANVAS_V1 = Object.freeze({
+// Retained only so frozen historical revisions remain interpretable. New
+// production runs must bind to CHARACTER_CANVAS_V1 below and are never
+// silently upscaled from a 480p provider output to this legacy canvas.
+const LEGACY_CHARACTER_CANVAS_V1 = Object.freeze({
   id: "character_canvas_v1",
   width: 1280,
   height: 720,
@@ -10,6 +13,22 @@ const CHARACTER_CANVAS_V1 = Object.freeze({
   targetHeadHeightPx: 165,
   targetShoulderWidthPx: 250,
   minimumVisibleMarginsPx: Object.freeze({ left: 48, top: 36, right: 48, bottom: 24 }),
+  intermediateBackground: "#00FF00",
+  finalAlphaPreferred: true
+});
+
+const CHARACTER_CANVAS_V1 = Object.freeze({
+  id: "character_canvas_480p_v1",
+  width: 854,
+  height: 480,
+  aspectRatio: "16:9",
+  fps: 24,
+  safeFrame: Object.freeze({ left: 107, top: 36, right: 747, bottom: 453 }),
+  groundBaselineY: 413,
+  targetTorsoHeightPx: 200,
+  targetHeadHeightPx: 110,
+  targetShoulderWidthPx: 167,
+  minimumVisibleMarginsPx: Object.freeze({ left: 32, top: 24, right: 32, bottom: 16 }),
   intermediateBackground: "#00FF00",
   finalAlphaPreferred: true
 });
@@ -28,7 +47,14 @@ function createDevelopmentQaPolicy() {
     maxHorizontalOffsetPx: 32,
     maxGroundJitterPx: 4,
     maxRelativeFrameScaleJitter: 0.025,
-    minIdentityScore: 0.85
+    minIdentityScore: 0.85,
+    minSevereVideoIdentityScore: 0.7,
+    minFaceIdentityScore: 0.9,
+    minCoatColorScore: 0.9,
+    minMarkingTopologyScore: 0.9,
+    maxLoopSeamPixelDelta: 0.015,
+    maxLoopBoundaryMotion: 0.02,
+    minLoopRestFrameCount: 12
   };
 }
 
@@ -47,7 +73,14 @@ function requireQaPolicy(policy, { production = false } = {}) {
     "maxHorizontalOffsetPx",
     "maxGroundJitterPx",
     "maxRelativeFrameScaleJitter",
-    "minIdentityScore"
+    "minIdentityScore",
+    "minSevereVideoIdentityScore",
+    "minFaceIdentityScore",
+    "minCoatColorScore",
+    "minMarkingTopologyScore",
+    "maxLoopSeamPixelDelta",
+    "maxLoopBoundaryMotion",
+    "minLoopRestFrameCount"
   ];
   const missing = required.filter((key) => !Number.isFinite(Number(policy[key])));
   if (missing.length > 0) {
@@ -61,11 +94,21 @@ function requireQaPolicy(policy, { production = false } = {}) {
     ["maxHorizontalOffsetPx", 0, 200],
     ["maxGroundJitterPx", 0, 100],
     ["maxRelativeFrameScaleJitter", 0, 1],
-    ["minIdentityScore", 0, 1]
+    ["minIdentityScore", 0, 1],
+    ["minSevereVideoIdentityScore", 0, 1],
+    ["minFaceIdentityScore", 0, 1],
+    ["minCoatColorScore", 0, 1],
+    ["minMarkingTopologyScore", 0, 1],
+    ["maxLoopSeamPixelDelta", 0, 1],
+    ["maxLoopBoundaryMotion", 0, 1],
+    ["minLoopRestFrameCount", 1, CHARACTER_CANVAS_V1.fps * 2]
   ].filter(([key, min, max]) => Number(policy[key]) < min || Number(policy[key]) > max)
     .map(([key]) => key);
   if (invalidRanges.length > 0) {
     throw new Error(`Character QA policy has invalid ranges: ${invalidRanges.join(", ")}`);
+  }
+  if (!Number.isSafeInteger(Number(policy.minLoopRestFrameCount))) {
+    throw new Error("Character QA policy minLoopRestFrameCount must be an integer");
   }
   if (production && (
     policy.name === "development-only" ||
@@ -87,6 +130,7 @@ function validateCanvasFrame(frame, {
   policy,
   production = false,
   expectedIdentityScore,
+  identityThreshold,
   referenceMetrics
 } = {}) {
   const resolvedPolicy = requireQaPolicy(policy, { production });
@@ -155,7 +199,10 @@ function validateCanvasFrame(frame, {
       errors.push("Pet horizontal position is outside configured tolerance");
     }
   }
-  if (expectedIdentityScore !== undefined && (!Number.isFinite(Number(frame.identityScore)) || Number(frame.identityScore) < resolvedPolicy.minIdentityScore)) {
+  const requiredIdentityScore = Number.isFinite(Number(identityThreshold))
+    ? Number(identityThreshold)
+    : resolvedPolicy.minIdentityScore;
+  if (expectedIdentityScore !== undefined && (!Number.isFinite(Number(frame.identityScore)) || Number(frame.identityScore) < requiredIdentityScore)) {
     errors.push("Character identity is below configured threshold");
   }
   return { ok: errors.length === 0, errors, policyName: resolvedPolicy.name || "configured" };
@@ -177,6 +224,7 @@ function validateActionEndpoints({ firstFrame, lastFrame, expectedFirstMasterHas
 
 module.exports = {
   CHARACTER_CANVAS_V1,
+  LEGACY_CHARACTER_CANVAS_V1,
   createDevelopmentQaPolicy,
   requireQaPolicy,
   validateActionEndpoints,

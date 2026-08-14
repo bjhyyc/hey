@@ -27,15 +27,15 @@ function assertPromptVersionShape(version, { requireContent = true } = {}) {
     if (typeof version.negativePrompt !== "string") throw new Error("Negative prompt content must be a string");
   }
   requireString(version.model, "Prompt model reference");
-  if (version.resolution !== "720p") throw new Error("PetPack Studio video prompts must use 720p");
+  if (!["480p", "720p"].includes(version.resolution)) throw new Error("PetPack Studio video prompts must use 480p or 720p");
   requirePositiveDuration(version.duration);
   requireString(version.version, "Prompt version label");
   if (version.immutableConstraintsVersion !== VIDEO_CONSTRAINTS_VERSION) {
     throw new Error("Prompt version targets an unsupported immutable constraints version");
   }
   const endpoint = ACTION_ENDPOINTS[version.actionId];
-  if (version.firstFrameMode !== endpoint.firstMaster || version.lastFrameMode !== endpoint.lastMaster) {
-    throw new Error(`${version.actionId} prompt frame modes must be ${endpoint.firstMaster} to ${endpoint.lastMaster}`);
+  if (version.firstFrameMode !== endpoint.firstFrameMode || version.lastFrameMode !== endpoint.lastFrameMode) {
+    throw new Error(`${version.actionId} prompt frame modes must be ${endpoint.firstFrameMode} to ${endpoint.lastFrameMode}`);
   }
   if (!Object.values(PROMPT_STATUSES).includes(version.status)) {
     throw new Error("Prompt version has an unsupported status");

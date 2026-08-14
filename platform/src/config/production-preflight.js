@@ -118,8 +118,8 @@ function validateProductionEnvironment(environment = process.env) {
     exactHttpsUrl(setting(environment, "MODELARK_VIDEO_CALLBACK_BASE_URL")),
     "modelark_callback_https_required");
   addCheck(checks, missing, "provider.video_resolution",
-    setting(environment, "MODELARK_VIDEO_RESOLUTION") === "720p",
-    "video_resolution_must_be_720p",
+    setting(environment, "MODELARK_VIDEO_RESOLUTION") === "480p",
+    "video_resolution_must_be_480p",
     [{ name: "MODELARK_VIDEO_RESOLUTION", value: setting(environment, "MODELARK_VIDEO_RESOLUTION") }]);
 
   let alipayReady = true;

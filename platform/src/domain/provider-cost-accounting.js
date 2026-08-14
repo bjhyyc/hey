@@ -6,7 +6,8 @@ const DECIMAL_SCALE = 8;
 const DECIMAL_FACTOR = 10n ** BigInt(DECIMAL_SCALE);
 
 const PROVIDER_OPERATIONS = Object.freeze({
-  SEEDREAM_AWAKE: "seedream_awake",
+  SEEDREAM_FRONT: "seedream_front",
+  SEEDREAM_SIDE: "seedream_side",
   SEEDREAM_SLEEP: "seedream_sleep",
   SEEDANCE_VIDEO: "seedance_video"
 });

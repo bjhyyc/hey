@@ -3,8 +3,9 @@ const {
   requireQaPolicy,
   validateCanvasFrame
 } = require("./character-canvas-v1");
+const { validateMasterAppearanceInspection } = require("./appearance-lock-v1");
 
-const MASTER_IMAGE_QA_CONTRACT_VERSION = "petpack-master-image-qa/v1";
+const MASTER_IMAGE_QA_CONTRACT_VERSION = "petpack-master-image-qa/v2";
 const REQUIRED_CONTENT_ASSERTIONS = Object.freeze([
   "exactlyOnePet",
   "fullBodyVisible",
@@ -17,8 +18,8 @@ const REQUIRED_CONTENT_ASSERTIONS = Object.freeze([
 ]);
 
 function requireKind(value) {
-  if (value !== "awake" && value !== "sleep") {
-    throw new Error("Master image kind must be awake or sleep");
+  if (!["front", "side", "sleep"].includes(value)) {
+    throw new Error("Master image kind must be front, side, or sleep");
   }
   return value;
 }
@@ -66,6 +67,7 @@ function validateMasterImage({
   kind,
   frame,
   contentInspection,
+  appearanceInspection,
   referenceMetrics,
   sourceReferenceCount,
   policy,
@@ -74,31 +76,42 @@ function validateMasterImage({
   const normalizedKind = requireKind(kind);
   const resolvedPolicy = requireQaPolicy(policy, { production });
   const errors = [];
-  const expectedReferences = normalizedKind === "awake" ? 2 : 1;
-  if (Number(sourceReferenceCount) !== expectedReferences) {
-    errors.push(`${normalizedKind} master requires exactly ${expectedReferences} identity reference image${expectedReferences === 1 ? "" : "s"}`);
+  const referenceCount = Number(sourceReferenceCount);
+  const validReferenceCount = normalizedKind === "front"
+    ? referenceCount >= 3 && referenceCount <= 4
+    : normalizedKind === "side"
+      ? referenceCount >= 4 && referenceCount <= 5
+      : referenceCount === 2;
+  if (!validReferenceCount) {
+    errors.push(`${normalizedKind} master has an invalid identity reference count`);
   }
   const canvas = validateCanvasFrame(frame, {
     canvas: CHARACTER_CANVAS_V1,
     policy: resolvedPolicy,
     production,
     expectedIdentityScore: resolvedPolicy.minIdentityScore,
-    referenceMetrics: normalizedKind === "sleep" ? referenceMetrics : undefined
+    referenceMetrics: normalizedKind === "front" ? undefined : referenceMetrics
   });
   if (!canvas.ok) errors.push(...canvas.errors);
   const content = validateContentInspection(contentInspection, { kind: normalizedKind });
   if (!content.ok) errors.push(...content.errors);
+  const appearance = validateMasterAppearanceInspection(appearanceInspection, {
+    kind: normalizedKind,
+    sourceReferenceCount: Number(sourceReferenceCount),
+    policy: resolvedPolicy
+  });
+  if (!appearance.ok) errors.push(...appearance.errors);
 
   let immutableReferenceMetrics = null;
   try {
-    immutableReferenceMetrics = normalizedKind === "awake"
+    immutableReferenceMetrics = normalizedKind === "front"
       ? normalizeReferenceMetrics(frame)
       : {
-          groundBaselineY: finiteMetric(referenceMetrics?.groundBaselineY, "Awake reference ground baseline"),
-          torsoHeightPx: finiteMetric(referenceMetrics?.torsoHeightPx, "Awake reference torso height"),
-          headHeightPx: finiteMetric(referenceMetrics?.headHeightPx, "Awake reference head height"),
-          shoulderWidthPx: finiteMetric(referenceMetrics?.shoulderWidthPx, "Awake reference shoulder width"),
-          centerX: finiteMetric(referenceMetrics?.centerX, "Awake reference center")
+          groundBaselineY: finiteMetric(referenceMetrics?.groundBaselineY, "Front reference ground baseline"),
+          torsoHeightPx: finiteMetric(referenceMetrics?.torsoHeightPx, "Front reference torso height"),
+          headHeightPx: finiteMetric(referenceMetrics?.headHeightPx, "Front reference head height"),
+          shoulderWidthPx: finiteMetric(referenceMetrics?.shoulderWidthPx, "Front reference shoulder width"),
+          centerX: finiteMetric(referenceMetrics?.centerX, "Front reference center")
         };
   } catch (error) {
     errors.push(error.message);
@@ -116,6 +129,7 @@ function validateMasterImage({
     contentInspection: contentInspection && typeof contentInspection === "object"
       ? JSON.parse(JSON.stringify(contentInspection))
       : null,
+    appearance: appearance.evidence,
     referenceMetrics: immutableReferenceMetrics
   };
 }

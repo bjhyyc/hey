@@ -21,4 +21,5 @@ generated-assets/
 recovery-inputs/
 .npm-cache/
 .runtime-tmp/
+.tmp/
 docs/superpowers/

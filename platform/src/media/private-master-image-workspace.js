@@ -18,6 +18,7 @@ const {
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const DEFAULT_MAX_PROVIDER_IMAGE_BYTES = 48 * 1024 * 1024;
+const DEFAULT_MAX_REFERENCE_SET_BYTES = 160 * 1024 * 1024;
 
 function codedError(message, code) {
   return Object.assign(new Error(message), { code });
@@ -68,6 +69,7 @@ class PrivateMasterImageWorkspace {
     tempRoot = os.tmpdir(),
     maxProviderImageBytes = DEFAULT_MAX_PROVIDER_IMAGE_BYTES,
     maxMasterBytes = DEFAULT_MAX_MASTER_BYTES,
+    maxReferenceSetBytes = DEFAULT_MAX_REFERENCE_SET_BYTES,
     logger = console
   } = {}) {
     this.driver = requireStorageDriver(driver);
@@ -77,6 +79,7 @@ class PrivateMasterImageWorkspace {
     this.tempRoot = tempRoot;
     this.maxProviderImageBytes = assertPositiveByteSize(Number(maxProviderImageBytes), "Maximum provider image byte size");
     this.maxMasterBytes = assertPositiveByteSize(Number(maxMasterBytes), "Maximum normalized master byte size");
+    this.maxReferenceSetBytes = assertPositiveByteSize(Number(maxReferenceSetBytes), "Maximum reference-set byte size");
     this.logger = logger;
   }
 
@@ -87,8 +90,12 @@ class PrivateMasterImageWorkspace {
     beforeUpload
   } = {}, operation) {
     if (!input || typeof input !== "object") throw new Error("Archived Seedream input is required");
-    if (!Array.isArray(references) || ![1, 2].includes(references.length)) {
-      throw new Error("Master image workspace requires one or two immutable references");
+    if (!Array.isArray(references) || references.length < 1 || references.length > 5) {
+      throw new Error("Master image workspace requires one to five immutable references");
+    }
+    const referenceByteSize = references.reduce((sum, reference) => sum + Number(reference?.byteSize || 0), 0);
+    if (!Number.isSafeInteger(referenceByteSize) || referenceByteSize < 1 || referenceByteSize > this.maxReferenceSetBytes) {
+      throw codedError("Master image references exceed their configured byte budget", "master_reference_set_too_large");
     }
     if (typeof operation !== "function") throw new Error("Master image workspace operation is required");
     if (beforeUpload !== undefined && typeof beforeUpload !== "function") {
@@ -201,6 +208,7 @@ class PrivateMasterImageWorkspace {
 
 module.exports = {
   DEFAULT_MAX_PROVIDER_IMAGE_BYTES,
+  DEFAULT_MAX_REFERENCE_SET_BYTES,
   PNG_SIGNATURE,
   PrivateMasterImageWorkspace,
   inspectPngFile

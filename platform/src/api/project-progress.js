@@ -1,4 +1,7 @@
-const { PRODUCTION_STATES } = require("../domain/production-state-machine");
+const {
+  MAX_USER_REGENERATIONS_PER_VIEW,
+  PRODUCTION_STATES
+} = require("../domain/production-state-machine");
 
 const USER_PROGRESS_STEPS = Object.freeze([
   { id: "character-confirmed", label: "宠物形象已确认" },
@@ -60,16 +63,31 @@ function getProgressStepState(runState) {
   }));
 }
 
-function createUserProjectView({ project, order, run, awakeCandidate, delivery } = {}) {
+function createUserProjectView({ project, order, run, characterCandidates, delivery } = {}) {
+  const paidAndConfirming = Boolean(order && order.status === "paid" && run && run.state === PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION);
+  const candidateFor = (view) => {
+    const candidate = characterCandidates && characterCandidates[view];
+    if (!candidate) return null;
+    const used = Number(run?.[`${view}UserRegenerationsUsed`] || 0);
+    const remainingRegenerations = Math.max(0, MAX_USER_REGENERATIONS_PER_VIEW - used);
+    return {
+      id: candidate.id,
+      view,
+      previewUrl: candidate.previewUrl,
+      canRegenerate: paidAndConfirming && remainingRegenerations > 0,
+      remainingRegenerations
+    };
+  };
+  const front = candidateFor("front");
+  const side = candidateFor("side");
   return {
     project: project ? { id: project.id, displayName: project.displayName, state: project.state } : null,
     order: order ? { id: order.id, status: order.status, paymentMethod: order.paymentMethod, amountFen: order.amountFen } : null,
-    awakeCandidate: awakeCandidate ? {
-      id: awakeCandidate.id,
-      previewUrl: awakeCandidate.previewUrl,
-      canRegenerate: order && order.status === "paid" && run && run.state === PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION,
-      canConfirm: order && order.status === "paid" && run && run.state === PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION
-    } : null,
+    characterCandidates: {
+      front,
+      side,
+      canConfirm: paidAndConfirming && Boolean(front && side)
+    },
     progress: getProgressStepState(run && run.state),
     downloadReady: Boolean(delivery && delivery.status === "ready"),
     failed: Boolean(run && run.state === PRODUCTION_STATES.FAILED)

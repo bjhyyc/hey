@@ -3,7 +3,7 @@ const {
   IMAGE_PROMPT_CONTENT_POLICY_VERSION
 } = require("../providers/modelark-client");
 
-const IMAGE_PROMPT_KINDS = Object.freeze(["awake", "sleep"]);
+const IMAGE_PROMPT_KINDS = Object.freeze(["front", "side", "sleep"]);
 const IMAGE_PROMPT_STATUSES = Object.freeze({
   DRAFT: "draft",
   PUBLISHED: "published",
@@ -17,7 +17,7 @@ function requireString(value, label) {
 
 function assertImagePromptKind(kind) {
   const normalized = requireString(kind, "Image prompt kind");
-  if (!IMAGE_PROMPT_KINDS.includes(normalized)) throw new Error("Image prompt kind must be awake or sleep");
+  if (!IMAGE_PROMPT_KINDS.includes(normalized)) throw new Error("Image prompt kind must be front, side, or sleep");
   return normalized;
 }
 

@@ -1,15 +1,15 @@
 const profile = require("../../../src/shared/studio-behavior-profile.json");
 
-const VIDEO_CONSTRAINTS_VERSION = "petpack-studio-video-constraints/v1";
+const VIDEO_CONSTRAINTS_VERSION = "petpack-studio-video-constraints/v2";
 
 const ACTION_DEFINITIONS = Object.freeze([
-  { actionId: "idle", studioActionKey: "idle", firstMaster: "awake", lastMaster: "awake", clipType: "default" },
-  { actionId: "sneeze", studioActionKey: "sneeze", firstMaster: "awake", lastMaster: "awake", clipType: "oneshot" },
-  { actionId: "roll", studioActionKey: "roll", firstMaster: "awake", lastMaster: "awake", clipType: "oneshot" },
-  { actionId: "sleep-transition", studioActionKey: "sleepTransition", firstMaster: "awake", lastMaster: "sleep", clipType: "oneshot" },
+  { actionId: "idle", studioActionKey: "idle", firstMaster: "front", lastMaster: "front", clipType: "default" },
+  { actionId: "sneeze", studioActionKey: "sneeze", firstMaster: "front", lastMaster: "front", clipType: "oneshot" },
+  { actionId: "roll", studioActionKey: "roll", firstMaster: "front", lastMaster: "front", clipType: "oneshot" },
+  { actionId: "sleep-transition", studioActionKey: "sleepTransition", firstMaster: "front", lastMaster: "sleep", clipType: "oneshot" },
   { actionId: "sleep-loop", studioActionKey: "sleepLoop", firstMaster: "sleep", lastMaster: "sleep", clipType: "loop" },
-  { actionId: "stretch", studioActionKey: "stretch", firstMaster: "sleep", lastMaster: "awake", clipType: "oneshot" },
-  { actionId: "hover-attention", studioActionKey: "hoverAttention", firstMaster: "awake", lastMaster: "awake", clipType: "oneshot" }
+  { actionId: "stretch", studioActionKey: "stretch", firstMaster: "sleep", lastMaster: "front", clipType: "oneshot" },
+  { actionId: "hover-attention", studioActionKey: "hoverAttention", firstMaster: "front", lastMaster: "front", clipType: "oneshot" }
 ]);
 
 const REQUIRED_ACTION_IDS = Object.freeze(ACTION_DEFINITIONS.map((definition) => definition.actionId));
@@ -20,6 +20,12 @@ const ACTION_ENDPOINTS = Object.freeze(Object.fromEntries(ACTION_DEFINITIONS.map
   {
     firstMaster: definition.firstMaster,
     lastMaster: definition.lastMaster,
+    // Prompt versions and the public administrator API keep the historical
+    // awake/sleep vocabulary. Internally, an awake endpoint resolves to the
+    // user-confirmed front master; the side master remains a QA identity
+    // reference because Seedance endpoint mode accepts only first/last frames.
+    firstFrameMode: definition.firstMaster === "front" ? "awake" : "sleep",
+    lastFrameMode: definition.lastMaster === "front" ? "awake" : "sleep",
     clipType: definition.clipType
   }
 ])));
@@ -59,6 +65,9 @@ function assertPublishedPromptSet(promptVersions) {
     if (!version.id || !version.version) {
       throw new Error(`Published prompt metadata is incomplete for ${version.actionId}`);
     }
+    if (!["480p", "720p"].includes(version.resolution)) {
+      throw new Error(`Published prompt resolution is unsupported for ${version.actionId}`);
+    }
     publishedByAction.set(version.actionId, version);
   }
   const missing = REQUIRED_ACTION_IDS.filter((actionId) => !publishedByAction.has(actionId));
@@ -68,29 +77,36 @@ function assertPublishedPromptSet(promptVersions) {
   return REQUIRED_ACTION_IDS.map((actionId) => ({
     actionId,
     promptVersionId: publishedByAction.get(actionId).id,
-    promptVersion: publishedByAction.get(actionId).version
+    promptVersion: publishedByAction.get(actionId).version,
+    resolution: publishedByAction.get(actionId).resolution
   }));
 }
 
-function createVideoJobSnapshot({ actionId, promptVersion, awakeMaster, sleepMaster, modelReference }) {
+function createVideoJobSnapshot({ actionId, promptVersion, frontMaster, sideMaster, sleepMaster, modelReference }) {
   assertActionId(actionId);
   if (!promptVersion || promptVersion.status !== "published" || !promptVersion.id) {
     throw new Error(`A published immutable prompt version is required for ${actionId}`);
   }
-  if (!awakeMaster || !sleepMaster) {
-    throw new Error("Awake and sleeping master revisions are both required");
+  if (!frontMaster || !sideMaster || !sleepMaster) {
+    throw new Error("Front, side, and sleeping master revisions are required");
   }
-  for (const [label, master] of [["awakeMaster", awakeMaster], ["sleepMaster", sleepMaster]]) {
+  for (const [label, master] of [["frontMaster", frontMaster], ["sideMaster", sideMaster], ["sleepMaster", sleepMaster]]) {
     if (typeof master.objectKey !== "string" || !master.objectKey.startsWith("private/")) {
       throw new Error(`${label} must reference a private object key`);
     }
   }
-  if (!modelReference || modelReference.resolution !== "720p") {
-    throw new Error("A 720p ModelArk video model reference is required");
+  if (!modelReference || !["480p", "720p"].includes(modelReference.resolution)) {
+    throw new Error("A 480p or 720p ModelArk video model reference is required");
+  }
+  if (promptVersion.resolution !== modelReference.resolution) {
+    throw new Error(`Published prompt resolution must match the frozen model reference for ${actionId}`);
   }
 
   const endpoint = ACTION_ENDPOINTS[actionId];
-  const masters = { awake: awakeMaster, sleep: sleepMaster };
+  // Seedance first/last-frame mode is intentionally retained. The side master
+  // is an immutable identity/QA reference, not a third provider image, because
+  // ModelArk's multi-reference mode is mutually exclusive with endpoint mode.
+  const masters = { front: frontMaster, sleep: sleepMaster };
   return {
     actionId,
     promptVersionId: promptVersion.id,
@@ -100,7 +116,8 @@ function createVideoJobSnapshot({ actionId, promptVersion, awakeMaster, sleepMas
     lastFrameObjectKey: masters[endpoint.lastMaster].objectKey,
     firstFrameRole: "first_frame",
     lastFrameRole: "last_frame",
-    resolution: "720p",
+    approvedCharacterReferenceObjectKeys: [frontMaster.objectKey, sideMaster.objectKey],
+    resolution: modelReference.resolution,
     generateAudio: false,
     watermark: false,
     immutableConstraintsVersion: VIDEO_CONSTRAINTS_VERSION

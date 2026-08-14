@@ -1,6 +1,10 @@
 const { requireActor, requireProjectOwner } = require("../auth/authorization");
 const { assertPaymentMethod } = require("../domain/payment-state-machine");
-const { PRODUCTION_STATES } = require("../domain/production-state-machine");
+const {
+  MAX_USER_REGENERATIONS_PER_VIEW,
+  PRODUCTION_STATES,
+  assertCharacterMasterView
+} = require("../domain/production-state-machine");
 const {
   OBJECT_CLASSES,
   createProjectObjectKey,
@@ -20,7 +24,7 @@ function requireRepository(repository) {
     "createProjectOrder", "listUserProjects", "getProjectBundle", "reserveSourcePhoto",
     "getReservedSourcePhoto", "acceptSourcePhoto", "getRunByProject",
     "getSourcePhotoRevision",
-    "getAwakeCandidate", "getDeliveryForProject", "authorizeDeliveryDownload",
+    "getCharacterCandidate", "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload",
     "markOrderPaymentState"
   ];
   const missing = methods.filter((method) => !repository || typeof repository[method] !== "function");
@@ -34,9 +38,11 @@ function ensurePaid(bundle) {
   }
 }
 
-function ensureExactlyTwoPhotos(files) {
-  if (!Array.isArray(files) || files.length !== 2) throw new Error("Exactly two clear full-body pet photos are required");
-  return files.map((file, index) => {
+function ensureSourcePhotoSet(files) {
+  if (!Array.isArray(files) || files.length < 3 || files.length > 4) {
+    throw new Error("Two front full-body photos and one or two 45-degree full-body photos are required");
+  }
+  const normalized = files.map((file, index) => {
     if (!file || !SOURCE_IMAGE_TYPES.has(file.contentType)) {
       throw new Error(`Photo ${index + 1} must be JPEG, PNG, or WebP`);
     }
@@ -47,14 +53,19 @@ function ensureExactlyTwoPhotos(files) {
       throw new Error(`Photo ${index + 1} byte size must be a positive safe integer`);
     }
     const extension = file.contentType === "image/jpeg" ? "jpg" : file.contentType.split("/")[1];
+    const roleName = index < 2 ? `front-${index + 1}` : `angle-${index - 1}`;
     return {
       ordinal: index + 1,
       contentType: file.contentType,
       sha256: file.sha256.toLowerCase(),
       byteSize: file.byteSize,
-      fileName: `source-${index + 1}.${extension}`
+      fileName: `${roleName}.${extension}`
     };
   });
+  if (new Set(normalized.map((file) => file.sha256)).size !== normalized.length) {
+    throw new Error("All pet source photos must be different");
+  }
+  return normalized;
 }
 
 function resolveDeliveryDownloadTtlSeconds({ expiresAt, now = Date.now(), storagePolicy = {} } = {}) {
@@ -83,7 +94,7 @@ class PetPackStudioService {
     if (!objectStore || typeof objectStore.createUploadGrant !== "function" || typeof objectStore.createDownloadGrant !== "function" || typeof objectStore.verifyUploadedObject !== "function") {
       throw new Error("A private object store is required");
     }
-    if (!workflow || typeof workflow.startPaidOrder !== "function" || typeof workflow.photosAccepted !== "function" || typeof workflow.confirmAwakeMaster !== "function" || typeof workflow.regenerateAwakeMaster !== "function") {
+    if (!workflow || typeof workflow.startPaidOrder !== "function" || typeof workflow.photosAccepted !== "function" || typeof workflow.confirmCharacterMasters !== "function" || typeof workflow.regenerateCharacterMaster !== "function") {
       throw new Error("A production workflow is required");
     }
     this.paymentProvider = paymentProvider;
@@ -129,7 +140,7 @@ class PetPackStudioService {
     if (!run || run.state !== PRODUCTION_STATES.AWAITING_PHOTOS) {
       throw new Error("Photo upload is not available at this stage");
     }
-    const normalizedFiles = ensureExactlyTwoPhotos(files);
+    const normalizedFiles = ensureSourcePhotoSet(files);
     const grants = [];
     for (const file of normalizedFiles) {
       const objectKey = createProjectObjectKey({
@@ -143,7 +154,8 @@ class PetPackStudioService {
         objectKey,
         contentType: file.contentType,
         sha256: file.sha256,
-        byteSize: file.byteSize
+        byteSize: file.byteSize,
+        expectedPhotoCount: normalizedFiles.length
       });
       grants.push(await this.objectStore.createUploadGrant({
         objectKey,
@@ -159,7 +171,7 @@ class PetPackStudioService {
     const bundle = await this.repository.getProjectBundle(requiredString(projectId, "Project ID"));
     requireProjectOwner(actor, bundle.project);
     ensurePaid(bundle);
-    if (![1, 2].includes(Number(ordinal))) throw new Error("Photo ordinal must be 1 or 2");
+    if (![1, 2, 3, 4].includes(Number(ordinal))) throw new Error("Photo ordinal must be between 1 and 4");
     if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(sha256)) throw new Error("Photo checksum is invalid");
     if (!Number.isSafeInteger(byteSize) || byteSize <= 0) throw new Error("Photo byte size is invalid");
     const run = await this.repository.getRunByProject(bundle.project.id);
@@ -197,57 +209,85 @@ class PetPackStudioService {
     return { acceptedCount: acceptance.acceptedCount };
   }
 
-  async regenerateAwakeCharacter({ actor, projectId }) {
+  async regenerateCharacterMaster({ actor, projectId, view }) {
     const bundle = await this.repository.getProjectBundle(requiredString(projectId, "Project ID"));
     requireProjectOwner(actor, bundle.project);
     ensurePaid(bundle);
     const run = await this.repository.getRunByProject(bundle.project.id);
     if (!run || run.state !== PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION) {
-      throw new Error("Awake character regeneration is not available at this stage");
+      throw new Error("Character master regeneration is not available at this stage");
+    }
+    const safeView = assertCharacterMasterView(view);
+    const used = Number(run[`${safeView}UserRegenerationsUsed`] || 0);
+    if (used >= MAX_USER_REGENERATIONS_PER_VIEW) {
+      const error = new Error(`The ${safeView} character master self-service regeneration limit has been reached`);
+      error.code = "character_regeneration_limit_reached";
+      this.logger.warn?.("petpack.api.character_regeneration_rejected", {
+        projectId: bundle.project.id,
+        runId: run.id,
+        view: safeView,
+        reason: error.code,
+        used
+      });
+      throw error;
     }
     const sourcePhotoRevisionId = await this.repository.getSourcePhotoRevision({
       projectId: bundle.project.id,
       runId: run.id
     });
     if (!sourcePhotoRevisionId) throw new Error("The immutable source-photo revision is unavailable");
-    await this.workflow.regenerateAwakeMaster({ run, sourcePhotoRevisionId });
-    return { accepted: true };
+    await this.workflow.regenerateCharacterMaster({ run, sourcePhotoRevisionId, view: safeView });
+    return { accepted: true, view: safeView };
   }
 
-  async confirmAwakeCharacter({ actor, projectId, awakeMasterRevisionId }) {
+  async confirmCharacter({ actor, projectId, frontMasterRevisionId, sideMasterRevisionId }) {
     const bundle = await this.repository.getProjectBundle(requiredString(projectId, "Project ID"));
     requireProjectOwner(actor, bundle.project);
     ensurePaid(bundle);
     const run = await this.repository.getRunByProject(bundle.project.id);
     if (!run || run.state !== PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION) {
-      throw new Error("Awake character confirmation is not available at this stage");
+      throw new Error("Character confirmation is not available at this stage");
     }
-    const candidate = await this.repository.getAwakeCandidate(bundle.project.id, requiredString(awakeMasterRevisionId, "Awake master revision ID"));
-    if (!candidate || candidate.qaStatus !== "passed") throw new Error("The selected awake character did not pass quality checks");
-    await this.workflow.confirmAwakeMaster({ run, awakeMasterRevisionId: candidate.id });
+    const [front, side] = await Promise.all([
+      this.repository.getCharacterCandidate(bundle.project.id, "front", requiredString(frontMasterRevisionId, "Front master revision ID")),
+      this.repository.getCharacterCandidate(bundle.project.id, "side", requiredString(sideMasterRevisionId, "Side master revision ID"))
+    ]);
+    if (!front || front.qaStatus !== "passed" || !side || side.qaStatus !== "passed") {
+      throw new Error("Both selected character masters must pass quality checks");
+    }
+    await this.workflow.confirmCharacterMasters({
+      run,
+      frontMasterRevisionId: front.id,
+      sideMasterRevisionId: side.id
+    });
     return { accepted: true };
   }
 
   async getProjectView({ actor, projectId }) {
     const bundle = await this.repository.getProjectBundle(requiredString(projectId, "Project ID"));
     requireProjectOwner(actor, bundle.project);
-    const [run, awakeCandidate, delivery] = await Promise.all([
+    const [run, characterCandidates, delivery] = await Promise.all([
       this.repository.getRunByProject(bundle.project.id),
-      this.repository.getAwakeCandidate(bundle.project.id),
+      this.repository.getCharacterCandidates(bundle.project.id),
       this.repository.getDeliveryForProject(bundle.project.id)
     ]);
-    let signedAwakeCandidate = awakeCandidate;
-    if (awakeCandidate) {
-      if (typeof awakeCandidate.objectKey !== "string" || !awakeCandidate.objectKey.startsWith("private/")) {
-        throw new Error("Awake character preview is not available from private storage");
+    const signedCandidates = {};
+    for (const view of ["front", "side"]) {
+      const candidate = characterCandidates && characterCandidates[view];
+      if (!candidate) {
+        signedCandidates[view] = null;
+        continue;
+      }
+      if (typeof candidate.objectKey !== "string" || !candidate.objectKey.startsWith("private/")) {
+        throw new Error(`${view} character preview is not available from private storage`);
       }
       const preview = await this.objectStore.createDownloadGrant({
-        objectKey: awakeCandidate.objectKey,
+        objectKey: candidate.objectKey,
         disposition: "inline"
       });
-      signedAwakeCandidate = { ...awakeCandidate, previewUrl: preview.url };
+      signedCandidates[view] = { ...candidate, view, previewUrl: preview.url };
     }
-    return createUserProjectView({ project: bundle.project, order: bundle.order, run, awakeCandidate: signedAwakeCandidate, delivery });
+    return createUserProjectView({ project: bundle.project, order: bundle.order, run, characterCandidates: signedCandidates, delivery });
   }
 
   async createPetpackDownload({ actor, projectId }) {
@@ -291,6 +331,6 @@ module.exports = {
   PetPackStudioService,
   SOURCE_IMAGE_TYPES,
   createUserProjectView,
-  ensureExactlyTwoPhotos,
+  ensureSourcePhotoSet,
   resolveDeliveryDownloadTtlSeconds
 };

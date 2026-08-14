@@ -3,18 +3,21 @@ const crypto = require("node:crypto");
 const { createModelReference } = require("../config/model-registry");
 const { CHARACTER_CANVAS_V1 } = require("../qa/character-canvas-v1");
 
-const IMAGE_CONSTRAINTS_VERSION = "petpack-studio-image-constraints/v1";
+const IMAGE_CONSTRAINTS_VERSION = "petpack-studio-image-constraints/v2";
 const IMAGE_PROMPT_CONTENT_POLICY_VERSION = "brand-neutral-image-prompt/v1";
 const IMMUTABLE_IMAGE_CONSTRAINTS = Object.freeze([
   "friendly high-quality consistent 3D animated pet style without imitating or naming another brand",
   "exactly one pet and no people or other animals",
   "full body visible with ears tail and paws uncropped",
-  "fixed front-facing camera with no text watermark or props",
+  "preserve the exact pet-specific face, breed traits, coat colors, and asymmetric marking topology by anatomical region",
+  "never average, mirror, move, simplify, invent, duplicate, recolor, or erase a distinguishing marking",
+  "stylize rendering only and never redesign identity or coat pattern",
+  "fixed camera with no text watermark or props",
   "plain removable background",
   `compose for ${CHARACTER_CANVAS_V1.width}x${CHARACTER_CANVAS_V1.height} ${CHARACTER_CANVAS_V1.aspectRatio}`,
   `center the torso at x=${CHARACTER_CANVAS_V1.width / 2} and ground contact at y=${CHARACTER_CANVAS_V1.groundBaselineY}`
 ]);
-const VIDEO_CONSTRAINTS_VERSION = "petpack-studio-video-constraints/v1";
+const VIDEO_CONSTRAINTS_VERSION = "petpack-studio-video-constraints/v2";
 const IMMUTABLE_VIDEO_CONSTRAINTS = Object.freeze([
   "fixed camera",
   "no camera motion or zoom",
@@ -22,10 +25,12 @@ const IMMUTABLE_VIDEO_CONSTRAINTS = Object.freeze([
   "no props",
   "no people or other animals",
   "consistent pet identity and scale",
+  "approved first and last master images are immutable identity and appearance references",
+  "preserve pet species, face identity, primary coat colors, and distinguishing markings; minor transient marking deformation during motion is acceptable",
+  "the approved first and last frames must return exactly to their corresponding master image",
   "pet remains fully visible",
   "no growth, shrinkage, or deformation",
-  "plain removable background",
-  "720p 16:9 output"
+  "plain removable background"
 ]);
 
 function requiredString(value, label) {
@@ -39,7 +44,7 @@ function resolveApiUrl(baseUrl, path) {
   return new URL(path.replace(/^\/+/, ""), `${requiredString(baseUrl, "ModelArk base URL").replace(/\/+$/, "")}/`).toString();
 }
 
-function assertPrivateInput(asset, label) {
+function assertPrivateInput(asset, label, { allowDataUrl = false } = {}) {
   if (!asset || typeof asset !== "object") {
     throw new Error(`${label} private asset reference is required`);
   }
@@ -51,20 +56,23 @@ function assertPrivateInput(asset, label) {
   } catch {
     throw new Error(`${label}.signedReadUrl must be an absolute URL`);
   }
-  if (!["https:", "http:"].includes(parsed.protocol)) {
+  if (!["https:", "http:"].includes(parsed.protocol) && !(allowDataUrl && parsed.protocol === "data:")) {
     throw new Error(`${label}.signedReadUrl must use HTTP(S)`);
+  }
+  if (parsed.protocol === "data:" && !/^data:image\/(?:png|jpeg|jpg|webp);base64,/i.test(signedReadUrl)) {
+    throw new Error(`${label}.signedReadUrl data URL must be a base64 image`);
   }
   return signedReadUrl;
 }
 
-function assertCanvasAsset(asset, label) {
+function assertCanvasAsset(asset, label, options) {
   if (!asset || asset.canvasId !== CHARACTER_CANVAS_V1.id) {
     throw new Error(`${label} must be normalized to ${CHARACTER_CANVAS_V1.id}`);
   }
-  return assertPrivateInput(asset, label);
+  return assertPrivateInput(asset, label, options);
 }
 
-function createSeedreamPayload({ modelReference, prompt, sourceImages, outputSize }) {
+function createSeedreamPayload({ modelReference, prompt, sourceImages, outputSize, allowDataUrls = false }) {
   if (!modelReference || !modelReference.endpointId) {
     throw new Error("A configured Seedream model reference is required");
   }
@@ -74,7 +82,7 @@ function createSeedreamPayload({ modelReference, prompt, sourceImages, outputSiz
   const payload = {
     model: modelReference.endpointId,
     prompt: requiredString(prompt, "Seedream server prompt"),
-    image: sourceImages.map((asset, index) => assertPrivateInput(asset, `sourceImages[${index}]`)),
+    image: sourceImages.map((asset, index) => assertPrivateInput(asset, `sourceImages[${index}]`, { allowDataUrl: allowDataUrls })),
     response_format: "url",
     watermark: false
   };
@@ -85,50 +93,58 @@ function createSeedreamPayload({ modelReference, prompt, sourceImages, outputSiz
 }
 
 function formatServerOnlyImageInstruction({ kind, prompt, negativePrompt }) {
-  if (kind !== "awake" && kind !== "sleep") {
-    throw new Error("Seedream master kind must be awake or sleep");
+  if (!['front', 'side', 'sleep'].includes(kind)) {
+    throw new Error("Seedream master kind must be front, side, or sleep");
   }
   const positive = requiredString(prompt, "Published image prompt");
-  const poseConstraint = kind === "awake"
-    ? "awake neutral standing pose suitable as the canonical character reference"
-    : "natural sleeping pose while preserving the approved pet identity, camera, anatomical scale, and ground anchor";
+  const poseConstraint = {
+    front: "awake neutral front-facing full-body pose suitable as the canonical front identity reference",
+    side: "awake full-body side or three-quarter pose suitable as the canonical lateral identity reference, using the approved front master as the identity anchor",
+    sleep: "natural sleeping pose while preserving both approved front and side identity masters, anatomical scale, and ground anchor"
+  }[kind];
   const prohibited = typeof negativePrompt === "string" && negativePrompt.trim()
     ? ` Avoid: ${negativePrompt.trim()}.`
     : "";
   return `${positive}\n\nMandatory delivery constraints (${IMAGE_CONSTRAINTS_VERSION}): ${IMMUTABLE_IMAGE_CONSTRAINTS.join("; ")}; ${poseConstraint}.${prohibited}`;
 }
 
-function formatServerOnlyVideoInstruction({ prompt, negativePrompt }) {
+function formatServerOnlyVideoInstruction({ prompt, negativePrompt, resolution = "480p", actionId }) {
   const positive = requiredString(prompt, "Published video prompt");
   const prohibited = typeof negativePrompt === "string" && negativePrompt.trim()
     ? ` Avoid: ${negativePrompt.trim()}.`
     : "";
-  return `${positive}\n\nMandatory delivery constraints (${VIDEO_CONSTRAINTS_VERSION}): ${IMMUTABLE_VIDEO_CONSTRAINTS.join("; ")}.${prohibited}`;
+  const loopConstraint = actionId === "sleep-loop"
+    ? " For the sleep loop, perform exactly one complete low-amplitude inhale-exhale cycle; start and end at the same end-exhale rest pose; remain completely motionless for at least the final 0.75 seconds; never start the next inhale before the clip ends."
+    : "";
+  return `${positive}\n\nMandatory delivery constraints (${VIDEO_CONSTRAINTS_VERSION}): ${IMMUTABLE_VIDEO_CONSTRAINTS.join("; ")}; ${requiredString(resolution, "video resolution")} 16:9 output.${loopConstraint}${prohibited}`;
 }
 
-function createSeedancePayload({ modelReference, prompt, negativePrompt, duration, firstFrame, lastFrame, callbackUrl }) {
-  if (!modelReference || modelReference.resolution !== "720p" || !modelReference.endpointId) {
-    throw new Error("A configured 720p Seedance model reference is required");
+function createSeedancePayload({ modelReference, prompt, negativePrompt, actionId, duration, firstFrame, lastFrame, callbackUrl, allowDataUrls = false, allowExperimentalResolution = false }) {
+  const resolution = modelReference && modelReference.resolution;
+  const allowedResolution = resolution === "720p" || resolution === "480p";
+  if (!modelReference || !allowedResolution || !modelReference.endpointId) {
+    throw new Error("A configured 480p or 720p Seedance model reference is required");
   }
   if (!Number.isFinite(Number(duration)) || Number(duration) <= 0) {
     throw new Error("Published video duration must be a positive number");
   }
 
-  const firstFrameUrl = assertCanvasAsset(firstFrame, "firstFrame");
-  const lastFrameUrl = assertCanvasAsset(lastFrame, "lastFrame");
+  const firstFrameUrl = assertCanvasAsset(firstFrame, "firstFrame", { allowDataUrl: allowDataUrls });
+  const lastFrameUrl = assertCanvasAsset(lastFrame, "lastFrame", { allowDataUrl: allowDataUrls });
+  const serverInstruction = `${formatServerOnlyVideoInstruction({ prompt, negativePrompt, resolution, actionId })}\n\nThe first image is the first frame and the second image is the last frame.`;
   const payload = {
     model: modelReference.endpointId,
     content: [
-      { type: "text", text: formatServerOnlyVideoInstruction({ prompt, negativePrompt }) },
-      { type: "image_url", image_url: { url: firstFrameUrl }, role: "first_frame" },
-      { type: "image_url", image_url: { url: lastFrameUrl }, role: "last_frame" }
+      { type: "text", text: serverInstruction },
+      { type: "image_url", image_url: { url: firstFrameUrl } },
+      { type: "image_url", image_url: { url: lastFrameUrl } }
     ],
+    return_last_frame: true,
+    resolution,
     ratio: CHARACTER_CANVAS_V1.aspectRatio,
-    resolution: "720p",
     duration: Number(duration),
     generate_audio: false,
-    watermark: false,
-    return_last_frame: true
+    watermark: false
   };
   if (callbackUrl) payload.callback_url = requiredString(callbackUrl, "ModelArk callback URL");
   return payload;
@@ -286,18 +302,19 @@ class ModelArkClient {
     return data;
   }
 
-  async createAwakeMaster({ requestId, serverPrompt, sourcePhotos, modelReference, outputSize }) {
-    if (!Array.isArray(sourcePhotos) || sourcePhotos.length !== 2) {
-      throw new Error("Exactly two private pet source photos are required for the awake master");
+  async createFrontMaster({ requestId, serverPrompt, sourcePhotos, modelReference, outputSize, allowDataUrls = false }) {
+    if (!Array.isArray(sourcePhotos) || sourcePhotos.length < 3 || sourcePhotos.length > 4) {
+      throw new Error("Three or four private pet source photos are required for the front master");
     }
     const imageReference = modelReference || createModelReference(this.registry, "image");
     const payload = createSeedreamPayload({
       modelReference: imageReference,
       prompt: serverPrompt,
       sourceImages: sourcePhotos,
-      outputSize: outputSize === undefined ? this.registry.modelArk.image.outputSize : outputSize
+      outputSize: outputSize === undefined ? this.registry.modelArk.image.outputSize : outputSize,
+      allowDataUrls
     });
-    const response = await this._post("images/generations", payload, { requestId, operation: "seedream-awake" });
+    const response = await this._post("images/generations", payload, { requestId, operation: "seedream-front" });
     return {
       modelReference: imageReference,
       providerRequestId: response.id || response.request_id || null,
@@ -306,14 +323,38 @@ class ModelArkClient {
     };
   }
 
-  async createSleepingMaster({ requestId, serverPrompt, awakeMaster, modelReference, outputSize }) {
-    assertCanvasAsset(awakeMaster, "awakeMaster");
+  async createSideMaster({ requestId, serverPrompt, sourcePhotos, frontMaster, modelReference, outputSize, allowDataUrls = false }) {
+    if (!Array.isArray(sourcePhotos) || sourcePhotos.length < 3 || sourcePhotos.length > 4) {
+      throw new Error("Three or four private pet source photos are required for the side master");
+    }
+    assertCanvasAsset(frontMaster, "frontMaster", { allowDataUrl: allowDataUrls });
     const imageReference = modelReference || createModelReference(this.registry, "image");
     const payload = createSeedreamPayload({
       modelReference: imageReference,
       prompt: serverPrompt,
-      sourceImages: [awakeMaster],
-      outputSize: outputSize === undefined ? this.registry.modelArk.image.outputSize : outputSize
+      sourceImages: [...sourcePhotos, frontMaster],
+      outputSize: outputSize === undefined ? this.registry.modelArk.image.outputSize : outputSize,
+      allowDataUrls
+    });
+    const response = await this._post("images/generations", payload, { requestId, operation: "seedream-side" });
+    return {
+      modelReference: imageReference,
+      providerRequestId: response.id || response.request_id || null,
+      outputUrls: extractSeedreamOutputUrls(response),
+      raw: response
+    };
+  }
+
+  async createSleepingMaster({ requestId, serverPrompt, frontMaster, sideMaster, modelReference, outputSize, allowDataUrls = false }) {
+    assertCanvasAsset(frontMaster, "frontMaster", { allowDataUrl: allowDataUrls });
+    assertCanvasAsset(sideMaster, "sideMaster", { allowDataUrl: allowDataUrls });
+    const imageReference = modelReference || createModelReference(this.registry, "image");
+    const payload = createSeedreamPayload({
+      modelReference: imageReference,
+      prompt: serverPrompt,
+      sourceImages: [frontMaster, sideMaster],
+      outputSize: outputSize === undefined ? this.registry.modelArk.image.outputSize : outputSize,
+      allowDataUrls
     });
     const response = await this._post("images/generations", payload, { requestId, operation: "seedream-sleep" });
     return {
@@ -324,25 +365,36 @@ class ModelArkClient {
     };
   }
 
-  async createVideoTask({ requestId, runId, actionId, promptVersion, firstFrame, lastFrame, duration, modelReference }) {
+  async createVideoTask({ requestId, runId, actionId, promptVersion, firstFrame, lastFrame, duration, modelReference, allowDataUrls = false, allowExperimentalResolution = false }) {
     if (!promptVersion || (promptVersion.status !== "published" && promptVersion.frozenForRun !== true)) {
       throw new Error("A published or run-frozen server-only prompt version is required");
     }
     const videoReference = modelReference || createModelReference(this.registry, "video");
-    const ticket = createCallbackTicket({
-      runId,
-      actionId,
-      secret: requiredString(this.registry.modelArk.video.callbackSecret, "MODELARK_VIDEO_CALLBACK_SECRET")
-    });
-    const callbackUrl = createCallbackUrl(this.registry.modelArk.video.callbackBaseUrl, ticket);
+    const hasCallback = Boolean(
+      this.registry.modelArk.video.callbackBaseUrl &&
+      this.registry.modelArk.video.callbackSecret
+    );
+    const ticket = hasCallback
+      ? createCallbackTicket({
+        runId,
+        actionId,
+        secret: requiredString(this.registry.modelArk.video.callbackSecret, "MODELARK_VIDEO_CALLBACK_SECRET")
+      })
+      : null;
+    const callbackUrl = hasCallback
+      ? createCallbackUrl(this.registry.modelArk.video.callbackBaseUrl, ticket)
+      : null;
     const payload = createSeedancePayload({
       modelReference: videoReference,
       prompt: promptVersion.prompt,
       negativePrompt: promptVersion.negativePrompt,
+      actionId,
       duration,
       firstFrame,
       lastFrame,
-      callbackUrl
+      callbackUrl,
+      allowDataUrls,
+      allowExperimentalResolution
     });
     const response = await this._post("contents/generations/tasks", payload, { requestId, operation: "seedance-create" });
     return {

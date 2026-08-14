@@ -24,27 +24,54 @@ const PRODUCTION_STATES = Object.freeze({
   FAILED: "failed"
 });
 
+const CHARACTER_MASTER_VIEWS = Object.freeze(["front", "side"]);
+const MAX_USER_REGENERATIONS_PER_VIEW = 2;
+
+function assertCharacterMasterView(value) {
+  if (!CHARACTER_MASTER_VIEWS.includes(value)) throw new Error("Character master view must be front or side");
+  return value;
+}
+
+function characterField(view, suffix) {
+  return `${assertCharacterMasterView(view)}${suffix}`;
+}
+
+function regenerationLimitError(view) {
+  const error = new Error(`The ${view} character master self-service regeneration limit has been reached`);
+  error.code = "character_regeneration_limit_reached";
+  return error;
+}
+
 function canStartProduction(order) {
   return Boolean(order && order.status === ORDER_STATES.PAID && order.id);
 }
 
-function startProductionRun({ order, projectId, runId }) {
+function startProductionRun({ order, projectId, runId, modelRegistryVersion }) {
   if (!canStartProduction(order)) {
     throw new Error("Only a paid order can start PetPack production");
   }
   if (!projectId || !runId) {
     throw new Error("Production run requires projectId and runId");
   }
+  if (typeof modelRegistryVersion !== "string" || !modelRegistryVersion.trim()) {
+    throw new Error("Production run requires a frozen model registry version");
+  }
   return {
     id: runId,
     projectId,
     orderId: order.id,
+    modelRegistryVersion: modelRegistryVersion.trim(),
     characterRevisionId: null,
     state: PRODUCTION_STATES.AWAITING_PHOTOS,
     promptSnapshot: null,
     completedActions: [],
     failedActions: [],
-    awakeGenerationAttempts: 0,
+    frontGenerationAttempts: 0,
+    sideGenerationAttempts: 0,
+    frontUserRegenerationsUsed: 0,
+    sideUserRegenerationsUsed: 0,
+    frontQaRetries: 0,
+    sideQaRetries: 0,
     sleepGenerationAttempts: 0
   };
 }
@@ -52,7 +79,6 @@ function startProductionRun({ order, projectId, runId }) {
 function transitionProductionRun(run, event, payload = {}) {
   if (!run || !run.state) throw new Error("Production run is required");
   const transitions = {
-    awakeGenerated: [PRODUCTION_STATES.AWAKE_GENERATING, PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION],
     characterConfirmed: [PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION, PRODUCTION_STATES.SLEEP_GENERATING],
     sleepMasterQaPassed: [PRODUCTION_STATES.SLEEP_GENERATING, PRODUCTION_STATES.AWAITING_PROMPT_GATE],
     promptsVerified: [PRODUCTION_STATES.AWAITING_PROMPT_GATE, PRODUCTION_STATES.VIDEO_GENERATING],
@@ -80,18 +106,42 @@ function transitionProductionRun(run, event, payload = {}) {
     return {
       ...run,
       state: PRODUCTION_STATES.AWAKE_GENERATING,
-      awakeGenerationAttempts: Math.max(1, Number(run.awakeGenerationAttempts || 0) + 1)
+      frontGenerationAttempts: Math.max(1, Number(run.frontGenerationAttempts || 0) + 1),
+      frontQaRetries: 0
     };
   }
-  if (event === "awakeRegenerationRequested") {
+  if (event === "characterRegenerationRequested") {
     if (run.state !== PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION) {
       throw new Error(`Cannot apply ${event} while production state is ${run.state}`);
     }
     return {
       ...run,
       state: PRODUCTION_STATES.AWAKE_GENERATING,
-      awakeGenerationAttempts: Math.max(2, Number(run.awakeGenerationAttempts || 1) + 1)
+      [characterField(payload.view, "GenerationAttempts")]: Math.max(1, Number(run[characterField(payload.view, "GenerationAttempts")] || 0) + 1),
+      [characterField(payload.view, "UserRegenerationsUsed")]: (() => {
+        const field = characterField(payload.view, "UserRegenerationsUsed");
+        if (Number(run[field] || 0) >= MAX_USER_REGENERATIONS_PER_VIEW) throw regenerationLimitError(payload.view);
+        return Number(run[field] || 0) + 1;
+      })(),
+      [characterField(payload.view, "QaRetries")]: 0
     };
+  }
+  if (event === "characterMasterQaRetry") {
+    if (run.state !== PRODUCTION_STATES.AWAKE_GENERATING) throw new Error(`Cannot apply ${event} while production state is ${run.state}`);
+    const view = assertCharacterMasterView(payload.view);
+    return {
+      ...run,
+      [characterField(view, "GenerationAttempts")]: Number(run[characterField(view, "GenerationAttempts")] || 0) + 1,
+      [characterField(view, "QaRetries")]: Number(run[characterField(view, "QaRetries")] || 0) + 1
+    };
+  }
+  if (event === "characterMasterGenerated") {
+    if (run.state !== PRODUCTION_STATES.AWAKE_GENERATING) throw new Error(`Cannot apply ${event} while production state is ${run.state}`);
+    const view = assertCharacterMasterView(payload.view);
+    if (view === "front" && Number(run.sideGenerationAttempts || 0) === 0) {
+      return { ...run, sideGenerationAttempts: 1, sideQaRetries: 0 };
+    }
+    return { ...run, state: PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION };
   }
   const transition = transitions[event];
   if (!transition || run.state !== transition[0]) {
@@ -126,11 +176,14 @@ function canAdvanceFromVideoGeneration(run) {
 }
 
 module.exports = {
+  CHARACTER_MASTER_VIEWS,
+  MAX_USER_REGENERATIONS_PER_VIEW,
   ORDER_STATES,
   PRODUCTION_STATES,
   canAdvanceFromVideoGeneration,
   canStartProduction,
   completeVideoAction,
+  assertCharacterMasterView,
   startProductionRun,
   transitionProductionRun
 };

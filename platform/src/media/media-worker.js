@@ -128,6 +128,7 @@ class MediaWorker {
       inputPath,
       mattePath: matte.mattePath,
       outputPath,
+      expectedDuration: Number(requestedDuration),
       correction: correction || matte.correction
     });
     await this.runPlan(plan);
@@ -144,7 +145,8 @@ class MediaWorker {
         referenceMetrics
       })
     ]);
-    if (!inspection || !Array.isArray(inspection.sampledFrames) || !inspection.firstFrame || !inspection.lastFrame) {
+    if (!inspection || !Array.isArray(inspection.sampledFrames) || !inspection.firstFrame || !inspection.lastFrame ||
+        !inspection.contentInspection || !inspection.appearanceInspection) {
       throw new Error("Final action inspection returned incomplete media QA inputs");
     }
     const mediaProbe = probeResult && probeResult.probe ? probeResult.probe : probeResult;
@@ -168,6 +170,8 @@ class MediaWorker {
       expectedLastMasterHash,
       referenceMetrics,
       contentInspection: inspection.contentInspection,
+      appearanceInspection: inspection.appearanceInspection,
+      loopBoundaryInspection: inspection.loopBoundaryInspection,
       expectedDuration: inputDuration,
       policy: qaPolicy,
       production

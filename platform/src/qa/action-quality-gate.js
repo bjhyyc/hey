@@ -5,7 +5,11 @@ const {
   validateActionEndpoints,
   validateCanvasFrame
 } = require("./character-canvas-v1");
+const { validateVideoAppearanceInspection } = require("./appearance-lock-v1");
 const { validateActionMediaProbe } = require("./media-inspector");
+const { validateSleepLoopBoundaryInspection } = require("./sleep-loop-boundary-v1");
+
+const ACTION_QA_CONTRACT_VERSION = "petpack-action-qa/v3";
 
 const REQUIRED_CONTENT_CHECKS = Object.freeze([
   "cameraFixed",
@@ -14,7 +18,9 @@ const REQUIRED_CONTENT_CHECKS = Object.freeze([
   "noPeople",
   "noOtherAnimals",
   "petFullyVisible",
-  "identityConsistent",
+  "speciesConsistent",
+  "primaryCoatColorConsistent",
+  "noSevereIdentityDrift",
   "noDeformation",
   "matteComplete",
   "matteEdgesStable",
@@ -111,6 +117,8 @@ function validateVideoAction({
   expectedLastMasterHash,
   referenceMetrics,
   contentInspection,
+  appearanceInspection,
+  loopBoundaryInspection,
   expectedDuration,
   policy,
   production = false
@@ -139,6 +147,7 @@ function validateVideoAction({
     policy: resolvedPolicy,
     production,
     expectedIdentityScore: true,
+    identityThreshold: resolvedPolicy.minSevereVideoIdentityScore,
     referenceMetrics
   }));
   if (frameResults.length === 0) errors.push("canvas: sampled frame metrics are required");
@@ -148,6 +157,18 @@ function validateVideoAction({
   appendErrors(errors, "continuity", continuity);
   const content = validateContentInspection(contentInspection, actionId);
   appendErrors(errors, "content", content);
+  const appearance = validateVideoAppearanceInspection(appearanceInspection, {
+    sampledFrameCount: frames.length,
+    policy: resolvedPolicy
+  });
+  appendErrors(errors, "appearance", appearance);
+  const loopBoundary = actionId === "sleep-loop"
+    ? validateSleepLoopBoundaryInspection(loopBoundaryInspection, {
+      sampledFrameCount: frames.length,
+      policy: resolvedPolicy
+    })
+    : { ok: true, errors: [], evidence: null };
+  appendErrors(errors, "loopBoundary", loopBoundary);
   const canvas = {
     ok: frameResults.length > 0 && frameResults.every((result) => result.ok),
     errors: frameResults.flatMap((result) => result.errors || [])
@@ -162,6 +183,7 @@ function validateVideoAction({
   }
   return {
     actionId,
+    contractVersion: ACTION_QA_CONTRACT_VERSION,
     expectedEndpoints: { ...expectedEndpoints },
     ok: errors.length === 0,
     errors,
@@ -170,9 +192,14 @@ function validateVideoAction({
     canvas,
     continuity,
     content,
+    appearance,
+    warnings: appearance.warnings || [],
+    loopBoundary,
     frameResults,
     evidence: {
       contentInspection: contentEvidence,
+      appearance: appearance.evidence,
+      ...(actionId === "sleep-loop" ? { loopBoundary: loopBoundary.evidence } : {}),
       endpoints: {
         firstMasterHash: String(firstFrame?.masterHash || ""),
         lastMasterHash: String(lastFrame?.masterHash || "")
@@ -187,6 +214,7 @@ function validateVideoAction({
 }
 
 module.exports = {
+  ACTION_QA_CONTRACT_VERSION,
   REQUIRED_CONTENT_CHECKS,
   calculateContinuity,
   validateContentInspection,

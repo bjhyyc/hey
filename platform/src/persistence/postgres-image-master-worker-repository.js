@@ -15,11 +15,13 @@ const { JOB_NAMES } = require("../workflow/production-workflow");
 const { recordUsageAttempt, recordUsageOutcome } = require("./provider-usage-ledger");
 
 const GENERATION_JOB_KIND = Object.freeze({
-  [JOB_NAMES.GENERATE_AWAKE]: "awake",
+  [JOB_NAMES.GENERATE_FRONT]: "front",
+  [JOB_NAMES.GENERATE_SIDE]: "side",
   [JOB_NAMES.GENERATE_SLEEP]: "sleep"
 });
 const FINALIZER_JOB_KIND = Object.freeze({
-  [JOB_NAMES.FINALIZE_AWAKE]: "awake",
+  [JOB_NAMES.FINALIZE_FRONT]: "front",
+  [JOB_NAMES.FINALIZE_SIDE]: "side",
   [JOB_NAMES.FINALIZE_SLEEP]: "sleep"
 });
 
@@ -147,15 +149,15 @@ function normalizeQaReport(report) {
 }
 
 function normalizeReferenceMetrics(report) {
-  const parsed = parseJsonObject(report, "Awake master QA report");
+  const parsed = parseJsonObject(report, "Front master QA report");
   const metrics = parsed.referenceMetrics;
   if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
-    throw new Error("Awake master QA report has no immutable reference metrics");
+    throw new Error("Front master QA report has no immutable reference metrics");
   }
   const output = {};
   for (const key of ["groundBaselineY", "torsoHeightPx", "headHeightPx", "shoulderWidthPx", "centerX"]) {
     const value = Number(metrics[key]);
-    if (!Number.isFinite(value)) throw new Error(`Awake master reference metric ${key} is invalid`);
+    if (!Number.isFinite(value)) throw new Error(`Front master reference metric ${key} is invalid`);
     output[key] = value;
   }
   return output;
@@ -181,7 +183,12 @@ function mapRun(row) {
     orderId: row.order_id,
     characterRevisionId: row.character_revision_id || null,
     state: row.run_state,
-    awakeGenerationAttempts: Number(row.awake_generation_attempts || 0),
+    frontGenerationAttempts: Number(row.front_generation_attempts || 0),
+    sideGenerationAttempts: Number(row.side_generation_attempts || 0),
+    frontUserRegenerationsUsed: Number(row.front_user_regenerations_used || 0),
+    sideUserRegenerationsUsed: Number(row.side_user_regenerations_used || 0),
+    frontQaRetries: Number(row.front_qa_retries || 0),
+    sideQaRetries: Number(row.side_qa_retries || 0),
     sleepGenerationAttempts: Number(row.sleep_generation_attempts || 0),
     failureCode: row.failure_code || null,
     version: Number(row.run_version)
@@ -189,17 +196,25 @@ function mapRun(row) {
 }
 
 function currentGenerationAttempt(row, kind) {
-  const value = Number(kind === "awake" ? row.awake_generation_attempts : row.sleep_generation_attempts);
-  if (!Number.isSafeInteger(value) || value < 0 || (kind === "awake" && value < 1)) {
+  const column = {
+    front: "front_generation_attempts",
+    side: "side_generation_attempts",
+    sleep: "sleep_generation_attempts"
+  }[kind];
+  const value = Number(column && row[column]);
+  if (!Number.isSafeInteger(value) || value < 0 || (kind !== "sleep" && value < 1)) {
     throw new Error("Production run master generation attempt is invalid");
   }
   return value;
 }
 
 function isFinalizedState({ kind, qaPassed, generationAttempt, run }) {
-  if (kind === "awake") {
-    if (qaPassed) return run.state !== PRODUCTION_STATES.AWAKE_GENERATING;
-    return run.state === PRODUCTION_STATES.FAILED;
+  if (kind === "front" || kind === "side") {
+    if (qaPassed) {
+      if (run.state !== PRODUCTION_STATES.AWAKE_GENERATING) return true;
+      return kind === "front" && run.sideGenerationAttempts > 0 && run.frontUserRegenerationsUsed === 0;
+    }
+    return run.state === PRODUCTION_STATES.FAILED || run[`${kind}GenerationAttempts`] > generationAttempt;
   }
   if (qaPassed) {
     return ![PRODUCTION_STATES.SLEEP_GENERATING].includes(run.state);
@@ -219,7 +234,9 @@ class PostgresImageMasterWorkerRepository {
   async _loadRun(tx, runId) {
     const run = oneRow(await tx.query(
       `SELECT run.id AS run_id, run.project_id, run.order_id, run.character_revision_id,
-              run.state AS run_state, run.awake_generation_attempts, run.sleep_generation_attempts,
+              run.state AS run_state, run.front_generation_attempts, run.side_generation_attempts,
+              run.front_user_regenerations_used, run.side_user_regenerations_used,
+              run.front_qa_retries, run.side_qa_retries, run.sleep_generation_attempts,
               run.failure_code, run.version AS run_version, order_record.status AS order_status
          FROM production_run run
          JOIN customer_order order_record
@@ -282,9 +299,9 @@ class PostgresImageMasterWorkerRepository {
     return prompt;
   }
 
-  async _loadAwakeReferences(tx, run, sourcePhotoRevisionId) {
+  async _loadSourcePhotoReferences(tx, run, sourcePhotoRevisionId) {
     const result = rows(await tx.query(
-      `SELECT reservation.ordinal, reservation.source_photo_revision_id,
+      `SELECT reservation.ordinal, reservation.expected_photo_count, reservation.source_photo_revision_id,
               asset.id AS media_asset_id, asset.object_key, asset.sha256,
               asset.byte_size, asset.content_type
          FROM source_photo_upload_reservation reservation
@@ -304,14 +321,17 @@ class PostgresImageMasterWorkerRepository {
         FOR UPDATE OF reservation, photo, asset`,
       [run.project_id, run.run_id, sourcePhotoRevisionId || null]
     ));
-    if (result.length !== 2 || Number(result[0].ordinal) !== 1 || Number(result[1].ordinal) !== 2) {
-      throw new Error("Exactly two accepted source photos are required for the awake master");
+    const expectedCounts = [...new Set(result.map((row) => Number(row.expected_photo_count)))];
+    if (expectedCounts.length !== 1 || expectedCounts[0] < 3 || expectedCounts[0] > 4 ||
+        result.length !== expectedCounts[0] || result.some((row, index) => Number(row.ordinal) !== index + 1)) {
+      throw new Error("Three or four accepted source photos are required for a character master");
     }
     const revisions = [...new Set(result.map((row) => row.source_photo_revision_id).filter(Boolean))];
-    if (revisions.length !== 1) throw new Error("Awake source photos have no single immutable revision");
+    if (revisions.length !== 1) throw new Error("Source photos have no single immutable revision");
     return {
       sourcePhotoRevisionId: revisions[0],
       references: result.map((row) => ({
+        role: "source_photo",
         mediaAssetId: row.media_asset_id,
         objectKey: assertPrivateObjectKey(row.object_key),
         sha256: normalizeSha256(row.sha256, "Source photo checksum"),
@@ -321,47 +341,91 @@ class PostgresImageMasterWorkerRepository {
     };
   }
 
-  async _loadSleepReference(tx, run, awakeCandidateId) {
+  async _loadApprovedCharacterReference(tx, run, { view, candidateId }) {
+    if (!["front", "side"].includes(view)) throw new Error("Character reference view must be front or side");
+    const attemptColumn = view === "front" ? "front_generation_attempts" : "side_generation_attempts";
     const row = oneRow(await tx.query(
-      `SELECT revision.awake_candidate_id, candidate.id AS candidate_id,
+      `SELECT candidate.id AS candidate_id, candidate.generation_attempt,
               asset.id AS media_asset_id, asset.object_key, asset.sha256,
               asset.byte_size, asset.content_type, qa.report AS qa_report
-         FROM character_revision revision
-         JOIN image_candidate candidate
-           ON candidate.id = revision.awake_candidate_id
-          AND candidate.project_id = revision.project_id
-          AND candidate.run_id = $1
-          AND candidate.kind = 'awake'
-          AND candidate.qa_status = 'passed'
+         FROM image_candidate candidate
          JOIN media_asset asset
            ON asset.id = candidate.media_asset_id
-          AND asset.project_id = revision.project_id
-          AND asset.run_id = $1
-          AND asset.kind = 'awake_master'
+          AND asset.project_id = candidate.project_id
+          AND asset.run_id = candidate.run_id
+          AND asset.kind = ($3 || '_master')::media_kind
           AND asset.deleted_at IS NULL
          JOIN qa_report qa
            ON qa.id = candidate.qa_report_id
-          AND qa.project_id = revision.project_id
-          AND qa.run_id = $1
+          AND qa.project_id = candidate.project_id
+          AND qa.run_id = candidate.run_id
           AND qa.subject_kind = 'image'
           AND qa.status = 'passed'
           AND qa.subject_media_asset_id = asset.id
-        WHERE revision.id = $2
-          AND revision.project_id = $3
-          AND ($4::uuid IS NULL OR candidate.id = $4::uuid)
-        FOR UPDATE OF revision, candidate, asset, qa`,
-      [run.run_id, run.character_revision_id, run.project_id, awakeCandidateId || null]
-    ), "Approved awake master is unavailable for sleeping-master generation");
+        WHERE candidate.id = $1
+          AND candidate.project_id = $2
+          AND candidate.run_id = $4
+          AND candidate.order_id = $5
+          AND candidate.kind = $3
+          AND candidate.qa_status = 'passed'
+          AND candidate.generation_attempt <= (SELECT ${attemptColumn} FROM production_run WHERE id = $4)
+        FOR UPDATE OF candidate, asset, qa`,
+      [candidateId, run.project_id, view, run.run_id, run.order_id]
+    ), `Approved ${view} master is unavailable`);
     return {
-      awakeCandidateId: row.candidate_id,
-      referenceMetrics: normalizeReferenceMetrics(row.qa_report),
-      references: [{
+      candidateId: row.candidate_id,
+      referenceMetrics: view === "front" ? normalizeReferenceMetrics(row.qa_report) : null,
+      reference: {
+        role: view,
         mediaAssetId: row.media_asset_id,
         objectKey: assertPrivateObjectKey(row.object_key),
-        sha256: normalizeSha256(row.sha256, "Awake master checksum"),
-        byteSize: assertPositiveByteSize(Number(row.byte_size), "Awake master byte size"),
-        contentType: requiredString(row.content_type, "Awake master content type", 256)
-      }]
+        sha256: normalizeSha256(row.sha256, `${view} master checksum`),
+        byteSize: assertPositiveByteSize(Number(row.byte_size), `${view} master byte size`),
+        contentType: requiredString(row.content_type, `${view} master content type`, 256)
+      }
+    };
+  }
+
+  async _loadSideReferences(tx, run, sourcePhotoRevisionId, frontCandidateId) {
+    const sources = await this._loadSourcePhotoReferences(tx, run, sourcePhotoRevisionId);
+    let resolvedFrontCandidateId = frontCandidateId;
+    if (!resolvedFrontCandidateId) {
+      const latest = oneRow(await tx.query(
+        `SELECT id FROM image_candidate
+          WHERE run_id = $1 AND project_id = $2 AND order_id = $3
+            AND kind = 'front' AND qa_status = 'passed'
+            AND generation_attempt = $4
+          ORDER BY created_at DESC LIMIT 1`,
+        [run.run_id, run.project_id, run.order_id, Number(run.front_generation_attempts)]
+      ), "A current approved front master is required for side generation");
+      resolvedFrontCandidateId = latest.id;
+    }
+    const front = await this._loadApprovedCharacterReference(tx, run, { view: "front", candidateId: resolvedFrontCandidateId });
+    return {
+      sourcePhotoRevisionId: sources.sourcePhotoRevisionId,
+      frontCandidateId: front.candidateId,
+      references: [...sources.references, front.reference],
+      referenceMetrics: front.referenceMetrics
+    };
+  }
+
+  async _loadSleepReferences(tx, run, frontCandidateId, sideCandidateId) {
+    const revision = oneRow(await tx.query(
+      `SELECT front_candidate_id, side_candidate_id
+         FROM character_revision
+        WHERE id = $1 AND project_id = $2
+          AND ($3::uuid IS NULL OR front_candidate_id = $3::uuid)
+          AND ($4::uuid IS NULL OR side_candidate_id = $4::uuid)
+        FOR UPDATE`,
+      [run.character_revision_id, run.project_id, frontCandidateId || null, sideCandidateId || null]
+    ), "Approved character revision is unavailable for sleeping-master generation");
+    const front = await this._loadApprovedCharacterReference(tx, run, { view: "front", candidateId: revision.front_candidate_id });
+    const side = await this._loadApprovedCharacterReference(tx, run, { view: "side", candidateId: revision.side_candidate_id });
+    return {
+      frontCandidateId: front.candidateId,
+      sideCandidateId: side.candidateId,
+      referenceMetrics: front.referenceMetrics,
+      references: [front.reference, side.reference]
     };
   }
 
@@ -386,21 +450,24 @@ class PostgresImageMasterWorkerRepository {
 
   async _createGeneration(tx, claim, run) {
     const prompt = await this._loadPublishedPrompt(tx, claim.kind);
-    const input = claim.kind === "awake"
-      ? await this._loadAwakeReferences(tx, run)
-      : await this._loadSleepReference(tx, run);
+    const input = claim.kind === "front"
+      ? await this._loadSourcePhotoReferences(tx, run)
+      : claim.kind === "side"
+        ? await this._loadSideReferences(tx, run)
+        : await this._loadSleepReferences(tx, run);
     const generationAttempt = currentGenerationAttempt(run, claim.kind);
     const id = this.idFactory();
     const inserted = rows(await tx.query(
       `INSERT INTO master_image_generation
         (id, job_id, run_id, project_id, order_id, kind, generation_attempt,
-         source_photo_revision_id, parent_awake_candidate_id,
+         source_photo_revision_id, parent_front_candidate_id,
+         parent_side_candidate_id,
          prompt_version_id, prompt_version_label, model_reference, output_size, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, 'pending')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, 'pending')
        RETURNING id`,
       [
         id, claim.jobId, run.run_id, run.project_id, run.order_id, claim.kind, generationAttempt,
-        input.sourcePhotoRevisionId || null, input.awakeCandidateId || null,
+        input.sourcePhotoRevisionId || null, input.frontCandidateId || null, input.sideCandidateId || null,
         prompt.prompt_version_id, prompt.prompt_version_label,
         JSON.stringify(claim.modelReference), claim.outputSize
       ]
@@ -410,9 +477,11 @@ class PostgresImageMasterWorkerRepository {
   }
 
   async _loadGenerationReferences(tx, run, generation) {
-    return generation.kind === "awake"
-      ? this._loadAwakeReferences(tx, run, generation.source_photo_revision_id)
-      : this._loadSleepReference(tx, run, generation.parent_awake_candidate_id);
+    return generation.kind === "front"
+      ? this._loadSourcePhotoReferences(tx, run, generation.source_photo_revision_id)
+      : generation.kind === "side"
+        ? this._loadSideReferences(tx, run, generation.source_photo_revision_id, generation.parent_front_candidate_id)
+        : this._loadSleepReferences(tx, run, generation.parent_front_candidate_id, generation.parent_side_candidate_id);
   }
 
   async _markExecutionSucceeded(tx, executionId) {
@@ -498,7 +567,7 @@ class PostgresImageMasterWorkerRepository {
         throw new Error("Master-image execution has an unsupported recoverable state");
       }
       if (execution.lease_active) return { outcome: "busy", runId: claim.runId, kind: claim.kind };
-      const expectedState = claim.kind === "awake" ? PRODUCTION_STATES.AWAKE_GENERATING : PRODUCTION_STATES.SLEEP_GENERATING;
+      const expectedState = claim.kind === "sleep" ? PRODUCTION_STATES.SLEEP_GENERATING : PRODUCTION_STATES.AWAKE_GENERATING;
       if (run.run_state !== expectedState || Number(generation.generation_attempt) !== currentGenerationAttempt(run, claim.kind)) {
         throw new Error("Master-image generation is not current for this production run");
       }
@@ -552,7 +621,8 @@ class PostgresImageMasterWorkerRepository {
         generationId: generation.id,
         generationAttempt: Number(generation.generation_attempt),
         sourcePhotoRevisionId: generation.source_photo_revision_id || null,
-        awakeCandidateId: generation.parent_awake_candidate_id || null,
+        frontCandidateId: generation.parent_front_candidate_id || null,
+        sideCandidateId: generation.parent_side_candidate_id || null,
         leaseToken,
         attempt,
         modelReference: frozenReference,
@@ -604,9 +674,11 @@ class PostgresImageMasterWorkerRepository {
         orderId: updated[0].order_id,
         runId: updated[0].run_id,
         masterImageGenerationId: updated[0].id,
-        operation: updated[0].kind === "awake"
-          ? PROVIDER_OPERATIONS.SEEDREAM_AWAKE
-          : PROVIDER_OPERATIONS.SEEDREAM_SLEEP,
+        operation: {
+          front: PROVIDER_OPERATIONS.SEEDREAM_FRONT,
+          side: PROVIDER_OPERATIONS.SEEDREAM_SIDE,
+          sleep: PROVIDER_OPERATIONS.SEEDREAM_SLEEP
+        }[updated[0].kind],
         workerAttempt: Number(updated[0].worker_attempt),
         modelReference: updated[0].model_reference,
         outputSize: updated[0].output_size,
@@ -896,7 +968,12 @@ class PostgresImageMasterWorkerRepository {
           FOR UPDATE OF generation, execution`,
         [safeJobId, safeLeaseToken, safePolicy, safeProcessor]
       ), "Master result is not bound to the active execution");
-      const expectedFinalizer = binding.kind === "awake" ? JOB_NAMES.FINALIZE_AWAKE : JOB_NAMES.FINALIZE_SLEEP;
+      const expectedFinalizer = {
+        front: JOB_NAMES.FINALIZE_FRONT,
+        side: JOB_NAMES.FINALIZE_SIDE,
+        sleep: JOB_NAMES.FINALIZE_SLEEP
+      }[binding.kind];
+      if (!expectedFinalizer) throw new Error("Master result has an unsupported kind");
       const safeFinalizer = assertRunWorkflowJob(finalizerJob, { expectedName: expectedFinalizer, runId: binding.run_id });
       const mediaAssetId = await this._insertMediaExact(tx, {
         projectId: binding.project_id,
@@ -927,7 +1004,7 @@ class PostgresImageMasterWorkerRepository {
          RETURNING id`,
         [
           candidateId, binding.project_id, binding.run_id, binding.order_id, mediaAssetId, binding.kind,
-          binding.parent_awake_candidate_id, modelReference.registryVersion,
+          binding.parent_front_candidate_id, modelReference.registryVersion,
           binding.provider_request_id, qa.report.ok ? "passed" : "failed", qaReportId,
           Number(binding.generation_attempt)
         ]
@@ -939,10 +1016,17 @@ class PostgresImageMasterWorkerRepository {
               SET sleep_candidate_id = COALESCE(sleep_candidate_id, $2)
             WHERE id = $1
               AND project_id = $3
-              AND awake_candidate_id = $4
+              AND front_candidate_id = $4
+              AND side_candidate_id = $5
               AND (sleep_candidate_id IS NULL OR sleep_candidate_id = $2)
           RETURNING id`,
-          [lockedRun.character_revision_id, candidateId, binding.project_id, binding.parent_awake_candidate_id]
+          [
+            lockedRun.character_revision_id,
+            candidateId,
+            binding.project_id,
+            binding.parent_front_candidate_id,
+            binding.parent_side_candidate_id
+          ]
         ));
         if (revision.length !== 1) throw new Error("Sleeping master could not be bound to the approved character revision");
       }
@@ -1046,14 +1130,19 @@ class PostgresImageMasterWorkerRepository {
                 output.id AS output_asset_id, output.object_key AS output_object_key,
                 output.sha256 AS output_sha256, output.byte_size AS output_byte_size,
                 output.content_type AS output_content_type,
-                awake.id AS awake_asset_id, awake.object_key AS awake_object_key,
-                awake.sha256 AS awake_sha256, awake.byte_size AS awake_byte_size,
-                awake.content_type AS awake_content_type
+                front.id AS front_asset_id, front.object_key AS front_object_key,
+                front.sha256 AS front_sha256, front.byte_size AS front_byte_size,
+                front.content_type AS front_content_type,
+                side.id AS side_asset_id, side.object_key AS side_object_key,
+                side.sha256 AS side_sha256, side.byte_size AS side_byte_size,
+                side.content_type AS side_content_type
            FROM master_image_generation generation
            JOIN image_candidate candidate ON candidate.id = generation.image_candidate_id
            JOIN media_asset output ON output.id = generation.normalized_media_asset_id
-           LEFT JOIN image_candidate awake_candidate ON awake_candidate.id = generation.parent_awake_candidate_id
-           LEFT JOIN media_asset awake ON awake.id = awake_candidate.media_asset_id
+           LEFT JOIN image_candidate front_candidate ON front_candidate.id = generation.parent_front_candidate_id
+           LEFT JOIN media_asset front ON front.id = front_candidate.media_asset_id
+           LEFT JOIN image_candidate side_candidate ON side_candidate.id = generation.parent_side_candidate_id
+           LEFT JOIN media_asset side ON side.id = side_candidate.media_asset_id
           WHERE generation.finalizer_job_id = $1
             AND generation.run_id = $2
             AND generation.kind = $3
@@ -1071,7 +1160,7 @@ class PostgresImageMasterWorkerRepository {
       if (execution.execution_status === "succeeded") {
         throw new Error("Master finalizer completed before the production transition was committed");
       }
-      const expectedState = kind === "awake" ? PRODUCTION_STATES.AWAKE_GENERATING : PRODUCTION_STATES.SLEEP_GENERATING;
+      const expectedState = kind === "sleep" ? PRODUCTION_STATES.SLEEP_GENERATING : PRODUCTION_STATES.AWAKE_GENERATING;
       if (mappedRun.state !== expectedState) throw new Error("Master finalizer is not current for the production run");
       if (execution.lease_active) return { outcome: "busy", runId: input.runId, kind };
       if (execution.execution_status === "dead") return { outcome: "dead", runId: input.runId, kind };
@@ -1107,13 +1196,20 @@ class PostgresImageMasterWorkerRepository {
         byteSize: assertPositiveByteSize(Number(generation.output_byte_size), "Finalized master byte size"),
         contentType: requiredString(generation.output_content_type, "Finalized master content type", 256)
       };
-      const awakeMaster = kind === "sleep" ? {
-        mediaAssetId: generation.awake_asset_id,
-        objectKey: assertPrivateObjectKey(generation.awake_object_key),
-        sha256: normalizeSha256(generation.awake_sha256, "Approved awake master checksum"),
-        byteSize: assertPositiveByteSize(Number(generation.awake_byte_size), "Approved awake master byte size"),
-        contentType: requiredString(generation.awake_content_type, "Approved awake master content type", 256)
-      } : outputMaster;
+      const frontMaster = kind === "sleep" ? {
+        mediaAssetId: generation.front_asset_id,
+        objectKey: assertPrivateObjectKey(generation.front_object_key),
+        sha256: normalizeSha256(generation.front_sha256, "Approved front master checksum"),
+        byteSize: assertPositiveByteSize(Number(generation.front_byte_size), "Approved front master byte size"),
+        contentType: requiredString(generation.front_content_type, "Approved front master content type", 256)
+      } : (kind === "front" ? outputMaster : null);
+      const sideMaster = kind === "sleep" ? {
+        mediaAssetId: generation.side_asset_id,
+        objectKey: assertPrivateObjectKey(generation.side_object_key),
+        sha256: normalizeSha256(generation.side_sha256, "Approved side master checksum"),
+        byteSize: assertPositiveByteSize(Number(generation.side_byte_size), "Approved side master byte size"),
+        contentType: requiredString(generation.side_content_type, "Approved side master content type", 256)
+      } : (kind === "side" ? outputMaster : null);
       return {
         outcome: "claimed",
         run: mappedRun,
@@ -1124,8 +1220,10 @@ class PostgresImageMasterWorkerRepository {
         generationId: generation.id,
         generationAttempt: Number(generation.generation_attempt),
         candidateId: generation.image_candidate_id,
-        awakeCandidateId: generation.parent_awake_candidate_id || generation.image_candidate_id,
-        awakeMaster,
+        frontCandidateId: generation.parent_front_candidate_id || (kind === "front" ? generation.image_candidate_id : null),
+        sideCandidateId: generation.parent_side_candidate_id || (kind === "side" ? generation.image_candidate_id : null),
+        frontMaster,
+        sideMaster,
         sleepMaster: kind === "sleep" ? outputMaster : null,
         leaseToken,
         attempt
@@ -1143,7 +1241,9 @@ class PostgresImageMasterWorkerRepository {
         `SELECT execution.id AS execution_id, execution.job_name,
                 generation.kind, generation.generation_attempt, generation.status,
                 run.id AS run_id, run.project_id, run.order_id, run.character_revision_id,
-                run.state AS run_state, run.awake_generation_attempts, run.sleep_generation_attempts,
+                run.state AS run_state, run.front_generation_attempts, run.side_generation_attempts,
+                run.front_user_regenerations_used, run.side_user_regenerations_used,
+                run.front_qa_retries, run.side_qa_retries, run.sleep_generation_attempts,
                 run.failure_code, run.version AS run_version
            FROM production_job_execution execution
            JOIN master_image_generation generation ON generation.finalizer_job_id = execution.job_id

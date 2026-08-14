@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const { normalizePriceCard } = require("../domain/provider-cost-accounting");
 
 const MAX_COST_RANGE_DAYS = 366;
-const COST_OPERATIONS = new Set(["seedream_awake", "seedream_sleep", "seedance_video"]);
+const COST_OPERATIONS = new Set(["seedream_front", "seedream_side", "seedream_sleep", "seedance_video"]);
 const COST_ACTION_IDS = new Set([
   "idle", "sneeze", "roll", "sleep-transition", "sleep-loop", "stretch", "hover-attention"
 ]);

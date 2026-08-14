@@ -17,8 +17,16 @@ const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflo
 const { RetryableProductionJobError, safeErrorCode } = require("./production-job-worker");
 
 const MASTER_IMAGE_PROCESSOR_CONTRACT_VERSION = "character-canvas-v1-master-processor/v1";
-const GENERATION_JOB_NAMES = new Set([JOB_NAMES.GENERATE_AWAKE, JOB_NAMES.GENERATE_SLEEP]);
-const FINALIZER_JOB_NAMES = new Set([JOB_NAMES.FINALIZE_AWAKE, JOB_NAMES.FINALIZE_SLEEP]);
+const GENERATION_JOB_NAMES = new Set([
+  JOB_NAMES.GENERATE_FRONT,
+  JOB_NAMES.GENERATE_SIDE,
+  JOB_NAMES.GENERATE_SLEEP
+]);
+const FINALIZER_JOB_NAMES = new Set([
+  JOB_NAMES.FINALIZE_FRONT,
+  JOB_NAMES.FINALIZE_SIDE,
+  JOB_NAMES.FINALIZE_SLEEP
+]);
 
 function requiredString(value, label, maxLength = 512) {
   if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
@@ -84,7 +92,12 @@ function createNormalizedMasterFileName({ sourceSha256, outputSha256, policyVers
 }
 
 function createMasterFinalizerJob(claim, artifact, qaPassed) {
-  const name = claim.kind === "awake" ? JOB_NAMES.FINALIZE_AWAKE : JOB_NAMES.FINALIZE_SLEEP;
+  const name = {
+    front: JOB_NAMES.FINALIZE_FRONT,
+    side: JOB_NAMES.FINALIZE_SIDE,
+    sleep: JOB_NAMES.FINALIZE_SLEEP
+  }[claim.kind];
+  if (!name) throw new Error("Master finalizer requires a front, side, or sleep claim");
   return createWorkflowJob({
     name,
     run: { id: claim.runId, orderId: claim.orderId },
@@ -117,13 +130,14 @@ class ImageMasterWorker {
       "renewMasterLease", "saveMasterResult", "releaseMasterClaimForRetry",
       "claimMasterFinalization", "completeMasterFinalization", "releaseMasterFinalizationForRetry"
     ]) requireMethod(repository, method, "Image master repository");
-    requireMethod(modelArkClient, "createAwakeMaster", "ModelArk client");
+    requireMethod(modelArkClient, "createFrontMaster", "ModelArk client");
+    requireMethod(modelArkClient, "createSideMaster", "ModelArk client");
     requireMethod(modelArkClient, "createSleepingMaster", "ModelArk client");
     requireMethod(objectStore, "createDownloadGrant", "Private object store");
     requireMethod(objectStore, "archiveProviderOutput", "Private object store");
     requireMethod(masterWorkspace, "withMasterWorkspace", "Private master workspace");
     requireMethod(masterImageProcessor, "normalizeAndInspect", "Master image processor");
-    for (const method of ["awakeMasterGenerated", "awakeMasterQaFailed", "sleepMasterQaPassed", "sleepMasterQaFailed"]) {
+    for (const method of ["characterMasterGenerated", "characterMasterQaFailed", "sleepMasterQaPassed", "sleepMasterQaFailed"]) {
       requireMethod(workflow, method, "Production workflow");
     }
     if (!modelRegistry || !modelRegistry.modelArk?.image) throw new Error("ModelArk image registry is required");
@@ -281,8 +295,8 @@ class ImageMasterWorker {
     });
     let created;
     try {
-      if (claim.kind === "awake") {
-        created = await this.modelArkClient.createAwakeMaster({
+      if (claim.kind === "front") {
+        created = await this.modelArkClient.createFrontMaster({
           requestId: providerRequestId,
           serverPrompt,
           sourcePhotos: claim.references.map((reference, index) => ({
@@ -292,13 +306,40 @@ class ImageMasterWorker {
           modelReference: claim.modelReference,
           outputSize: claim.outputSize
         });
+      } else if (claim.kind === "side") {
+        if (claim.references.length < 3) throw new Error("Side master requires source photos and an approved front reference");
+        const frontIndex = claim.references.findIndex((reference) => reference.role === "front");
+        const resolvedFrontIndex = frontIndex >= 0 ? frontIndex : claim.references.length - 1;
+        created = await this.modelArkClient.createSideMaster({
+          requestId: providerRequestId,
+          serverPrompt,
+          sourcePhotos: claim.references
+            .filter((_, index) => index !== resolvedFrontIndex)
+            .map((reference) => ({ objectKey: reference.objectKey, signedReadUrl: grants[claim.references.indexOf(reference)].url })),
+          frontMaster: {
+            objectKey: claim.references[resolvedFrontIndex].objectKey,
+            signedReadUrl: grants[resolvedFrontIndex].url,
+            canvasId: CHARACTER_CANVAS_V1.id
+          },
+          modelReference: claim.modelReference,
+          outputSize: claim.outputSize
+        });
       } else {
+        if (claim.references.length !== 2) throw new Error("Sleeping master requires approved front and side references");
+        const frontIndex = Math.max(0, claim.references.findIndex((reference) => reference.role === "front"));
+        const sideIndex = claim.references.findIndex((reference) => reference.role === "side");
+        const resolvedSideIndex = sideIndex >= 0 ? sideIndex : (frontIndex === 0 ? 1 : 0);
         created = await this.modelArkClient.createSleepingMaster({
           requestId: providerRequestId,
           serverPrompt,
-          awakeMaster: {
-            objectKey: claim.references[0].objectKey,
-            signedReadUrl: grants[0].url,
+          frontMaster: {
+            objectKey: claim.references[frontIndex].objectKey,
+            signedReadUrl: grants[frontIndex].url,
+            canvasId: CHARACTER_CANVAS_V1.id
+          },
+          sideMaster: {
+            objectKey: claim.references[resolvedSideIndex].objectKey,
+            signedReadUrl: grants[resolvedSideIndex].url,
             canvasId: CHARACTER_CANVAS_V1.id
           },
           modelReference: claim.modelReference,
@@ -437,7 +478,7 @@ class ImageMasterWorker {
           outputObjectKey: ({ sha256 }) => createProjectObjectKey({
             projectId: claim.projectId,
             runId: claim.runId,
-            objectClass: claim.kind === "awake" ? OBJECT_CLASSES.AWAKE_MASTER : OBJECT_CLASSES.SLEEP_MASTER,
+            objectClass: claim.kind === "sleep" ? OBJECT_CLASSES.SLEEP_MASTER : OBJECT_CLASSES.AWAKE_MASTER,
             fileName: createNormalizedMasterFileName({
               sourceSha256: claim.providerOutput.sha256,
               outputSha256: sha256,
@@ -459,13 +500,14 @@ class ImageMasterWorker {
             canvas: CHARACTER_CANVAS_V1,
             referenceMetrics: claim.referenceMetrics
           });
-          if (!inspection || !inspection.frame || !inspection.contentInspection) {
+          if (!inspection || !inspection.frame || !inspection.contentInspection || !inspection.appearanceInspection) {
             throw new Error("Master image processor returned incomplete QA evidence");
           }
           const qa = validateMasterImage({
             kind: claim.kind,
             frame: inspection.frame,
             contentInspection: inspection.contentInspection,
+            appearanceInspection: inspection.appearanceInspection,
             referenceMetrics: claim.referenceMetrics,
             sourceReferenceCount: referencePaths.length,
             policy,
@@ -479,7 +521,7 @@ class ImageMasterWorker {
       if (workspaceResult.localArtifact.width !== CHARACTER_CANVAS_V1.width ||
           workspaceResult.localArtifact.height !== CHARACTER_CANVAS_V1.height) {
         return this._releaseGenerationForRetry(input, claim, Object.assign(
-          new Error("Normalized master PNG does not match character_canvas_v1"),
+          new Error(`Normalized master PNG does not match ${CHARACTER_CANVAS_V1.id}`),
           { code: "master_canvas_mismatch" }
         ));
       }
@@ -528,19 +570,28 @@ class ImageMasterWorker {
     if (claim.outcome === "busy") throw new RetryableProductionJobError("master_finalization_busy");
     if (claim.outcome !== "claimed") return { status: claim.outcome, runId: input.runId, kind: claim.kind };
     try {
-      if (claim.kind === "awake") {
-        if (claim.qaPassed) await this.workflow.awakeMasterGenerated({ run: claim.run });
-        else await this.workflow.awakeMasterQaFailed({ run: claim.run });
+      if (claim.kind === "front" || claim.kind === "side") {
+        if (claim.qaPassed) {
+          await this.workflow.characterMasterGenerated({
+            run: claim.run,
+            view: claim.kind,
+            candidateId: claim.candidateId
+          });
+        } else {
+          await this.workflow.characterMasterQaFailed({ run: claim.run, view: claim.kind });
+        }
       } else if (claim.qaPassed) {
         await this.workflow.sleepMasterQaPassed({
           run: claim.run,
-          awakeMaster: claim.awakeMaster,
+          frontMaster: claim.frontMaster,
+          sideMaster: claim.sideMaster,
           sleepMaster: claim.sleepMaster
         });
       } else {
         await this.workflow.sleepMasterQaFailed({
           run: claim.run,
-          awakeMasterRevisionId: claim.awakeCandidateId
+          frontMasterRevisionId: claim.frontCandidateId,
+          sideMasterRevisionId: claim.sideCandidateId
         });
       }
       await this.repository.completeMasterFinalization({

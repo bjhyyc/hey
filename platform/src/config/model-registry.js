@@ -37,14 +37,14 @@ function loadModelRegistry(env = process.env) {
         endpointId: getOptionalString(env, "MODELARK_SEEDREAM_ENDPOINT_ID"),
         // Supported Seedream dimensions vary by enabled endpoint. Omit `size`
         // until an account-specific value is configured, then normalize every
-        // output to character_canvas_v1 before it becomes a master.
+        // output to character_canvas_480p_v1 before it becomes a master.
         outputSize: getOptionalString(env, "MODELARK_SEEDREAM_OUTPUT_SIZE"),
         maxConcurrent: getPositiveInteger(env, "MODELARK_IMAGE_MAX_CONCURRENT", 1),
         maxRetries: getPositiveInteger(env, "MODELARK_IMAGE_MAX_RETRIES", 2)
       },
       video: {
         endpointId: getOptionalString(env, "MODELARK_SEEDANCE_ENDPOINT_ID"),
-        resolution: getOptionalString(env, "MODELARK_VIDEO_RESOLUTION") || "720p",
+        resolution: getOptionalString(env, "MODELARK_VIDEO_RESOLUTION") || "480p",
         maxConcurrent: getPositiveInteger(env, "MODELARK_VIDEO_MAX_CONCURRENT", 1),
         maxRetries: getPositiveInteger(env, "MODELARK_VIDEO_MAX_RETRIES", 2),
         callbackBaseUrl: getOptionalString(env, "MODELARK_VIDEO_CALLBACK_BASE_URL"),
@@ -53,8 +53,12 @@ function loadModelRegistry(env = process.env) {
     }
   };
 
-  if (registry.modelArk.video.resolution !== "720p") {
-    throw new Error("PetPack Studio supports only 720p Seedance output");
+  if (!["480p", "720p"].includes(registry.modelArk.video.resolution)) {
+    throw new Error("PetPack Studio Seedance output must use 480p or 720p");
+  }
+
+  if (mode === "production" && registry.modelArk.video.resolution !== "480p") {
+    throw new Error("New production PetPack Studio runs must use 480p Seedance output");
   }
 
   if (mode === "production") {

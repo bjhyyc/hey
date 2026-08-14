@@ -1,6 +1,9 @@
 const crypto = require("node:crypto");
 
 const { REQUIRED_ACTION_IDS, assertActionId } = require("../domain/action-catalog");
+const { APPEARANCE_LOCK_CONTRACT_VERSION } = require("../qa/appearance-lock-v1");
+const { ACTION_QA_CONTRACT_VERSION } = require("../qa/action-quality-gate");
+const { SLEEP_LOOP_BOUNDARY_CONTRACT_VERSION } = require("../qa/sleep-loop-boundary-v1");
 const {
   assertPositiveByteSize,
   assertPrivateObjectKey,
@@ -53,21 +56,29 @@ function normalizePassedActionQa(value, actionId) {
   if (qa.ok !== true || !Array.isArray(qa.errors) || qa.errors.length !== 0) {
     throw new Error(`${actionId} does not have a passing action QA report`);
   }
-  for (const gate of ["media", "canvas", "endpoints", "content", "continuity"]) {
+  if (qa.contractVersion !== ACTION_QA_CONTRACT_VERSION) {
+    throw new Error(`${actionId} QA report uses an unsupported contract version`);
+  }
+  for (const gate of ["media", "canvas", "endpoints", "content", "continuity", "appearance"]) {
     if (!qa[gate] || qa[gate].ok !== true) {
       throw new Error(`${actionId} QA report is missing a passing ${gate} gate`);
     }
+  }
+  if (actionId === "sleep-loop" && (!qa.loopBoundary || qa.loopBoundary.ok !== true)) {
+    throw new Error("sleep-loop QA report is missing a passing loopBoundary gate");
   }
   const evidence = qa.evidence;
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) ||
       !evidence.contentInspection || typeof evidence.contentInspection !== "object" ||
       !evidence.continuity || typeof evidence.continuity !== "object" ||
-      !evidence.endpoints || typeof evidence.endpoints !== "object") {
+      !evidence.endpoints || typeof evidence.endpoints !== "object" ||
+      !evidence.appearance || typeof evidence.appearance !== "object") {
     throw new Error(`${actionId} QA report is missing immutable inspection evidence`);
   }
   for (const field of [
     "cameraFixed", "noText", "noProps", "noPeople", "noOtherAnimals",
-    "petFullyVisible", "identityConsistent", "noDeformation", "matteComplete",
+    "petFullyVisible", "speciesConsistent", "primaryCoatColorConsistent", "noSevereIdentityDrift",
+    "noDeformation", "matteComplete",
     "matteEdgesStable", "greenBackgroundUniform", "noGreenSpill"
   ]) {
     if (evidence.contentInspection[field] !== true) {
@@ -98,6 +109,21 @@ function normalizePassedActionQa(value, actionId) {
   }
   if (actionId === "sleep-loop" && evidence.contentInspection.loopSeamAcceptable !== true) {
     throw new Error("sleep-loop QA report has no explicit passing loop-seam evidence");
+  }
+  if (evidence.appearance.contractVersion !== APPEARANCE_LOCK_CONTRACT_VERSION ||
+      evidence.appearance.referenceBinding !== "approved-action-masters" ||
+      evidence.appearance.fullFrameCoverage !== true ||
+      Number(evidence.appearance.sampledFrameCount) !== sampledFrameCount) {
+    throw new Error(`${actionId} QA report has incomplete appearance-lock evidence`);
+  }
+  if (actionId === "sleep-loop") {
+    const boundary = evidence.loopBoundary;
+    if (!boundary || boundary.contractVersion !== SLEEP_LOOP_BOUNDARY_CONTRACT_VERSION ||
+        boundary.startsAtEndExhaleRest !== true || boundary.endsAtEndExhaleRest !== true ||
+        boundary.completeBreathCycle !== true || boundary.nextInhaleStarted !== false ||
+        Number(boundary.completedBreathCycles) !== 1 || Number(boundary.sampledFrameCount) !== sampledFrameCount) {
+      throw new Error("sleep-loop QA report has incomplete resting-boundary evidence");
+    }
   }
   return qa;
 }

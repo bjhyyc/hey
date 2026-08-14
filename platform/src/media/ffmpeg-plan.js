@@ -18,12 +18,17 @@ function requireWorkerPath(value, label) {
  * object keys and user names cannot become command text. Segmentation/QA must
  * provide a bounded geometric correction before this plan is used.
  */
-function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, correction = {} } = {}) {
+function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, expectedDuration, correction = {} } = {}) {
   // Do not crop to compensate for an oversized generated pet. If a frame needs
   // enlargement beyond its canvas, QA must reject/requeue it instead.
   const scale = assertFiniteInRange(correction.scale ?? 1, "correction.scale", 0.9, 1);
   const offsetX = assertFiniteInRange(correction.offsetX ?? 0, "correction.offsetX", -80, 80);
   const offsetY = assertFiniteInRange(correction.offsetY ?? 0, "correction.offsetY", -80, 80);
+  const duration = assertFiniteInRange(expectedDuration, "expectedDuration", 1, 60);
+  const exactFrameCount = duration * CHARACTER_CANVAS_V1.fps;
+  if (!Number.isSafeInteger(exactFrameCount)) {
+    throw new Error("expectedDuration must resolve to an exact frame count at the character canvas frame rate");
+  }
   const scaledWidth = Math.round(CHARACTER_CANVAS_V1.width * scale);
   const scaledHeight = Math.round(CHARACTER_CANVAS_V1.height * scale);
   const basePadX = Math.floor((CHARACTER_CANVAS_V1.width - scaledWidth) / 2);
@@ -33,7 +38,7 @@ function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, correc
   }
   const padX = Math.round(basePadX + offsetX);
   const padY = Math.round(basePadY + offsetY);
-  const normalize = `fps=${CHARACTER_CANVAS_V1.fps},scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=decrease,pad=${CHARACTER_CANVAS_V1.width}:${CHARACTER_CANVAS_V1.height}:${padX}:${padY}:color=black,setsar=1`;
+  const normalize = `trim=start=0:end=${duration},setpts=PTS-STARTPTS,fps=${CHARACTER_CANVAS_V1.fps},scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=decrease,pad=${CHARACTER_CANVAS_V1.width}:${CHARACTER_CANVAS_V1.height}:${padX}:${padY}:color=black,setsar=1`;
   const filterComplex = [
     `[0:v]${normalize},format=rgba[pet]`,
     `[1:v]${normalize},format=gray[matte]`,
@@ -53,12 +58,15 @@ function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, correc
       "-c:v", "libvpx-vp9",
       "-pix_fmt", "yuv420p",
       "-r", String(CHARACTER_CANVAS_V1.fps),
+      "-frames:v", String(exactFrameCount),
       requireWorkerPath(outputPath, "Worker output path")
     ],
     mediaProfile: {
       width: CHARACTER_CANVAS_V1.width,
       height: CHARACTER_CANVAS_V1.height,
       fps: CHARACTER_CANVAS_V1.fps,
+      duration,
+      frameCount: exactFrameCount,
       codec: "vp9",
       audio: false,
       matteMode: "green-screen"

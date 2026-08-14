@@ -5,7 +5,8 @@ const MAX_CLEANUP_LIMIT = 100;
 
 const MEDIA_KINDS = Object.freeze([
   "source_photo",
-  "awake_master",
+  "front_master",
+  "side_master",
   "sleep_master",
   "provider_input",
   "provider_output",
@@ -17,7 +18,8 @@ const MEDIA_KINDS = Object.freeze([
 
 const MEDIA_KIND_TO_OBJECT_CLASS = Object.freeze({
   source_photo: "source-photo",
-  awake_master: "awake-master",
+  front_master: "front-master",
+  side_master: "side-master",
   sleep_master: "sleep-master",
   provider_input: "provider-input",
   provider_output: "provider-output",

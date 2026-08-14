@@ -192,7 +192,8 @@ class PostgresCleanupInventoryRepository {
                 EXISTS (
                   SELECT 1 FROM production_run_master_frame frame
                    WHERE frame.run_id = asset.run_id
-                     AND (frame.awake_master_object_key = asset.object_key
+                     AND (frame.front_master_object_key = asset.object_key
+                       OR frame.side_master_object_key = asset.object_key
                        OR frame.sleep_master_object_key = asset.object_key)
                 ) AS master_frame_reference,
                 EXISTS (
@@ -203,7 +204,9 @@ class PostgresCleanupInventoryRepository {
                 EXISTS (
                   SELECT 1 FROM image_candidate candidate
                   JOIN character_revision revision
-                    ON revision.awake_candidate_id = candidate.id OR revision.sleep_candidate_id = candidate.id
+                    ON revision.front_candidate_id = candidate.id
+                    OR revision.side_candidate_id = candidate.id
+                    OR revision.sleep_candidate_id = candidate.id
                    WHERE candidate.media_asset_id = asset.id
                 ) AS character_revision_reference,
                 EXISTS (SELECT 1 FROM image_candidate candidate WHERE candidate.media_asset_id = asset.id)

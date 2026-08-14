@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { REQUIRED_ACTION_IDS, assertActionId } = require("../domain/action-catalog");
 const { PRODUCTION_STATES } = require("../domain/production-state-machine");
 const { JOB_NAMES } = require("../workflow/production-workflow");
+const { CHARACTER_CANVAS_V1 } = require("../qa/character-canvas-v1");
 
 function requireId(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required`);
@@ -82,6 +83,7 @@ function mapRunRow(row, fallback) {
     id: row.id || fallback.id,
     projectId: row.project_id || fallback.projectId,
     orderId: row.order_id || fallback.orderId,
+    modelRegistryVersion: row.model_registry_version || fallback.modelRegistryVersion,
     characterRevisionId: row.character_revision_id || fallback.characterRevisionId || null,
     state: row.state,
     version: Number(row.version),
@@ -153,20 +155,23 @@ class PostgresTransactionalWorkflowStore {
   }
 
   async _savePromptGateMasters(tx, run, masterFrames) {
-    const awakeMaster = assertPrivateMasterFrame(masterFrames && masterFrames.awakeMaster, "Awake master");
+    const frontMaster = assertPrivateMasterFrame(masterFrames && masterFrames.frontMaster, "Front master");
+    const sideMaster = assertPrivateMasterFrame(masterFrames && masterFrames.sideMaster, "Side master");
     const sleepMaster = assertPrivateMasterFrame(masterFrames && masterFrames.sleepMaster, "Sleeping master");
     const saved = await tx.query(
       `INSERT INTO production_run_master_frame
-        (run_id, awake_master_object_key, sleep_master_object_key)
-       VALUES ($1, $2, $3)
+        (run_id, front_master_object_key, side_master_object_key, sleep_master_object_key)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (run_id) DO UPDATE
-         SET awake_master_object_key = EXCLUDED.awake_master_object_key,
+         SET front_master_object_key = EXCLUDED.front_master_object_key,
+             side_master_object_key = EXCLUDED.side_master_object_key,
              sleep_master_object_key = EXCLUDED.sleep_master_object_key,
              updated_at = now()
-       WHERE production_run_master_frame.awake_master_object_key = EXCLUDED.awake_master_object_key
+       WHERE production_run_master_frame.front_master_object_key = EXCLUDED.front_master_object_key
+         AND production_run_master_frame.side_master_object_key = EXCLUDED.side_master_object_key
          AND production_run_master_frame.sleep_master_object_key = EXCLUDED.sleep_master_object_key
        RETURNING run_id`,
-      [run.id, awakeMaster.objectKey, sleepMaster.objectKey]
+      [run.id, frontMaster.objectKey, sideMaster.objectKey, sleepMaster.objectKey]
     );
     if (saved.rows.length !== 1) {
       throw new Error("Prompt-gate master frames are immutable once stored for a run");
@@ -192,29 +197,39 @@ class PostgresTransactionalWorkflowStore {
   async _createRun(tx, run) {
     const inserted = await tx.query(
       `INSERT INTO production_run
-        (id, project_id, order_id, state, prompt_snapshot, awake_generation_attempts, sleep_generation_attempts, failure_code, version)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, 0)
+        (id, project_id, order_id, state, model_registry_version, prompt_snapshot,
+         front_generation_attempts, side_generation_attempts,
+         front_user_regenerations_used, side_user_regenerations_used,
+         front_qa_retries, side_qa_retries, sleep_generation_attempts, failure_code, version)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, 0)
        ON CONFLICT (order_id) DO NOTHING
-       RETURNING id, project_id, order_id, character_revision_id, state, version, updated_at`,
+       RETURNING id, project_id, order_id, character_revision_id, state, model_registry_version, version, updated_at`,
       [
         requireId(run.id, "Run ID"),
         requireId(run.projectId, "Project ID"),
         requireId(run.orderId, "Order ID"),
         requireId(run.state, "Run state"),
+        requireId(run.modelRegistryVersion, "Model registry version"),
         serializeJson(run.promptSnapshot),
-        Number(run.awakeGenerationAttempts || 0),
+        Number(run.frontGenerationAttempts || 0),
+        Number(run.sideGenerationAttempts || 0),
+        Number(run.frontUserRegenerationsUsed || 0),
+        Number(run.sideUserRegenerationsUsed || 0),
+        Number(run.frontQaRetries || 0),
+        Number(run.sideQaRetries || 0),
         Number(run.sleepGenerationAttempts || 0),
         run.failureCode || null
       ]
     );
     if (inserted.rows.length > 0) return { run: mapRunRow(inserted.rows[0], run), created: true };
     const existing = await tx.query(
-      "SELECT id, project_id, order_id, character_revision_id, state, version, updated_at FROM production_run WHERE order_id = $1 FOR UPDATE",
+      "SELECT id, project_id, order_id, character_revision_id, state, model_registry_version, version, updated_at FROM production_run WHERE order_id = $1 FOR UPDATE",
       [run.orderId]
     );
     if (existing.rows.length !== 1) throw new Error("Unable to recover an idempotent production run");
     const existingRun = mapRunRow(existing.rows[0], run);
-    if (existingRun.projectId !== run.projectId || existingRun.orderId !== run.orderId) {
+    if (existingRun.projectId !== run.projectId || existingRun.orderId !== run.orderId ||
+        existingRun.modelRegistryVersion !== run.modelRegistryVersion) {
       throw new Error("Idempotent production run ownership does not match the requested order");
     }
     return { run: existingRun, created: false };
@@ -222,28 +237,43 @@ class PostgresTransactionalWorkflowStore {
 
   async _updateRun(tx, previousRun, run) {
     const expectedVersion = requireVersion(previousRun, "A persisted run transition");
+    const frozenModelRegistryVersion = requireId(previousRun.modelRegistryVersion, "Frozen model registry version");
+    if (requireId(run.modelRegistryVersion, "Model registry version") !== frozenModelRegistryVersion) {
+      throw new Error("Production run cannot switch model registry versions");
+    }
     const result = await tx.query(
       `UPDATE production_run
           SET state = $2,
               prompt_snapshot = $3::jsonb,
-              awake_generation_attempts = $4,
-              sleep_generation_attempts = $5,
-              character_revision_id = COALESCE($6::uuid, character_revision_id),
-              failure_code = $7,
+              front_generation_attempts = $4,
+              side_generation_attempts = $5,
+              front_user_regenerations_used = $6,
+              side_user_regenerations_used = $7,
+              front_qa_retries = $8,
+              side_qa_retries = $9,
+              sleep_generation_attempts = $10,
+              character_revision_id = COALESCE($11::uuid, character_revision_id),
+              failure_code = $12,
               version = version + 1,
               updated_at = now()
-        WHERE id = $1 AND state = $8 AND version = $9
-      RETURNING id, project_id, order_id, character_revision_id, state, version, updated_at`,
+        WHERE id = $1 AND state = $13 AND version = $14 AND model_registry_version = $15
+      RETURNING id, project_id, order_id, character_revision_id, state, model_registry_version, version, updated_at`,
       [
         requireId(run.id, "Run ID"),
         requireId(run.state, "Run state"),
         serializeJson(run.promptSnapshot),
-        Number(run.awakeGenerationAttempts || 0),
+        Number(run.frontGenerationAttempts || 0),
+        Number(run.sideGenerationAttempts || 0),
+        Number(run.frontUserRegenerationsUsed || 0),
+        Number(run.sideUserRegenerationsUsed || 0),
+        Number(run.frontQaRetries || 0),
+        Number(run.sideQaRetries || 0),
         Number(run.sleepGenerationAttempts || 0),
         run.characterRevisionId || null,
         run.failureCode || null,
         requireId(previousRun.state, "Previous run state"),
-        expectedVersion
+        expectedVersion,
+        frozenModelRegistryVersion
       ]
     );
     if (result.rows.length !== 1) {
@@ -303,32 +333,33 @@ class PostgresTransactionalWorkflowStore {
     });
   }
 
-  async _claimConfirmedAwakeCharacter(tx, { run, awakeCandidateId }) {
+  async _claimConfirmedCharacterCandidate(tx, { run, candidateId, view }) {
+    if (!["front", "side"].includes(view)) throw new Error("Confirmed character view must be front or side");
+    const attemptColumn = view === "front" ? "front_generation_attempts" : "side_generation_attempts";
     const candidate = await tx.query(
       `SELECT candidate.id,
-               candidate.project_id,
-               revision.id AS character_revision_id
+               candidate.project_id
          FROM production_run
          JOIN image_candidate candidate
            ON candidate.id = $2
            AND candidate.project_id = production_run.project_id
            AND candidate.run_id = production_run.id
            AND candidate.order_id = production_run.order_id
-           AND candidate.generation_attempt = production_run.awake_generation_attempts
+           AND candidate.generation_attempt = production_run.${attemptColumn}
          JOIN master_image_generation generation
            ON generation.image_candidate_id = candidate.id
           AND generation.run_id = production_run.id
           AND generation.project_id = production_run.project_id
           AND generation.order_id = production_run.order_id
-          AND generation.kind = 'awake'
-          AND generation.generation_attempt = production_run.awake_generation_attempts
+          AND generation.kind = $3
+          AND generation.generation_attempt = production_run.${attemptColumn}
           AND generation.status = 'qa_passed'
          JOIN media_asset asset
            ON asset.id = candidate.media_asset_id
           AND asset.id = generation.normalized_media_asset_id
           AND asset.project_id = production_run.project_id
           AND asset.run_id = production_run.id
-          AND asset.kind = 'awake_master'
+          AND asset.kind = ($3 || '_master')::media_kind
           AND asset.deleted_at IS NULL
          JOIN qa_report qa
            ON qa.id = candidate.qa_report_id
@@ -341,56 +372,55 @@ class PostgresTransactionalWorkflowStore {
           AND qa.subject_media_asset_id = asset.id
           AND qa.policy_version = generation.processing_policy_version
           AND qa.processor_version = generation.processor_version
-         LEFT JOIN character_revision revision
-           ON revision.awake_candidate_id = candidate.id
         WHERE production_run.id = $1
-          AND candidate.kind = 'awake'
+          AND candidate.kind = $3
           AND candidate.qa_status = 'passed'
         FOR UPDATE OF candidate`,
-      [run.id, requireId(awakeCandidateId, "Awake candidate ID")]
+      [run.id, requireId(candidateId, `${view} candidate ID`), view]
     );
     if (candidate.rows.length !== 1) {
-      throw new Error("The selected awake character is not a quality-approved candidate for this production run");
+      throw new Error(`The selected ${view} character is not a quality-approved current candidate for this production run`);
     }
-    const row = candidate.rows[0];
-    // Confirmation is meaningful even when a prior request already created the
-    // immutable revision. Mark the selected QA-approved candidate in either
-    // case, so an idempotent retry never leaves a usable character unconfirmed.
-    const confirmCandidate = async () => tx.query(
+    return candidate.rows[0];
+  }
+
+  async _claimConfirmedCharacterMasters(tx, { run, frontCandidateId, sideCandidateId }) {
+    const front = await this._claimConfirmedCharacterCandidate(tx, { run, candidateId: frontCandidateId, view: "front" });
+    const side = await this._claimConfirmedCharacterCandidate(tx, { run, candidateId: sideCandidateId, view: "side" });
+    if (front.project_id !== side.project_id) throw new Error("Confirmed character masters belong to different projects");
+    const confirmCandidate = (row) => tx.query(
       `UPDATE image_candidate
           SET confirmed_at = COALESCE(confirmed_at, now())
         WHERE id = $1 AND project_id = $2 AND qa_status = 'passed'`,
       [row.id, row.project_id]
     );
-    if (row.character_revision_id) {
-      await confirmCandidate();
-      return row.character_revision_id;
-    }
 
     const characterRevisionId = this.idFactory();
     const created = await tx.query(
       `INSERT INTO character_revision
-        (id, project_id, awake_candidate_id, canvas_id, approved_by_user_at)
-       VALUES ($1, $2, $3, 'character_canvas_v1', now())
-       ON CONFLICT (awake_candidate_id) DO NOTHING
+        (id, project_id, front_candidate_id, side_candidate_id, canvas_id, approved_by_user_at)
+       VALUES ($1, $2, $3, $4, $5, now())
+       ON CONFLICT DO NOTHING
        RETURNING id`,
-      [characterRevisionId, row.project_id, row.id]
+      [characterRevisionId, front.project_id, front.id, side.id, CHARACTER_CANVAS_V1.id]
     );
     if (created.rows.length === 1) {
-      await confirmCandidate();
+      await confirmCandidate(front);
+      await confirmCandidate(side);
       return created.rows[0].id;
     }
     const existing = await tx.query(
       `SELECT id
          FROM character_revision
-        WHERE awake_candidate_id = $1
+        WHERE front_candidate_id = $1 AND side_candidate_id = $2
         FOR UPDATE`,
-      [row.id]
+      [front.id, side.id]
     );
     if (existing.rows.length !== 1) {
-      throw new Error("Confirmed awake character revision could not be recovered");
+      throw new Error("Confirmed character revision could not be recovered");
     }
-    await confirmCandidate();
+    await confirmCandidate(front);
+    await confirmCandidate(side);
     return existing.rows[0].id;
   }
 
@@ -399,33 +429,34 @@ class PostgresTransactionalWorkflowStore {
    * awake candidate, immutable character revision, sleep transition, and
    * sleep-generation outbox job must succeed or roll back together.
    */
-  async confirmAwakeCandidateAndCommitTransition({ previousRun, run, awakeCandidateId, jobs = [] } = {}) {
+  async confirmCharacterCandidatesAndCommitTransition({ previousRun, run, frontCandidateId, sideCandidateId, jobs = [] } = {}) {
     if (!previousRun || previousRun.id !== (run && run.id)) {
-      throw new Error("Awake-character confirmation requires one persisted production run transition");
+      throw new Error("Character confirmation requires one persisted production run transition");
     }
     if (previousRun.state !== PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION || run.state !== PRODUCTION_STATES.SLEEP_GENERATING) {
-      throw new Error("Awake-character confirmation has an invalid production state transition");
+      throw new Error("Character confirmation has an invalid production state transition");
     }
     if (!Array.isArray(jobs) || jobs.length !== 1) {
-      throw new Error("Awake-character confirmation requires exactly one sleeping-master generation job");
+      throw new Error("Character confirmation requires exactly one sleeping-master generation job");
     }
     return this.database.transaction(async (transaction) => {
       const tx = requireTransactionQuery(transaction);
-      const characterRevisionId = await this._claimConfirmedAwakeCharacter(tx, { run, awakeCandidateId });
+      const characterRevisionId = await this._claimConfirmedCharacterMasters(tx, { run, frontCandidateId, sideCandidateId });
       const next = { ...run, characterRevisionId };
       const transition = await this._updateRun(tx, previousRun, next);
       const committedRun = { ...transition.run, completedActions: run.completedActions || [] };
       await this._recordTransition(tx, { previousRun, run: committedRun });
       for (const job of jobs) {
         if (!job || !job.data || job.data.runId !== committedRun.id || job.name !== JOB_NAMES.GENERATE_SLEEP) {
-          throw new Error("Awake-character confirmation must enqueue the sleeping-master job for its run");
+          throw new Error("Character confirmation must enqueue the sleeping-master job for its run");
         }
         await this._insertOutbox(tx, job);
       }
-      this.logger.info?.("petpack.persistence.awake_character_confirmed", {
+      this.logger.info?.("petpack.persistence.character_masters_confirmed", {
         runId: committedRun.id,
         characterRevisionId,
-        awakeCandidateId
+        frontCandidateId,
+        sideCandidateId
       });
       return committedRun;
     });
@@ -435,7 +466,7 @@ class PostgresTransactionalWorkflowStore {
     const result = await this.database.transaction(async (transaction) => {
       const tx = requireTransactionQuery(transaction);
       return tx.query(
-        `SELECT awake_master_object_key, sleep_master_object_key
+        `SELECT front_master_object_key, side_master_object_key, sleep_master_object_key
            FROM production_run_master_frame
           WHERE run_id = $1`,
         [requireId(runId, "Run ID")]
@@ -443,7 +474,8 @@ class PostgresTransactionalWorkflowStore {
     });
     if (!result || result.rows.length !== 1) return null;
     return {
-      awakeMaster: { objectKey: result.rows[0].awake_master_object_key },
+      frontMaster: { objectKey: result.rows[0].front_master_object_key },
+      sideMaster: { objectKey: result.rows[0].side_master_object_key },
       sleepMaster: { objectKey: result.rows[0].sleep_master_object_key }
     };
   }

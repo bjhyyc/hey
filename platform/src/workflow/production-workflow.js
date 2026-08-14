@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { createModelReference } = require("../config/model-registry");
 const { REQUIRED_ACTION_IDS, assertActionId, createVideoJobSnapshot } = require("../domain/action-catalog");
 const {
+  assertCharacterMasterView,
   PRODUCTION_STATES,
   canAdvanceFromVideoGeneration,
   completeVideoAction,
@@ -12,8 +13,10 @@ const {
 
 const JOB_NAMES = Object.freeze({
   AWAIT_PHOTOS: "petpack.await-photos",
-  GENERATE_AWAKE: "petpack.generate-awake-master",
-  FINALIZE_AWAKE: "petpack.finalize-awake-master",
+  GENERATE_FRONT: "petpack.generate-front-master",
+  FINALIZE_FRONT: "petpack.finalize-front-master",
+  GENERATE_SIDE: "petpack.generate-side-master",
+  FINALIZE_SIDE: "petpack.finalize-side-master",
   GENERATE_SLEEP: "petpack.generate-sleep-master",
   FINALIZE_SLEEP: "petpack.finalize-sleep-master",
   GENERATE_VIDEO: "petpack.generate-video-action",
@@ -110,7 +113,15 @@ function requirePromptStore(promptStore) {
  * server stores, preventing prompt or provider URLs from reaching browsers.
  */
 class ProductionWorkflow {
-  constructor({ runStore, queue, promptStore, modelRegistry, maxSleepMasterRetries = 2, logger = console } = {}) {
+  constructor({
+    runStore,
+    queue,
+    promptStore,
+    modelRegistry,
+    maxCharacterMasterQaRetries = 2,
+    maxSleepMasterRetries = 2,
+    logger = console
+  } = {}) {
     this.runStore = requireRunStore(runStore);
     this.queue = requireWorkflowQueue(queue, { optional: typeof this.runStore.commitTransition === "function" });
     this.promptStore = requirePromptStore(promptStore);
@@ -118,8 +129,12 @@ class ProductionWorkflow {
     if (!Number.isInteger(maxSleepMasterRetries) || maxSleepMasterRetries < 0) {
       throw new Error("maxSleepMasterRetries must be a non-negative integer");
     }
+    if (!Number.isInteger(maxCharacterMasterQaRetries) || maxCharacterMasterQaRetries < 0) {
+      throw new Error("maxCharacterMasterQaRetries must be a non-negative integer");
+    }
     this.modelRegistry = modelRegistry;
     this.maxSleepMasterRetries = maxSleepMasterRetries;
+    this.maxCharacterMasterQaRetries = maxCharacterMasterQaRetries;
     this.logger = logger;
   }
 
@@ -152,7 +167,12 @@ class ProductionWorkflow {
   }
 
   async startPaidOrder({ order, projectId, runId }) {
-    const run = startProductionRun({ order, projectId, runId });
+    const run = startProductionRun({
+      order,
+      projectId,
+      runId,
+      modelRegistryVersion: this.modelRegistry.version
+    });
     const job = createWorkflowJob({
       name: JOB_NAMES.AWAIT_PHOTOS,
       run,
@@ -165,55 +185,95 @@ class ProductionWorkflow {
   async photosAccepted({ run, sourcePhotoRevisionId }) {
     const next = transitionProductionRun(run, "photosAccepted");
     const job = createWorkflowJob({
-      name: JOB_NAMES.GENERATE_AWAKE,
+      name: JOB_NAMES.GENERATE_FRONT,
       run: next,
-      inputRevision: `${requiredId(sourcePhotoRevisionId, "sourcePhotoRevisionId")}:awake-${next.awakeGenerationAttempts}`,
+      inputRevision: `${requiredId(sourcePhotoRevisionId, "sourcePhotoRevisionId")}:front-${next.frontGenerationAttempts}`,
       attempts: this.modelRegistry.modelArk.image.maxRetries + 1
     });
     return this._saveAndQueue(run, next, job);
   }
 
-  async regenerateAwakeMaster({ run, sourcePhotoRevisionId }) {
-    const next = transitionProductionRun(run, "awakeRegenerationRequested");
+  async regenerateCharacterMaster({ run, sourcePhotoRevisionId, view }) {
+    const safeView = assertCharacterMasterView(view);
+    const next = transitionProductionRun(run, "characterRegenerationRequested", { view: safeView });
     const job = createWorkflowJob({
-      name: JOB_NAMES.GENERATE_AWAKE,
+      name: safeView === "front" ? JOB_NAMES.GENERATE_FRONT : JOB_NAMES.GENERATE_SIDE,
       run: next,
-      inputRevision: `${requiredId(sourcePhotoRevisionId, "sourcePhotoRevisionId")}:awake-${next.awakeGenerationAttempts}`,
+      inputRevision: `${requiredId(sourcePhotoRevisionId, "sourcePhotoRevisionId")}:${safeView}-${next[`${safeView}GenerationAttempts`]}`,
       attempts: this.modelRegistry.modelArk.image.maxRetries + 1
+    });
+    this.logger.info?.("petpack.workflow.character_regeneration_accepted", {
+      runId: run.id,
+      view: safeView,
+      userRegenerationsUsed: next[`${safeView}UserRegenerationsUsed`]
     });
     return this._saveAndQueue(run, next, job);
   }
 
-  async awakeMasterGenerated({ run }) {
-    const next = transitionProductionRun(run, "awakeGenerated");
-    return this._saveAndQueue(run, next);
+  async characterMasterGenerated({ run, view, candidateId }) {
+    const safeView = assertCharacterMasterView(view);
+    const next = transitionProductionRun(run, "characterMasterGenerated", { view: safeView });
+    let job = null;
+    if (safeView === "front" && Number(run.sideGenerationAttempts || 0) === 0) {
+      job = createWorkflowJob({
+        name: JOB_NAMES.GENERATE_SIDE,
+        run: next,
+        inputRevision: `${requiredId(candidateId, "Front candidate ID")}:side-${next.sideGenerationAttempts}`,
+        attempts: this.modelRegistry.modelArk.image.maxRetries + 1
+      });
+    }
+    return this._saveAndQueue(run, next, job);
   }
 
-  async awakeMasterQaFailed({ run }) {
+  async characterMasterQaFailed({ run, view }) {
     if (!run || run.state !== PRODUCTION_STATES.AWAKE_GENERATING) {
-      throw new Error("Awake-master QA can fail only while the awake master is generating");
+      throw new Error("Character-master QA can fail only while a character master is generating");
+    }
+    const safeView = assertCharacterMasterView(view);
+    const retries = Number(run[`${safeView}QaRetries`] || 0);
+    if (retries < this.maxCharacterMasterQaRetries) {
+      const retried = transitionProductionRun(run, "characterMasterQaRetry", { view: safeView });
+      const job = createWorkflowJob({
+        name: safeView === "front" ? JOB_NAMES.GENERATE_FRONT : JOB_NAMES.GENERATE_SIDE,
+        run: retried,
+        inputRevision: `${safeView}:internal-qa-retry-${retried[`${safeView}GenerationAttempts`]}`,
+        attempts: this.modelRegistry.modelArk.image.maxRetries + 1
+      });
+      this.logger.warn?.("petpack.workflow.character_qa_retry_scheduled", {
+        runId: run.id,
+        view: safeView,
+        qaRetry: retried[`${safeView}QaRetries`]
+      });
+      return this._saveAndQueue(run, retried, job);
     }
     const failed = {
       ...transitionProductionRun(run, "failed"),
-      failureCode: "awake_master_qa_failed"
+      failureCode: `${safeView}_master_qa_failed`
     };
+    this.logger.error?.("petpack.workflow.character_qa_retries_exhausted", {
+      runId: run.id,
+      view: safeView,
+      qaRetries: retries
+    });
     return this._saveAndQueue(run, failed);
   }
 
-  async confirmAwakeMaster({ run, awakeMasterRevisionId }) {
+  async confirmCharacterMasters({ run, frontMasterRevisionId, sideMasterRevisionId }) {
     const next = transitionProductionRun(run, "characterConfirmed");
-    const safeAwakeMasterRevisionId = requiredId(awakeMasterRevisionId, "awakeMasterRevisionId");
+    const safeFrontMasterRevisionId = requiredId(frontMasterRevisionId, "frontMasterRevisionId");
+    const safeSideMasterRevisionId = requiredId(sideMasterRevisionId, "sideMasterRevisionId");
     const job = createWorkflowJob({
       name: JOB_NAMES.GENERATE_SLEEP,
       run: next,
-      inputRevision: `${safeAwakeMasterRevisionId}:sleep-${next.sleepGenerationAttempts}`,
+      inputRevision: `${safeFrontMasterRevisionId}:${safeSideMasterRevisionId}:sleep-${next.sleepGenerationAttempts}`,
       attempts: this.maxSleepMasterRetries + 1
     });
-    if (typeof this.runStore.confirmAwakeCandidateAndCommitTransition === "function") {
-      const committedRun = await this.runStore.confirmAwakeCandidateAndCommitTransition({
+    if (typeof this.runStore.confirmCharacterCandidatesAndCommitTransition === "function") {
+      const committedRun = await this.runStore.confirmCharacterCandidatesAndCommitTransition({
         previousRun: run,
         run: next,
-        awakeCandidateId: safeAwakeMasterRevisionId,
+        frontCandidateId: safeFrontMasterRevisionId,
+        sideCandidateId: safeSideMasterRevisionId,
         jobs: [job]
       });
       this.logger.info?.("petpack.workflow.transition", {
@@ -227,7 +287,7 @@ class ProductionWorkflow {
     return this._saveAndQueue(run, next, job);
   }
 
-  async sleepMasterQaFailed({ run, awakeMasterRevisionId }) {
+  async sleepMasterQaFailed({ run }) {
     const retried = transitionProductionRun(run, "sleepMasterQaRetry");
     if (retried.sleepGenerationAttempts > this.maxSleepMasterRetries) {
       const failed = {
@@ -239,13 +299,13 @@ class ProductionWorkflow {
     const job = createWorkflowJob({
       name: JOB_NAMES.GENERATE_SLEEP,
       run: retried,
-      inputRevision: `${requiredId(awakeMasterRevisionId, "awakeMasterRevisionId")}:sleep-${retried.sleepGenerationAttempts}`,
+      inputRevision: `${requiredId(run.characterRevisionId, "Character revision ID")}:sleep-${retried.sleepGenerationAttempts}`,
       attempts: 1
     });
     return this._saveAndQueue(run, retried, job);
   }
 
-  async sleepMasterQaPassed({ run, awakeMaster, sleepMaster }) {
+  async sleepMasterQaPassed({ run, frontMaster, sideMaster, sleepMaster }) {
     const awaitingPromptGate = transitionProductionRun(run, "sleepMasterQaPassed");
     // Persist the gate before querying admin metadata. If one of the seven
     // prompts is unpublished, operations can correct it without regenerating a
@@ -253,21 +313,24 @@ class ProductionWorkflow {
     const persistedPromptGate = await this._commit({
       previousRun: run,
       run: awaitingPromptGate,
-      masterFrames: { awakeMaster, sleepMaster }
+      masterFrames: { frontMaster, sideMaster, sleepMaster }
     });
-    return this.resumeAwaitingPromptGate({ run: persistedPromptGate, awakeMaster, sleepMaster });
+    return this.resumeAwaitingPromptGate({ run: persistedPromptGate, frontMaster, sideMaster, sleepMaster });
   }
 
-  async resumeAwaitingPromptGate({ run, awakeMaster, sleepMaster } = {}) {
+  async resumeAwaitingPromptGate({ run, frontMaster, sideMaster, sleepMaster } = {}) {
     if (!run || run.state !== PRODUCTION_STATES.AWAITING_PROMPT_GATE) {
       throw new Error("Prompt gate can be resumed only after a valid sleeping master is ready");
     }
-    let masters = { awakeMaster, sleepMaster };
-    if ((!masters.awakeMaster || !masters.sleepMaster) && typeof this.runStore.getPromptGateMasters === "function") {
+    let masters = { frontMaster, sideMaster, sleepMaster };
+    if ((!masters.frontMaster || !masters.sideMaster || !masters.sleepMaster) && typeof this.runStore.getPromptGateMasters === "function") {
       masters = await this.runStore.getPromptGateMasters({ runId: run.id });
     }
-    if (!masters || !masters.awakeMaster || !masters.sleepMaster) {
-      throw new Error("Prompt gate resume requires persisted awake and sleeping master frames");
+    if (!masters || !masters.frontMaster || !masters.sideMaster || !masters.sleepMaster) {
+      throw new Error("Prompt gate resume requires persisted front, side, and sleeping master frames");
+    }
+    if (run.modelRegistryVersion !== this.modelRegistry.version) {
+      throw new Error("The production run's frozen model registry is not loaded; refusing to switch models mid-run");
     }
     const promptVersions = await this.promptStore.listPublishedMetadata();
     const videoRun = transitionProductionRun(run, "promptsVerified", { promptVersions });
@@ -276,7 +339,8 @@ class ProductionWorkflow {
     const snapshots = REQUIRED_ACTION_IDS.map((actionId) => createVideoJobSnapshot({
       actionId,
       promptVersion: byAction.get(actionId),
-      awakeMaster: masters.awakeMaster,
+      frontMaster: masters.frontMaster,
+      sideMaster: masters.sideMaster,
       sleepMaster: masters.sleepMaster,
       modelReference: videoReference
     }));

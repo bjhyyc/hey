@@ -21,7 +21,7 @@ const {
   normalizePetpackArtifact
 } = require("./package-contract");
 
-// Seven short 720p VP9 actions should remain far below these ceilings. Tight
+// Seven short 480p VP9 actions should remain far below these ceilings. Tight
 // caps are intentional because JSZip materializes the archive in memory; one
 // malformed order must not consume a multi-GB worker process.
 const DEFAULT_MAX_ACTION_BYTES = 48 * 1024 * 1024;

@@ -293,9 +293,15 @@ function assertPaymentMethod(paymentMethod) {
   return paymentMethod;
 }
 
-function assertSourcePhotoReservation({ projectId, ordinal, objectKey, contentType, sha256, byteSize } = {}) {
+function assertSourcePhotoReservation({ projectId, ordinal, objectKey, contentType, sha256, byteSize, expectedPhotoCount } = {}) {
   const safeOrdinal = Number(ordinal);
-  if (safeOrdinal !== 1 && safeOrdinal !== 2) throw new Error("Source photo ordinal must be 1 or 2");
+  const safeExpectedPhotoCount = Number(expectedPhotoCount);
+  if (!Number.isInteger(safeExpectedPhotoCount) || safeExpectedPhotoCount < 3 || safeExpectedPhotoCount > 4) {
+    throw new Error("Source photo batch must contain 3 or 4 photos");
+  }
+  if (!Number.isInteger(safeOrdinal) || safeOrdinal < 1 || safeOrdinal > safeExpectedPhotoCount) {
+    throw new Error("Source photo ordinal is outside its 3-to-4-photo batch");
+  }
   if (!SOURCE_PHOTO_CONTENT_TYPES.has(contentType)) {
     throw new Error("Source photo content type must be JPEG, PNG, or WebP");
   }
@@ -305,7 +311,8 @@ function assertSourcePhotoReservation({ projectId, ordinal, objectKey, contentTy
     objectKey: assertPrivateObjectKey(objectKey),
     contentType,
     sha256: normalizeSha256(sha256, "Source photo checksum"),
-    byteSize: assertPositiveByteSize(byteSize, "Source photo byte size")
+    byteSize: assertPositiveByteSize(byteSize, "Source photo byte size"),
+    expectedPhotoCount: safeExpectedPhotoCount
   };
 }
 
@@ -355,6 +362,7 @@ function mapReservation(row) {
     sha256: row.expected_sha256,
     byteSize: databaseNumber(row.expected_byte_size, "Source photo byte size"),
     status: row.status,
+    expectedPhotoCount: databaseNumber(row.expected_photo_count, "Expected source photo count"),
     sourcePhotoRevisionId: nullableString(row.source_photo_revision_id),
     expiresAt: row.expires_at || null,
     acceptedAt: row.accepted_at || null
@@ -370,7 +378,12 @@ function mapRun(row) {
     characterRevisionId: row.character_revision_id || null,
     state: row.state,
     modelRegistryVersion: row.model_registry_version || null,
-    awakeGenerationAttempts: databaseNumber(row.awake_generation_attempts || 0, "Awake generation attempts"),
+    frontGenerationAttempts: databaseNumber(row.front_generation_attempts || 0, "Front generation attempts"),
+    sideGenerationAttempts: databaseNumber(row.side_generation_attempts || 0, "Side generation attempts"),
+    frontUserRegenerationsUsed: databaseNumber(row.front_user_regenerations_used || 0, "Front user regenerations"),
+    sideUserRegenerationsUsed: databaseNumber(row.side_user_regenerations_used || 0, "Side user regenerations"),
+    frontQaRetries: databaseNumber(row.front_qa_retries || 0, "Front QA retries"),
+    sideQaRetries: databaseNumber(row.side_qa_retries || 0, "Side QA retries"),
     sleepGenerationAttempts: databaseNumber(row.sleep_generation_attempts || 0, "Sleep generation attempts"),
     failureCode: row.failure_code || null,
     version: databaseNumber(row.version, "Production run version"),
@@ -379,11 +392,12 @@ function mapRun(row) {
   };
 }
 
-function mapAwakeCandidate(row) {
+function mapCharacterCandidate(row) {
   if (!row) return null;
   return {
     id: row.id,
     projectId: row.project_id,
+    view: row.kind,
     qaStatus: row.qa_status,
     confirmedAt: row.confirmed_at || null,
     // Server-only object key: PetPackStudioService converts it to a short-lived
@@ -558,16 +572,25 @@ class PostgresPetPackStudioRepository {
   }
 
   async _finishSourcePhotoRevision(tx, projectId) {
-    const acceptedRows = rows(await tx.query(
-      `SELECT id, ordinal, source_photo_revision_id
+    const batchRows = rows(await tx.query(
+      `SELECT id, ordinal, status, expected_photo_count, source_photo_revision_id
          FROM source_photo_upload_reservation
-        WHERE project_id = $1 AND status = 'accepted'
+        WHERE project_id = $1
         ORDER BY ordinal
         FOR UPDATE`,
       [projectId]
     ));
+    if (batchRows.length < 3 || batchRows.length > 4) {
+      return { acceptedCount: batchRows.filter((row) => row.status === "accepted").length, allAcceptedNow: false, sourcePhotoRevisionId: null };
+    }
+    const expectedCounts = [...new Set(batchRows.map((row) => Number(row.expected_photo_count)))];
+    if (expectedCounts.length !== 1 || expectedCounts[0] !== batchRows.length ||
+        batchRows.some((row, index) => Number(row.ordinal) !== index + 1)) {
+      throw new Error("Source photo batch metadata is inconsistent");
+    }
+    const acceptedRows = batchRows.filter((row) => row.status === "accepted");
     const acceptedCount = acceptedRows.length;
-    if (acceptedCount !== 2) return { acceptedCount, allAcceptedNow: false, sourcePhotoRevisionId: null };
+    if (acceptedCount !== expectedCounts[0]) return { acceptedCount, allAcceptedNow: false, sourcePhotoRevisionId: null };
 
     const sourceRows = rows(await tx.query(
       `SELECT ordinal
@@ -577,7 +600,7 @@ class PostgresPetPackStudioRepository {
         FOR UPDATE`,
       [projectId]
     ));
-    if (sourceRows.length !== 2 || Number(sourceRows[0].ordinal) !== 1 || Number(sourceRows[1].ordinal) !== 2) {
+    if (sourceRows.length !== expectedCounts[0] || sourceRows.some((row, index) => Number(row.ordinal) !== index + 1)) {
       throw new Error("Accepted source-photo records are incomplete");
     }
 
@@ -600,7 +623,7 @@ class PostgresPetPackStudioRepository {
       RETURNING id`,
       [projectId, sourcePhotoRevisionId]
     ));
-    if (claimed.length !== 2) throw new Error("Source photo revision could not be claimed atomically");
+    if (claimed.length !== expectedCounts[0]) throw new Error("Source photo revision could not be claimed atomically");
 
     // 001 deliberately has no source-photo-revision table. The immutable
     // revision is therefore durably recorded on both accepted reservations;
@@ -730,7 +753,10 @@ class PostgresPetPackStudioRepository {
                 o.created_at AS order_created_at, o.updated_at AS order_updated_at,
                 run.id AS run_id, run.order_id AS run_order_id,
                 run.character_revision_id, run.state AS run_state,
-                run.model_registry_version, run.awake_generation_attempts,
+                run.model_registry_version, run.front_generation_attempts,
+                run.side_generation_attempts,
+                run.front_user_regenerations_used, run.side_user_regenerations_used,
+                run.front_qa_retries, run.side_qa_retries,
                 run.sleep_generation_attempts, run.failure_code,
                 run.version AS run_version, run.created_at AS run_created_at,
                 run.updated_at AS run_updated_at,
@@ -757,7 +783,12 @@ class PostgresPetPackStudioRepository {
           character_revision_id: row.character_revision_id,
           state: row.run_state,
           model_registry_version: row.model_registry_version,
-          awake_generation_attempts: row.awake_generation_attempts,
+          front_generation_attempts: row.front_generation_attempts,
+          side_generation_attempts: row.side_generation_attempts,
+          front_user_regenerations_used: row.front_user_regenerations_used,
+          side_user_regenerations_used: row.side_user_regenerations_used,
+          front_qa_retries: row.front_qa_retries,
+          side_qa_retries: row.side_qa_retries,
           sleep_generation_attempts: row.sleep_generation_attempts,
           failure_code: row.failure_code,
           version: row.run_version,
@@ -797,6 +828,27 @@ class PostgresPetPackStudioRepository {
 
   async getPromptHistory(actionId) {
     return this.getPromptVersions(actionId);
+  }
+
+  async listPublishedMetadata() {
+    return this._transaction(async (tx) => rows(await tx.query(
+      `SELECT version.id, template.action_id, version.title, version.prompt,
+              version.negative_prompt, version.model, version.resolution,
+              version.duration, version.first_frame_mode, version.last_frame_mode,
+              version.immutable_constraints_version, version.version, version.status,
+              version.created_at, version.created_by, version.published_at,
+              version.published_by, version.disabled_at, version.disabled_by,
+              version.supersedes_version_id
+         FROM prompt_template template
+         JOIN prompt_version version
+           ON version.id = template.current_published_version_id
+          AND version.template_id = template.id
+          AND version.status = 'published'
+          AND version.published_at IS NOT NULL
+          AND version.disabled_at IS NULL
+        WHERE template.disabled_at IS NULL
+        ORDER BY template.action_id`)
+    ).map(mapPromptVersion));
   }
 
   async savePromptVersions({ actionId, versions, actorId, publicationEvent = null } = {}) {
@@ -1116,7 +1168,7 @@ class PostgresPetPackStudioRepository {
                   run.character_revision_id AS run_character_revision_id,
                   run.state AS run_state,
                   (run.failure_code IS NOT NULL) AS run_has_failure,
-                  run.awake_generation_attempts,
+                  run.front_generation_attempts AS awake_generation_attempts,
                   run.sleep_generation_attempts,
                   run.version AS run_version,
                   run.updated_at AS run_updated_at,
@@ -1190,18 +1242,28 @@ class PostgresPetPackStudioRepository {
     const reservation = assertSourcePhotoReservation(input);
     return this._transaction(async (tx) => {
       await this._lockSourcePhotoStage(tx, reservation.projectId);
+      const existingBatch = rows(await tx.query(
+        `SELECT expected_photo_count
+           FROM source_photo_upload_reservation
+          WHERE project_id = $1`,
+        [reservation.projectId]
+      ));
+      if (existingBatch.some((row) => Number(row.expected_photo_count) !== reservation.expectedPhotoCount)) {
+        throw new Error("Source photo batch size cannot change after upload grants are reserved");
+      }
       const inserted = rows(await tx.query(
         `INSERT INTO source_photo_upload_reservation
           (id, project_id, ordinal, object_key, expected_content_type,
-           expected_sha256, expected_byte_size, status, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'reserved', now() + make_interval(secs => $8::int))
+           expected_sha256, expected_byte_size, expected_photo_count, status, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'reserved', now() + make_interval(secs => $9::int))
          ON CONFLICT (project_id, ordinal) DO NOTHING
          RETURNING id, project_id, ordinal, object_key, expected_content_type,
-                   expected_sha256, expected_byte_size, status,
+                   expected_sha256, expected_byte_size, expected_photo_count, status,
                    source_photo_revision_id, expires_at, accepted_at`,
         [
           this.idFactory(), reservation.projectId, reservation.ordinal, reservation.objectKey,
-          reservation.contentType, reservation.sha256, reservation.byteSize, this.reservationTtlSeconds
+          reservation.contentType, reservation.sha256, reservation.byteSize,
+          reservation.expectedPhotoCount, this.reservationTtlSeconds
         ]
       ));
       if (inserted.length === 1) return mapReservation(inserted[0]);
@@ -1209,6 +1271,7 @@ class PostgresPetPackStudioRepository {
       const existingRow = oneRow(await tx.query(
         `SELECT id, project_id, ordinal, object_key, expected_content_type,
                 expected_sha256, expected_byte_size, status,
+                expected_photo_count,
                 source_photo_revision_id, expires_at, accepted_at
            FROM source_photo_upload_reservation
           WHERE project_id = $1 AND ordinal = $2
@@ -1219,7 +1282,8 @@ class PostgresPetPackStudioRepository {
       const exactMatch = existing.objectKey === reservation.objectKey
         && existing.contentType === reservation.contentType
         && existing.sha256 === reservation.sha256
-        && existing.byteSize === reservation.byteSize;
+        && existing.byteSize === reservation.byteSize
+        && existing.expectedPhotoCount === reservation.expectedPhotoCount;
       if (existing.status === "accepted") {
         if (!exactMatch) throw new Error("Accepted source photos are immutable");
         return existing;
@@ -1230,18 +1294,21 @@ class PostgresPetPackStudioRepository {
                 expected_content_type = $4,
                 expected_sha256 = $5,
                 expected_byte_size = $6,
+                expected_photo_count = $7,
                 status = 'reserved',
                 source_photo_revision_id = NULL,
                 accepted_at = NULL,
-                expires_at = now() + make_interval(secs => $7::int),
+                expires_at = now() + make_interval(secs => $8::int),
                 updated_at = now()
           WHERE id = $1 AND project_id = $2 AND status <> 'accepted'
         RETURNING id, project_id, ordinal, object_key, expected_content_type,
                   expected_sha256, expected_byte_size, status,
+                  expected_photo_count,
                   source_photo_revision_id, expires_at, accepted_at`,
         [
           existing.id, reservation.projectId, reservation.objectKey, reservation.contentType,
-          reservation.sha256, reservation.byteSize, this.reservationTtlSeconds
+          reservation.sha256, reservation.byteSize, reservation.expectedPhotoCount,
+          this.reservationTtlSeconds
         ]
       ), "Source photo reservation could not be replaced");
       return mapReservation(replaced);
@@ -1251,11 +1318,12 @@ class PostgresPetPackStudioRepository {
   async getReservedSourcePhoto({ projectId, ordinal } = {}) {
     const safeProjectId = requiredString(projectId, "Project ID");
     const safeOrdinal = Number(ordinal);
-    if (safeOrdinal !== 1 && safeOrdinal !== 2) throw new Error("Source photo ordinal must be 1 or 2");
+    if (!Number.isInteger(safeOrdinal) || safeOrdinal < 1 || safeOrdinal > 4) throw new Error("Source photo ordinal must be between 1 and 4");
     return this._transaction(async (tx) => {
       const result = rows(await tx.query(
         `SELECT id, project_id, ordinal, object_key, expected_content_type,
                 expected_sha256, expected_byte_size, status,
+                expected_photo_count,
                 source_photo_revision_id, expires_at, accepted_at
            FROM source_photo_upload_reservation
           WHERE project_id = $1
@@ -1270,7 +1338,7 @@ class PostgresPetPackStudioRepository {
   async acceptSourcePhoto({ projectId, ordinal, sha256, byteSize } = {}) {
     const safeProjectId = requiredString(projectId, "Project ID");
     const safeOrdinal = Number(ordinal);
-    if (safeOrdinal !== 1 && safeOrdinal !== 2) throw new Error("Source photo ordinal must be 1 or 2");
+    if (!Number.isInteger(safeOrdinal) || safeOrdinal < 1 || safeOrdinal > 4) throw new Error("Source photo ordinal must be between 1 and 4");
     const verifiedSha256 = normalizeSha256(sha256, "Verified source photo checksum");
     const verifiedByteSize = assertPositiveByteSize(byteSize, "Verified source photo byte size");
     return this._transaction(async (tx) => {
@@ -1278,6 +1346,7 @@ class PostgresPetPackStudioRepository {
       const reservationRow = oneRow(await tx.query(
         `SELECT id, project_id, ordinal, object_key, expected_content_type,
                 expected_sha256, expected_byte_size, status,
+                expected_photo_count,
                 source_photo_revision_id, expires_at, accepted_at
            FROM source_photo_upload_reservation
           WHERE project_id = $1 AND ordinal = $2
@@ -1366,7 +1435,9 @@ class PostgresPetPackStudioRepository {
     return this._transaction(async (tx) => {
       const result = rows(await tx.query(
         `SELECT id, project_id, order_id, character_revision_id, state, model_registry_version,
-                awake_generation_attempts, sleep_generation_attempts,
+                front_generation_attempts, side_generation_attempts,
+                front_user_regenerations_used, side_user_regenerations_used,
+                front_qa_retries, side_qa_retries, sleep_generation_attempts,
                 failure_code, version, created_at, updated_at
            FROM production_run
           WHERE project_id = $1
@@ -1383,7 +1454,7 @@ class PostgresPetPackStudioRepository {
     const safeRunId = requiredString(runId, "Production run ID");
     return this._transaction(async (tx) => {
       const result = rows(await tx.query(
-        `SELECT reservation.ordinal, reservation.source_photo_revision_id
+        `SELECT reservation.ordinal, reservation.expected_photo_count, reservation.source_photo_revision_id
            FROM source_photo_upload_reservation reservation
            JOIN source_photo photo
              ON photo.project_id = reservation.project_id
@@ -1400,34 +1471,39 @@ class PostgresPetPackStudioRepository {
           ORDER BY reservation.ordinal`,
         [safeProjectId, safeRunId]
       ));
-      if (result.length !== 2 || Number(result[0].ordinal) !== 1 || Number(result[1].ordinal) !== 2) return null;
+      const expectedCounts = [...new Set(result.map((row) => Number(row.expected_photo_count)))];
+      if (expectedCounts.length !== 1 || result.length !== expectedCounts[0] ||
+          result.some((row, index) => Number(row.ordinal) !== index + 1)) return null;
       const revisions = [...new Set(result.map((row) => nullableString(row.source_photo_revision_id)).filter(Boolean))];
       return revisions.length === 1 ? revisions[0] : null;
     });
   }
 
-  async getAwakeCandidate(projectId, awakeMasterRevisionId) {
+  async getCharacterCandidate(projectId, view, characterMasterRevisionId) {
     const safeProjectId = requiredString(projectId, "Project ID");
-    const selectedId = awakeMasterRevisionId === undefined || awakeMasterRevisionId === null
+    if (!["front", "side"].includes(view)) throw new Error("Character candidate view must be front or side");
+    const selectedId = characterMasterRevisionId === undefined || characterMasterRevisionId === null
       ? null
-      : requiredString(awakeMasterRevisionId, "Awake master revision ID");
+      : requiredString(characterMasterRevisionId, "Character master revision ID");
+    const attemptColumn = view === "front" ? "front_generation_attempts" : "side_generation_attempts";
     return this._transaction(async (tx) => {
       const result = rows(await tx.query(
         `SELECT candidate.id, candidate.project_id, candidate.qa_status, candidate.confirmed_at,
+                 candidate.kind,
                  asset.object_key
            FROM image_candidate candidate
            JOIN production_run run
              ON run.id = candidate.run_id
             AND run.project_id = candidate.project_id
             AND run.order_id = candidate.order_id
-            AND candidate.generation_attempt = run.awake_generation_attempts
+            AND candidate.generation_attempt = run.${attemptColumn}
            JOIN master_image_generation generation
              ON generation.image_candidate_id = candidate.id
             AND generation.run_id = run.id
             AND generation.project_id = run.project_id
             AND generation.order_id = run.order_id
-            AND generation.kind = 'awake'
-            AND generation.generation_attempt = run.awake_generation_attempts
+            AND generation.kind = $2
+            AND generation.generation_attempt = run.${attemptColumn}
             AND generation.status = 'qa_passed'
            JOIN media_asset asset
              ON asset.id = candidate.media_asset_id
@@ -1436,11 +1512,11 @@ class PostgresPetPackStudioRepository {
              ON qa.id = candidate.qa_report_id
             AND qa.id = generation.qa_report_id
            WHERE candidate.project_id = $1
-             AND candidate.kind = 'awake'
+             AND candidate.kind = $2
              AND candidate.qa_status = 'passed'
              AND asset.project_id = candidate.project_id
              AND asset.run_id = candidate.run_id
-             AND asset.kind = 'awake_master'
+             AND asset.kind = ($2 || '_master')::media_kind
              AND asset.deleted_at IS NULL
              AND qa.project_id = candidate.project_id
              AND qa.run_id = candidate.run_id
@@ -1450,13 +1526,21 @@ class PostgresPetPackStudioRepository {
              AND qa.source_media_asset_id = generation.provider_output_asset_id
              AND qa.policy_version = generation.processing_policy_version
              AND qa.processor_version = generation.processor_version
-             AND ($2::uuid IS NULL OR candidate.id = $2::uuid)
+             AND ($3::uuid IS NULL OR candidate.id = $3::uuid)
           ORDER BY candidate.created_at DESC
           LIMIT 1`,
-        [safeProjectId, selectedId]
+        [safeProjectId, view, selectedId]
       ));
-      return result.length === 1 ? mapAwakeCandidate(result[0]) : null;
+      return result.length === 1 ? mapCharacterCandidate(result[0]) : null;
     });
+  }
+
+  async getCharacterCandidates(projectId) {
+    const [front, side] = await Promise.all([
+      this.getCharacterCandidate(projectId, "front"),
+      this.getCharacterCandidate(projectId, "side")
+    ]);
+    return { front, side };
   }
 
   async getDeliveryForProject(projectId) {
@@ -1791,7 +1875,7 @@ module.exports = {
   checkoutIdempotencyDigest,
   decodeAdminOperationsCursor,
   encodeAdminOperationsCursor,
-  mapAwakeCandidate,
+  mapCharacterCandidate,
   mapAdminOperationRow,
   mapDelivery,
   mapOrder,

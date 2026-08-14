@@ -27,7 +27,8 @@ function validateActionMediaProbe(probe, {
   allowedVideoCodecs = ["vp9", "av1", "h264"],
   allowedFormatNames,
   expectedDuration,
-  maxDurationDeltaSeconds = 2 / CHARACTER_CANVAS_V1.fps
+  maxDurationDeltaSeconds = 2 / CHARACTER_CANVAS_V1.fps,
+  enforceExactFrameCount = true
 } = {}) {
   const errors = [];
   const video = getVideoStream(probe);
@@ -62,6 +63,16 @@ function validateActionMediaProbe(probe, {
       Math.abs(duration - Number(expectedDuration)) > Number(maxDurationDeltaSeconds)) {
     errors.push("Video duration changed during media normalization");
   }
+  const declaredFrameCount = Number(video.nb_frames);
+  const frameCount = Number.isSafeInteger(declaredFrameCount) && declaredFrameCount > 0
+    ? declaredFrameCount
+    : (Number.isFinite(duration) && fps > 0 ? Math.round(duration * fps) : 0);
+  if (enforceExactFrameCount && Number.isFinite(Number(expectedDuration))) {
+    const expectedFrameCount = Math.round(Number(expectedDuration) * Number(expectedFps));
+    if (!Number.isSafeInteger(expectedFrameCount) || expectedFrameCount < 1 || frameCount !== expectedFrameCount) {
+      errors.push(`Video must contain exactly ${expectedFrameCount} frames`);
+    }
+  }
   return {
     ok: errors.length === 0,
     errors,
@@ -71,6 +82,7 @@ function validateActionMediaProbe(probe, {
       height: Number(video.height) || 0,
       fps,
       duration: Number.isFinite(duration) ? duration : 0,
+      frameCount,
       formatNames,
       audioStreams: getAudioStreams(probe).length
     }

@@ -165,8 +165,8 @@ function normalizeReferenceMetrics(report) {
 
 function mapVideoSubmission(row, { leaseToken, attempt }) {
   const modelReference = parseJsonObject(row.model_reference, "Video model reference");
-  if (modelReference.resolution !== "720p" || typeof modelReference.endpointId !== "string" || !modelReference.endpointId) {
-    throw new Error("Video action has no immutable 720p ModelArk reference");
+  if (!["480p", "720p"].includes(modelReference.resolution) || typeof modelReference.endpointId !== "string" || !modelReference.endpointId) {
+    throw new Error("Video action has no immutable 480p or 720p ModelArk reference");
   }
   const duration = Number(row.duration);
   if (!Number.isFinite(duration) || duration <= 0) throw new Error("Video action prompt duration is invalid");
@@ -191,6 +191,7 @@ function mapVideoSubmission(row, { leaseToken, attempt }) {
       status: row.prompt_status,
       prompt: row.prompt,
       negativePrompt: row.negative_prompt || "",
+      resolution: row.prompt_resolution,
       duration,
       frozenForRun: true
     }
@@ -266,6 +267,7 @@ class PostgresProductionWorkerRepository {
                 prompt.status AS prompt_status,
                 prompt.prompt,
                 prompt.negative_prompt,
+                prompt.resolution AS prompt_resolution,
                 prompt.duration
            FROM production_job_execution execution
            JOIN production_run run ON run.id = execution.run_id
@@ -786,13 +788,13 @@ class PostgresProductionWorkerRepository {
              ON first_master.object_key = action.first_frame_object_key
             AND first_master.project_id = run.project_id
             AND first_master.run_id = run.id
-            AND first_master.kind IN ('awake_master', 'sleep_master')
+            AND first_master.kind IN ('front_master', 'sleep_master')
             AND first_master.deleted_at IS NULL
            LEFT JOIN media_asset last_master
              ON last_master.object_key = action.last_frame_object_key
             AND last_master.project_id = run.project_id
             AND last_master.run_id = run.id
-            AND last_master.kind IN ('awake_master', 'sleep_master')
+            AND last_master.kind IN ('front_master', 'sleep_master')
             AND last_master.deleted_at IS NULL
             LEFT JOIN image_candidate master_candidate
               ON master_candidate.media_asset_id = first_master.id
