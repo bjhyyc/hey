@@ -57,14 +57,18 @@
 - 2026-08-13：真实 PostgreSQL 18.4 隔离演练报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-tls-rehearsals\data-tls-20260813215358-c5fbb3c7\report.json`：TLSv1.3 认证成功、明文连接被拒绝、001–014 正式迁移成功；额外 015 测试迁移由两个并发 runner 严格串行，恰好一次应用、一次识别为已应用。真实 Redis 隔离演练报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-redis-tls-rehearsals\redis-tls-20260813214958-b8568e64\report.json`：TLS 认证、明文拒绝、越界 key 拒绝及 `FLUSHALL` 拒绝全部通过，容器停止后保留供审计。
 - 2026-08-13：数据层最终回归为 72 个测试文件、812 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；Shell/PowerShell 语法、数据 Compose 解析、桌宠 Vite、落地页 Vite 和网站 Next.js 生产构建全部通过。该加固尚未部署 Lighthouse；本地 Redis 演练使用的 Alpine digest 只证明协议/ACL 功能，不能替代仍待选择和扫描的正式生产镜像。
 - 2026-08-13：数据层加固里程碑完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-data-hardening-d5ef47b.bundle`，27,368,632 字节，包含至提交 `d5ef47b2034979685636bdd0cc8cf4a8620dc6b5` 的完整历史；`git bundle verify` 通过，SHA-256 为 `32AFE89200BC3C451D03FE4FD731D7D50ED08141215BA7F87BA5BDDA32A11DAA`。
+- 2026-08-13：新增 PostgreSQL `sent` outbox 对账与确定性重放。只重放未终态运行中缺失、待处理、租约中或可重试的执行，复用原始稳定 job ID；已完成、死亡、需人工对账和 `await-photos` 状态标记不会被重新投递，持久 outbox 状态不会被改写。空 Redis 命名空间恢复报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\queue-loss-rehearsals\queue-loss-20260813221543-e3950069\report.json`：两个全新隔离命名空间均从 0 恢复为 1 个同哈希任务，没有执行 `FLUSHALL`、`FLUSHDB`、Docker 变更或宿主路径删除。
+- 2026-08-13：PostgreSQL 短暂不可用现在统一归类为 `postgres_temporarily_unavailable`，通过 BullMQ delayed redelivery 延后 5 秒且不消耗业务 attempts；断连后的有毒连接会从 pool 销毁，idle client 的 pool error 也不再导致 Node 进程崩溃。视频、三母图和 PetPack 三条 Worker 链均保留该基础设施错误，不会误写成供应商状态未知或提前进入人工对账。
+- 2026-08-13：真实 PostgreSQL 18.4 短断/恢复报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\data-tls-rehearsals\data-tls-20260813223221-8fc6fa7f\outage-control-052a0a75\report.json`：TLSv1.3 连接正常，使用该隔离实例自己的 `pg_ctl` 精确停启后观察到 3 次暂态失败并自动恢复，业务 attempts 消耗 0、外部供应商调用 0、Docker 变更 0、宿主路径删除 0；脚本只可终止自身持有的子进程对象，不按名称或裸 PID 扫描进程。
+- 2026-08-13：故障恢复代码提交为 `5b9d51bb294b55d41ccf1e9a142c5c47adaf5d73`。最终全量回归为 76 个测试文件、834 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；故障恢复聚焦测试 33/33、PowerShell 语法与 `git diff --check` 均通过。桌宠 Vite、落地页 Vite 和网站 Next.js 三项生产构建全部成功。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker、完整零费用多进程闭环、第一阶段生产容器边界及数据层 TLS-only 发布代码均已恢复并验证。当前进入故障恢复、生产视觉处理器/validator、正式镜像选型与真实供应商适配阶段；真实付费能力和 `studio-production` profile 仍保持关闭，数据层新配置尚未部署 Lighthouse。
+- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay 安全边界、Studio API/outbox/Worker、完整零费用多进程闭环、第一阶段生产容器边界、数据层 TLS-only、Redis 队列丢失重放及 PostgreSQL 短断恢复均已验证。当前继续做 API/outbox/Worker 精确硬中断恢复、生产视觉处理器/validator、正式镜像选型与真实供应商适配；真实付费能力和 `studio-production` profile 仍保持关闭，数据层新配置尚未部署 Lighthouse。
 
 ## Next
 
-1. 做 API/outbox/Worker 强制终止、Redis 重启/数据丢失、PostgreSQL 短暂中断与租约过期重投测试；补确定性队列重放/对账工具，保证不会丢任务或重复付费，并补队列积压/死信监控。
+1. 在已通过 Redis 空队列重放与 PostgreSQL 短断恢复的基础上，继续做 API hard-kill、outbox 在 claim/enqueue 边界 hard-kill、Worker 活跃租约 hard-kill，以及 Redis AOF 保留重启；断言任务不丢失、不重复付费、不消耗等待旧租约的业务 attempts，并补队列积压/死信监控。
 2. 选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口；只在完整备份/恢复演练通过后将新的 TLS-only 数据配置部署到 Lighthouse。
 3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
 4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
