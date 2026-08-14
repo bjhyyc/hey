@@ -39,7 +39,7 @@ function jsonResponse(payload, { status = 200 } = {}) {
   };
 }
 
-describe("Kaipay EPay V1 wire adapter", () => {
+describe("Kaipay EPay V1 legacy adapter isolation", () => {
   it("implements the documented ASCII-sort MD5 signature exactly", () => {
     const params = {
       pid: "1001",
@@ -152,10 +152,8 @@ describe("Kaipay EPay V1 wire adapter", () => {
     await expect(inactiveClient.queryMerchant()).rejects.toThrow(/not active/);
   });
 
-  it("runs the deployment merchant probe without creating a payment order", async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({
-      code: 1, pid: 1001, username: "merchant_name", money: "12.34", status: 1
-    }));
+  it("cannot be selected by the V3 production capability probe", async () => {
+    const fetchImpl = vi.fn();
     const environment = {
       PETPACK_PLATFORM_MODE: "production",
       KAIPAY_MERCHANT_ID: "1001",
@@ -168,9 +166,8 @@ describe("Kaipay EPay V1 wire adapter", () => {
       KAIPAY_REQUEST_TIMEOUT_MS: "15000",
       KAIPAY_ALLOW_SIMULATED_PAYMENTS: "false"
     };
-    await expect(runKaipayMerchantProbe({ environment, fetchImpl })).resolves.toEqual({ ok: true });
-    expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
+    await expect(runKaipayMerchantProbe({ environment, fetchImpl })).rejects.toThrow(/V3|credentials|deployment-ready/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("verifies the official GET notification and returns exact success text only for paid reconciliation", async () => {
@@ -221,48 +218,25 @@ describe("Kaipay EPay V1 wire adapter", () => {
     await expect(client.refund({})).rejects.toMatchObject({ code: "kaipay_refund_protocol_unavailable" });
   });
 
-  it("wires the concrete adapter through checkout, signed notification, and authoritative query", async () => {
-    const fetchImpl = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({
-        code: 1, trade_no: "202608140002", payurl: "https://pay.kaipay.cn/cashier/202608140002", money: "19.90"
-      }))
-      .mockResolvedValueOnce(jsonResponse({
-        code: 1, pid: 1001, trade_no: "202608140002", out_trade_no: "order-2",
-        type: "wxpay", name: "团团的桌宠素材包", money: "19.90", trade_status: "TRADE_SUCCESS"
-      }));
+  it("cannot be selected by the production payment-provider factory", () => {
     const orderStore = {
-      getPaymentOrder: vi.fn(async () => ({
-        id: "order-2", amountFen: 1990, currency: "CNY", paymentMethod: "KAIPAY", displayName: "团团"
-      }))
+      getPaymentOrder: vi.fn()
     };
     const eventStore = {
       appendIdempotent: vi.fn(async () => undefined),
       storeEncryptedNotification: vi.fn(async () => undefined)
     };
-    const provider = createPaymentProvider({ config: {
-      ...config(),
-      notifyBaseUrl: "https://api.heyirmy.com/api/payments/kaipay/notify",
-      returnBaseUrl: "https://heyirmy.com/projects/payment-return",
-      allowSimulatedPayments: false
-    }, fetchImpl, orderStore, eventStore, logger: { info() {}, warn() {} } });
-    const checkout = await provider.createCheckout({ platformOrderId: "order-2", idempotencyKey: "idem-order-2", paymentChannel: "WXPAY" });
-    expect(checkout).toEqual(expect.objectContaining({ providerOrderId: "202608140002", paymentChannel: "WXPAY" }));
-
-    const callback = {
-      pid: "1001", trade_no: "202608140002", out_trade_no: "order-2", type: "wxpay",
-      name: "团团的桌宠素材包", money: "19.90", trade_status: "TRADE_SUCCESS", sign_type: "MD5"
-    };
-    callback.sign = signEpayParams(callback, "test-secret-key");
-    const reconciliation = await provider.handleNotification({
-      platformOrderId: "order-2",
-      rawNotification: new URLSearchParams(callback).toString()
-    });
-    expect(reconciliation).toEqual(expect.objectContaining({
-      state: "paid",
-      applyToOrder: true,
-      acknowledgement: { status: 200, contentType: "text/plain; charset=utf-8", body: "success" }
-    }));
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(eventStore.storeEncryptedNotification).toHaveBeenCalledOnce();
+    expect(() => createPaymentProvider({
+      config: {
+        ...config(),
+        notifyBaseUrl: "https://api.heyirmy.com/api/payments/kaipay/notify",
+        returnBaseUrl: "https://heyirmy.com/projects/payment-return",
+        allowSimulatedPayments: false
+      },
+      fetchImpl: vi.fn(),
+      orderStore,
+      eventStore,
+      logger: { info() {}, warn() {} }
+    })).toThrow(/V3|KAIPAY_ADAPTER_VERSION/i);
   });
 });

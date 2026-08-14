@@ -4,13 +4,20 @@
 
 api.heyirmy.com {
 	@health path /health
-	@auth path /api/auth/*
+	@kaipay_notification {
+		method POST
+		path_regexp kaipay ^/api/payments/kaipay/notify/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
+	}
+	@studio path /api/auth/* /api/checkout /api/projects /api/projects/* /api/admin/*
 
 	handle @health {
 		respond "ok" 200
 	}
-	handle @auth {
-		reverse_proxy auth-api:8787
+	handle @kaipay_notification {
+		reverse_proxy studio-api:8787
+	}
+	handle @studio {
+		reverse_proxy studio-api:8787
 	}
 	handle {
 		respond "not found" 404

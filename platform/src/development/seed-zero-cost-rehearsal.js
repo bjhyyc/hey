@@ -148,14 +148,14 @@ async function assertRehearsalSchema(database) {
             to_regclass('public.image_prompt_version') IS NOT NULL AS has_images,
             to_regclass('public.provider_usage_attempt') IS NOT NULL AS has_usage,
             EXISTS (
-              SELECT 1 FROM information_schema.columns
+               SELECT 1 FROM information_schema.columns
                WHERE table_schema = 'public' AND table_name = 'payment_event'
-                 AND column_name = 'adapter_version'
+                 AND column_name = 'credential_version'
             ) AS has_kaipay`
   );
   const row = result.rows[0];
   if (!row || !row.has_auth || !row.has_images || !row.has_usage || !row.has_kaipay) {
-    throw new Error("Zero-cost rehearsal database is not migrated through 014");
+    throw new Error("Zero-cost rehearsal database is not migrated through 015");
   }
 }
 

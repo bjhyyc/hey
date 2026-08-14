@@ -6,12 +6,22 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import databaseModule from "../../platform/src/persistence/postgres-database.js";
 import repositoryModule from "../../platform/src/persistence/postgres-petpack-studio-repository.js";
 import kaipayModule from "../../platform/src/providers/kaipay-payment-provider.js";
+import kaipayV3Module from "../../platform/src/providers/kaipay-v3.js";
 
 const platformRequire = createRequire(new URL("../../platform/package.json", import.meta.url));
 const { Pool } = platformRequire("pg");
 const { PostgresDatabase } = databaseModule;
 const { PostgresPetPackStudioRepository } = repositoryModule;
 const { KaipayPaymentProvider } = kaipayModule;
+const { KAIPAY_V3_ADAPTER_VERSION, credentialVersionFor } = kaipayV3Module;
+
+const TEST_API_KEY = "pk_live_integration_123456";
+const TEST_API_SECRET = "integration-api-secret-at-least-32-bytes";
+const TEST_CREDENTIAL_VERSION = credentialVersionFor({ apiKey: TEST_API_KEY, apiSecret: TEST_API_SECRET });
+const TEST_CREDENTIALS_JSON = JSON.stringify({
+  active: { apiKey: TEST_API_KEY, apiSecret: TEST_API_SECRET },
+  previous: []
+});
 
 const connectionString = process.env.PETPACK_TEST_POSTGRES_URL || "";
 const integration = connectionString ? describe : describe.skip;
@@ -65,22 +75,33 @@ integration("PostgreSQL Kaipay persistence integration", () => {
         expect(Buffer.isBuffer(rawBytes)).toBe(true);
         return {
           valid: true,
-          merchantId: "1001",
           platformOrderId: ids.order,
           providerOrderId,
+          providerCode: "alipay",
+          eventId: `event-${ids.order}`,
+          credentialVersion: TEST_CREDENTIAL_VERSION,
           status: "PAID"
         };
       }),
       acknowledge: vi.fn(async () => ({ status: 200, contentType: "text/plain", body: "integration-ok" }))
     };
     const client = {
-      createCheckout: vi.fn(async () => ({ providerOrderId, checkoutUrl: "https://pay.example/integration" })),
+      createCheckout: vi.fn(async () => ({
+        providerOrderId,
+        credentialVersion: TEST_CREDENTIAL_VERSION,
+        providerCode: "alipay",
+        scene: "web",
+        nextAction: { type: "redirect", url: "https://pay.example/integration" }
+      })),
       queryOrder: vi.fn(async () => ({
         platformOrderId: ids.order,
         providerOrderId,
         amountFen: 1990,
         currency: "CNY",
         paymentMethod: "KAIPAY",
+        paymentChannel: "ALIPAY",
+        providerCode: "alipay",
+        scene: "web",
         status: "PAID"
       })),
       refund: vi.fn()
@@ -88,13 +109,15 @@ integration("PostgreSQL Kaipay persistence integration", () => {
     const provider = new KaipayPaymentProvider({
       config: {
         mode: "production",
-        merchantId: "1001",
-        credentialsJson: '{"epayKey":"integration-only-key"}',
+        credentialsJson: TEST_CREDENTIALS_JSON,
         apiBaseUrl: "https://api.kaipay.cn",
         notifyBaseUrl: "https://api.heyirmy.com/api/payments/kaipay/notify",
         returnBaseUrl: "https://heyirmy.com/projects/payment-return",
-        adapterVersion: "kaipay-epay-v1-md5/1",
+        adapterVersion: KAIPAY_V3_ADAPTER_VERSION,
         defaultChannel: "ALIPAY",
+        alipayScene: "web",
+        wechatScene: "native",
+        selectedMerchantCode: "",
         requestTimeoutMs: "15000",
         allowSimulatedPayments: false
       },
@@ -105,26 +128,44 @@ integration("PostgreSQL Kaipay persistence integration", () => {
       logger: { info() {}, warn() {} }
     });
 
-    const checkout = await provider.createCheckout({ platformOrderId: ids.order, idempotencyKey: `checkout:${ids.order}` });
+    const checkout = await provider.createCheckout({
+      platformOrderId: ids.order,
+      idempotencyKey: `checkout:${ids.order}`,
+      paymentChannel: "ALIPAY"
+    });
     expect(checkout.provider).toBe("KAIPAY");
     const raw = Buffer.from(`signed-callback-${ids.order}`);
-    const reconciliation = await provider.handleNotification({ platformOrderId: ids.order, rawNotification: raw });
+    const reconciliation = await provider.handleNotification({
+      platformOrderId: ids.order,
+      rawNotification: raw,
+      notificationHeaders: { "X-KPay-API-Version": "v3" }
+    });
     const applied = await repository.markOrderPaymentState({ platformOrderId: ids.order, reconciliation });
     expect(applied).toMatchObject({ status: "paid", providerOrderId, productionRunNeeded: true });
 
-    const duplicate = await provider.handleNotification({ platformOrderId: ids.order, rawNotification: raw });
+    const duplicate = await provider.handleNotification({
+      platformOrderId: ids.order,
+      rawNotification: raw,
+      notificationHeaders: { "X-KPay-API-Version": "v3" }
+    });
     const duplicateApplied = await repository.markOrderPaymentState({ platformOrderId: ids.order, reconciliation: duplicate });
     expect(duplicateApplied.status).toBe("paid");
 
     const attempts = await pool.query(
-      "SELECT provider, payment_method, amount_fen, adapter_version FROM payment_attempt WHERE order_id = $1",
+      `SELECT provider, payment_method, amount_fen, adapter_version,
+              credential_version, payment_channel, provider_code, payment_scene
+         FROM payment_attempt WHERE order_id = $1`,
       [ids.order]
     );
     expect(attempts.rows).toEqual([{
       provider: "KAIPAY",
       payment_method: "KAIPAY",
       amount_fen: 1990,
-      adapter_version: "kaipay-epay-v1-md5/1"
+      adapter_version: KAIPAY_V3_ADAPTER_VERSION,
+      credential_version: TEST_CREDENTIAL_VERSION,
+      payment_channel: "ALIPAY",
+      provider_code: "alipay",
+      payment_scene: "web"
     }]);
     const encrypted = await pool.query(
       `SELECT raw_notification_ciphertext, raw_notification_digest

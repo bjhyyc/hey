@@ -39,12 +39,19 @@ function loadStudioApiRuntimeConfig(environment = process.env) {
     throw new Error("PETPACK_PLATFORM_MODE must be development, test, or production");
   }
   const production = mode === "production";
+  const internalBearerToken = typeof environment.PETPACK_STUDIO_INTERNAL_TOKEN === "string"
+    ? environment.PETPACK_STUDIO_INTERNAL_TOKEN
+    : "";
+  if (production && (internalBearerToken.length < 32 || internalBearerToken.length > 4096 || /[\r\n\u0000]/.test(internalBearerToken))) {
+    throw new Error("Production Studio API requires a strong internal gateway token");
+  }
   return Object.freeze({
     mode,
     host: production ? "0.0.0.0" : "127.0.0.1",
     port: boundedPort(environment.PETPACK_API_PORT || environment.PETPACK_LOCAL_API_PORT),
     allowNonLoopback: production,
-    phoneAuthExchangeEnabled: environment.PETPACK_PHONE_AUTH_ENABLED === "true"
+    phoneAuthExchangeEnabled: environment.PETPACK_PHONE_AUTH_ENABLED === "true",
+    internalBearerToken
   });
 }
 
@@ -58,21 +65,31 @@ async function assertStudioApiSchemaReady(database) {
             to_regclass('public.payment_event') IS NOT NULL AS has_payment_event,
             to_regclass('public.prompt_version') IS NOT NULL AS has_video_prompts,
             to_regclass('public.image_prompt_version') IS NOT NULL AS has_image_prompts,
-            EXISTS (
+             EXISTS (
               SELECT 1 FROM information_schema.columns
                WHERE table_schema = 'public' AND table_name = 'payment_event'
                  AND column_name = 'adapter_version'
-            ) AS has_kaipay_adapter_version`
+             ) AS has_kaipay_adapter_version,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'payment_attempt'
+                  AND column_name = 'credential_version'
+             ) AND EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'payment_event'
+                  AND column_name = 'provider_event_id'
+             ) AS has_kaipay_v3_identity`
   );
   const row = result && Array.isArray(result.rows) ? result.rows[0] : null;
   const required = [
     "has_order", "has_project", "has_run", "has_outbox", "has_payment_event",
-    "has_video_prompts", "has_image_prompts", "has_kaipay_adapter_version"
+    "has_video_prompts", "has_image_prompts", "has_kaipay_adapter_version",
+    "has_kaipay_v3_identity"
   ];
   if (!row || required.some((name) => row[name] !== true)) {
-    throw new Error("PostgreSQL Studio API schema is not ready through migration 014");
+    throw new Error("PostgreSQL Studio API schema is not ready through migration 015");
   }
-  return Object.freeze({ ready: true, migration: 14 });
+  return Object.freeze({ ready: true, migration: 15 });
 }
 
 class StudioApiRuntime {
@@ -206,6 +223,7 @@ async function createStudioApiRuntime({
       resolveActor: runtimeAuth.resolveActor,
       sessionCookieName: runtimeAuth.cookieName,
       secureSessionCookie: runtimeAuth.secureSessionCookie,
+      internalBearerToken: config.internalBearerToken,
       adminPromptService: runtimeAdminPromptService,
       adminImagePromptService: runtimeAdminImagePromptService,
       adminOperationsService: runtimeAdminOperationsService,

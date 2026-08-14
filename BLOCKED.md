@@ -5,10 +5,10 @@
 ## 外部资质与账号
 
 - 营业执照申请及最终主体信息。
-- Kaipay EPay V1 下单、支付宝/微信渠道、GET 异步通知、MD5 验签、服务端主动查单、精确回执和无扣款商户探针已完成；仍需用户在安全文件中配置真实 `pid`/EPay 密钥，运行只读探针，并批准一笔最低金额且有最高费用上限的真实订单。密钥不得发送到聊天或进入 Git。
+- Kaipay Pay API V3 的 capabilities/create/query/close/refund、HMAC-SHA256 请求签名、JSON Webhook 原始字节验签、事件幂等、主动查单二次确认和 204 回执已完成；正式商户验收只由部署操作员在安全文件挂载 V3 credential ring 后执行，自动化流程不索要、显示或记录真实密钥。
 - 当前 Lighthouse 公开 API 仍是 auth-only 部署；必须先部署完整 Studio API，并让 Caddy 只放行 Kaipay 通知所需的精确路径，确认 `https://api.heyirmy.com/api/payments/kaipay/notify/<orderId>` 可达后，才能验收小额支付、重复通知、错误签名、未知状态和主动查询。
-- Kaipay 公开 EPay V1 文档未定义退款接口；自动退款保持关闭。若商户后台有单独正式退款 API 文档，需要用户提供页面后再冻结、实现和做一笔受控退款验收。
-- ModelArk 生产 Seedream / Seedance 端点 ID、额度、精确价格、并发/限流和回调语义复核。
+- Kaipay V3 退款契约已实现；仍需部署操作员在明确费用上限内做一笔受控退款验收，证明 credential version 冻结、唯一 `refundRequestNo` 与人工审核分支符合商户实况。
+- ModelArk Seedream 单图非流式多参考输入和 Seedance 2.0 首尾帧、4–15 秒、480p、无音频/水印、异步查询/回调契约已实现；仍需部署操作员在安全文件配置生产端点和额度后复核精确价格、并发/限流与真实媒体质量，自动化流程不索要真实 API key。
 - Windows 安装包代码签名证书。
 
 ## 需要重新盘点的生产基础设施

@@ -21,7 +21,7 @@ const { JOB_NAMES, ProductionWorkflow } = workflowModule;
 const { ensureSourcePhotoSet } = serviceModule;
 const { CHARACTER_CANVAS_V1, LEGACY_CHARACTER_CANVAS_V1 } = canvasModule;
 const { createVideoNormalizationPlan } = ffmpegModule;
-const { createSeedancePayload } = modelArkModule;
+const { createSeedancePayload, createSeedreamPayload } = modelArkModule;
 const { validateMasterImage } = masterQaModule;
 const { parsePetPackPromptFile } = promptFileModule;
 
@@ -240,6 +240,63 @@ describe("recovered Studio production contract", () => {
       return_last_frame: true
     });
     expect(payload.content).toHaveLength(3);
+    expect(payload.content[1]).toEqual({
+      type: "image_url",
+      image_url: { url: "data:image/png;base64,AA==" },
+      role: "first_frame"
+    });
+    expect(payload.content[2]).toEqual({
+      type: "image_url",
+      image_url: { url: "data:image/png;base64,AA==" },
+      role: "last_frame"
+    });
+  });
+
+  it("uses Seedream single-image non-streaming mode for deterministic master generation", () => {
+    const payload = createSeedreamPayload({
+      modelReference: { endpointId: "seedream" },
+      prompt: "preserve this pet identity",
+      sourceImages: [{
+        objectKey: "private/source.png",
+        signedReadUrl: "data:image/png;base64,AA=="
+      }],
+      outputSize: "1536x864",
+      allowDataUrls: true
+    });
+
+    expect(payload).toEqual({
+      model: "seedream",
+      prompt: "preserve this pet identity",
+      image: ["data:image/png;base64,AA=="],
+      sequential_image_generation: "disabled",
+      stream: false,
+      response_format: "url",
+      watermark: false,
+      size: "1536x864"
+    });
+  });
+
+  it("rejects durations outside the Seedance 2.0 4-15 second contract", () => {
+    const input = {
+      modelReference: { endpointId: "seedance", resolution: "480p" },
+      prompt: "one stable action",
+      actionId: "idle",
+      firstFrame: {
+        canvasId: CHARACTER_CANVAS_V1.id,
+        objectKey: "private/front.png",
+        signedReadUrl: "data:image/png;base64,AA=="
+      },
+      lastFrame: {
+        canvasId: CHARACTER_CANVAS_V1.id,
+        objectKey: "private/front.png",
+        signedReadUrl: "data:image/png;base64,AA=="
+      },
+      allowDataUrls: true
+    };
+
+    expect(() => createSeedancePayload({ ...input, duration: 3 })).toThrow(/4 to 15/);
+    expect(() => createSeedancePayload({ ...input, duration: 16 })).toThrow(/4 to 15/);
+    expect(() => createSeedancePayload({ ...input, duration: 4.5 })).toThrow(/4 to 15/);
   });
 
   it("requires all 3-4 photo references for front/side master QA", () => {

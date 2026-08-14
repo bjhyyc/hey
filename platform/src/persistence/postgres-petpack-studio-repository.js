@@ -23,7 +23,8 @@ const RECONCILABLE_PAYMENT_STATES = new Set([
   PAYMENT_STATES.PENDING_PAYMENT,
   PAYMENT_STATES.PAID,
   PAYMENT_STATES.PAYMENT_REVIEW,
-  PAYMENT_STATES.EXPIRED
+  PAYMENT_STATES.EXPIRED,
+  PAYMENT_STATES.REFUNDED
 ]);
 
 // Operational lists are deliberately bounded. At the expected 1,000 daily
@@ -173,6 +174,42 @@ function encryptPaymentNotification(value, key, iv = crypto.randomBytes(PAYMENT_
 function assertPaymentProvider(value) {
   if (value !== PAYMENT_EVENT_PROVIDER) throw new Error("Payment event provider must be KAIPAY");
   return value;
+}
+
+function isKaipayV3Adapter(value) {
+  return typeof value === "string" && value.startsWith("kaipay-pay-api-v3-");
+}
+
+function normalizeKaipayV3Credential(value, adapterVersion) {
+  const normalized = nullableString(value);
+  if (isKaipayV3Adapter(adapterVersion) && (!normalized || !/^kpv3-[a-f0-9]{64}$/.test(normalized))) {
+    throw new Error("Kaipay V3 credential version is required");
+  }
+  if (normalized && !/^kpv3-[a-f0-9]{64}$/.test(normalized)) {
+    throw new Error("Kaipay credential version is invalid");
+  }
+  return normalized;
+}
+
+function normalizeProviderEventId(value) {
+  const normalized = nullableString(value);
+  if (normalized && !/^[A-Za-z0-9._:/-]{1,256}$/.test(normalized)) {
+    throw new Error("Payment provider event ID is invalid");
+  }
+  return normalized;
+}
+
+function normalizeKaipayV3Route(event, adapterVersion) {
+  if (!isKaipayV3Adapter(adapterVersion)) {
+    return { paymentChannel: null, providerCode: null, paymentScene: null };
+  }
+  const paymentChannel = requiredString(event.paymentChannel, "Kaipay payment channel");
+  const providerCode = requiredString(event.providerCode, "Kaipay provider code");
+  const paymentScene = requiredString(event.scene, "Kaipay payment scene");
+  const valid = (paymentChannel === "ALIPAY" && providerCode === "alipay" && ["web", "native"].includes(paymentScene)) ||
+    (paymentChannel === "WXPAY" && providerCode === "wechat" && paymentScene === "native");
+  if (!valid) throw new Error("Kaipay V3 route identity is invalid");
+  return { paymentChannel, providerCode, paymentScene };
 }
 
 function optionalPaymentStatus(value) {
@@ -394,6 +431,10 @@ function mapOrder(row) {
     status: row.order_status || row.status,
     version: row.version === undefined || row.version === null ? undefined : databaseNumber(row.version, "Order version"),
     providerOrderId: nullableString(row.provider_order_id),
+    paymentCredentialVersion: nullableString(row.payment_credential_version),
+    paymentChannel: nullableString(row.payment_channel),
+    paymentProviderCode: nullableString(row.payment_provider_code),
+    paymentScene: nullableString(row.payment_scene),
     paidAt: row.paid_at || null,
     createdAt: row.order_created_at || row.created_at,
     updatedAt: row.order_updated_at || row.updated_at
@@ -884,12 +925,26 @@ class PostgresPetPackStudioRepository {
     const orderId = requiredString(platformOrderId, "Platform order ID");
     return this._transaction(async (tx) => {
       const row = rows(await tx.query(
-        `SELECT id AS order_id, user_id AS order_user_id, project_id, plan_id,
-                amount_fen, currency, payment_method, status AS order_status,
-                version, provider_order_id, paid_at, created_at AS order_created_at,
-                updated_at AS order_updated_at
-           FROM customer_order
-          WHERE id = $1`,
+        `SELECT order_record.id AS order_id, order_record.user_id AS order_user_id,
+                order_record.project_id, order_record.plan_id, order_record.amount_fen,
+                order_record.currency, order_record.payment_method,
+                order_record.status AS order_status, order_record.version,
+                COALESCE(order_record.provider_order_id, attempt.provider_order_id) AS provider_order_id,
+                attempt.credential_version AS payment_credential_version,
+                attempt.payment_channel, attempt.provider_code AS payment_provider_code,
+                attempt.payment_scene, order_record.paid_at,
+                order_record.created_at AS order_created_at,
+                order_record.updated_at AS order_updated_at
+           FROM customer_order order_record
+           LEFT JOIN LATERAL (
+             SELECT provider_order_id, credential_version, payment_channel,
+                    provider_code, payment_scene
+               FROM payment_attempt
+              WHERE order_id = order_record.id
+              ORDER BY created_at DESC, id DESC
+              LIMIT 1
+           ) attempt ON TRUE
+          WHERE order_record.id = $1`,
         [orderId]
       ));
       return row.length ? mapOrder(row[0]) : null;
@@ -903,6 +958,8 @@ class PostgresPetPackStudioRepository {
     const provider = assertPaymentProvider(event.provider || PAYMENT_EVENT_PROVIDER);
     const providerOrderId = nullableString(event.providerOrderId);
     const adapterVersion = requiredString(event.adapterVersion, "Payment adapter version");
+    const credentialVersion = normalizeKaipayV3Credential(event.credentialVersion, adapterVersion);
+    const providerEventId = normalizeProviderEventId(event.providerEventId);
     const providerStatus = optionalPaymentStatus(event.providerStatus);
     const outcome = event.state && RECONCILABLE_PAYMENT_STATES.has(event.state) ? event.state : null;
     const rawNotificationDigest = nullableString(event.rawNotificationDigest);
@@ -920,27 +977,38 @@ class PostgresPetPackStudioRepository {
         if (amountFen !== databaseNumber(order.amount_fen, "Order amountFen")) throw new Error("Checkout amount does not match the order");
         const paymentMethod = assertPaymentMethod(event.paymentMethod);
         if (paymentMethod !== order.payment_method || !providerOrderId) throw new Error("Checkout payment identity does not match the order");
+        const { paymentChannel, providerCode, paymentScene } = normalizeKaipayV3Route(event, adapterVersion);
         const insertedAttempt = rows(await tx.query(
           `INSERT INTO payment_attempt
             (id, order_id, provider, provider_order_id, payment_method, amount_fen,
-             status, idempotency_key, adapter_version)
-           VALUES ($1, $2, $3, $4, $5, $6, 'created', $7, $8)
+             status, idempotency_key, adapter_version, credential_version,
+             payment_channel, provider_code, payment_scene)
+           VALUES ($1, $2, $3, $4, $5, $6, 'created', $7, $8, $9, $10, $11, $12)
            ON CONFLICT (idempotency_key) DO NOTHING
            RETURNING id`,
-          [this.idFactory(), platformOrderId, provider, providerOrderId, paymentMethod, amountFen, idempotencyKey, adapterVersion]
+          [
+            this.idFactory(), platformOrderId, provider, providerOrderId,
+            paymentMethod, amountFen, idempotencyKey, adapterVersion,
+            credentialVersion, paymentChannel, providerCode, paymentScene
+          ]
         ));
         if (!insertedAttempt.length) {
           const existing = oneRow(await tx.query(
             `SELECT order_id, provider, provider_order_id, payment_method,
-                    amount_fen, adapter_version
+                    amount_fen, adapter_version, credential_version,
+                    payment_channel, provider_code, payment_scene
                FROM payment_attempt
               WHERE idempotency_key = $1`,
             [idempotencyKey]
           ), "Payment attempt idempotency record was not found");
           if (existing.order_id !== platformOrderId || existing.provider !== provider ||
               existing.provider_order_id !== providerOrderId || existing.payment_method !== paymentMethod ||
-              databaseNumber(existing.amount_fen, "Existing checkout amountFen") !== amountFen ||
-              existing.adapter_version !== adapterVersion) {
+               databaseNumber(existing.amount_fen, "Existing checkout amountFen") !== amountFen ||
+               existing.adapter_version !== adapterVersion ||
+               nullableString(existing.credential_version) !== credentialVersion ||
+               nullableString(existing.payment_channel) !== paymentChannel ||
+               nullableString(existing.provider_code) !== providerCode ||
+               nullableString(existing.payment_scene) !== paymentScene) {
             throw new Error("Payment attempt idempotency key belongs to another checkout");
           }
         }
@@ -949,21 +1017,23 @@ class PostgresPetPackStudioRepository {
         `INSERT INTO payment_event
           (id, order_id, provider_order_id, event_type, idempotency_key,
            raw_notification_digest, signature_valid, provider_status, outcome,
-           provider, adapter_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::order_status, $10, $11)
+           provider, adapter_version, credential_version, provider_event_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::order_status, $10, $11, $12, $13)
          ON CONFLICT (idempotency_key) DO NOTHING
          RETURNING id`,
         [
           this.idFactory(), platformOrderId, providerOrderId, eventType, idempotencyKey,
           rawNotificationDigest,
           signatureValid,
-          providerStatus, outcome, provider, adapterVersion
+          providerStatus, outcome, provider, adapterVersion,
+          credentialVersion, providerEventId
         ]
       ));
       if (!inserted.length) {
         const existing = oneRow(await tx.query(
           `SELECT order_id, provider_order_id, event_type, raw_notification_digest,
-                  signature_valid, provider_status, outcome, provider, adapter_version
+                   signature_valid, provider_status, outcome, provider, adapter_version,
+                   credential_version, provider_event_id
              FROM payment_event
             WHERE idempotency_key = $1`,
           [idempotencyKey]
@@ -971,8 +1041,10 @@ class PostgresPetPackStudioRepository {
         if (existing.order_id !== platformOrderId || nullableString(existing.provider_order_id) !== providerOrderId ||
             existing.event_type !== eventType || nullableString(existing.raw_notification_digest) !== rawNotificationDigest ||
             existing.signature_valid !== signatureValid || nullableString(existing.provider_status) !== providerStatus ||
-            nullableString(existing.outcome) !== outcome || existing.provider !== provider ||
-            existing.adapter_version !== adapterVersion) {
+             nullableString(existing.outcome) !== outcome || existing.provider !== provider ||
+             existing.adapter_version !== adapterVersion ||
+             nullableString(existing.credential_version) !== credentialVersion ||
+             nullableString(existing.provider_event_id) !== providerEventId) {
           throw new Error("Payment event idempotency key conflicts with another event");
         }
       }
@@ -986,6 +1058,7 @@ class PostgresPetPackStudioRepository {
     const idempotencyKey = requiredString(event.idempotencyKey, "Payment notification idempotency key");
     const provider = assertPaymentProvider(event.provider || PAYMENT_EVENT_PROVIDER);
     const adapterVersion = requiredString(event.adapterVersion, "Payment adapter version");
+    const credentialVersion = normalizeKaipayV3Credential(event.credentialVersion, adapterVersion);
     const rawBytes = rawNotificationBytes(event.rawNotification);
     const digest = crypto.createHash("sha256").update(rawBytes).digest("hex");
     const ciphertext = encryptPaymentNotification(rawBytes, this.paymentNotificationEncryptionKey);
@@ -994,23 +1067,29 @@ class PostgresPetPackStudioRepository {
         `INSERT INTO payment_event
           (id, order_id, provider_order_id, event_type, idempotency_key,
            raw_notification_ciphertext, raw_notification_digest, provider,
-           adapter_version)
-         VALUES ($1, $2, $3, 'payment_notification_raw', $4, $5, $6, $7, $8)
+            adapter_version, credential_version)
+          VALUES ($1, $2, $3, 'payment_notification_raw', $4, $5, $6, $7, $8, $9)
          ON CONFLICT (idempotency_key) DO NOTHING
          RETURNING id`,
-        [this.idFactory(), platformOrderId, nullableString(event.providerOrderId), idempotencyKey, ciphertext, digest, provider, adapterVersion]
+        [
+          this.idFactory(), platformOrderId, nullableString(event.providerOrderId),
+          idempotencyKey, ciphertext, digest, provider, adapterVersion,
+          credentialVersion
+        ]
       ));
       if (!inserted.length) {
         const existing = oneRow(await tx.query(
-          `SELECT order_id, provider_order_id, raw_notification_digest, provider, adapter_version
+          `SELECT order_id, provider_order_id, raw_notification_digest, provider,
+                  adapter_version, credential_version
              FROM payment_event
             WHERE idempotency_key = $1`,
           [idempotencyKey]
         ), "Encrypted payment notification idempotency record was not found");
         if (existing.order_id !== platformOrderId ||
             nullableString(existing.provider_order_id) !== nullableString(event.providerOrderId) ||
-            existing.raw_notification_digest !== digest || existing.provider !== provider ||
-            existing.adapter_version !== adapterVersion) {
+             existing.raw_notification_digest !== digest || existing.provider !== provider ||
+             existing.adapter_version !== adapterVersion ||
+             nullableString(existing.credential_version) !== credentialVersion) {
           throw new Error("Encrypted payment notification idempotency key conflicts with another payload");
         }
       }

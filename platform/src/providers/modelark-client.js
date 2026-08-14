@@ -83,6 +83,8 @@ function createSeedreamPayload({ modelReference, prompt, sourceImages, outputSiz
     model: modelReference.endpointId,
     prompt: requiredString(prompt, "Seedream server prompt"),
     image: sourceImages.map((asset, index) => assertPrivateInput(asset, `sourceImages[${index}]`, { allowDataUrl: allowDataUrls })),
+    sequential_image_generation: "disabled",
+    stream: false,
     response_format: "url",
     watermark: false
   };
@@ -125,19 +127,19 @@ function createSeedancePayload({ modelReference, prompt, negativePrompt, actionI
   if (!modelReference || !allowedResolution || !modelReference.endpointId) {
     throw new Error("A configured 480p or 720p Seedance model reference is required");
   }
-  if (!Number.isFinite(Number(duration)) || Number(duration) <= 0) {
-    throw new Error("Published video duration must be a positive number");
+  if (!Number.isInteger(Number(duration)) || Number(duration) < 4 || Number(duration) > 15) {
+    throw new Error("Seedance 2.0 video duration must be an integer from 4 to 15 seconds");
   }
 
   const firstFrameUrl = assertCanvasAsset(firstFrame, "firstFrame", { allowDataUrl: allowDataUrls });
   const lastFrameUrl = assertCanvasAsset(lastFrame, "lastFrame", { allowDataUrl: allowDataUrls });
-  const serverInstruction = `${formatServerOnlyVideoInstruction({ prompt, negativePrompt, resolution, actionId })}\n\nThe first image is the first frame and the second image is the last frame.`;
+  const serverInstruction = formatServerOnlyVideoInstruction({ prompt, negativePrompt, resolution, actionId });
   const payload = {
     model: modelReference.endpointId,
     content: [
       { type: "text", text: serverInstruction },
-      { type: "image_url", image_url: { url: firstFrameUrl } },
-      { type: "image_url", image_url: { url: lastFrameUrl } }
+      { type: "image_url", image_url: { url: firstFrameUrl }, role: "first_frame" },
+      { type: "image_url", image_url: { url: lastFrameUrl }, role: "last_frame" }
     ],
     return_last_frame: true,
     resolution,

@@ -1,5 +1,5 @@
 const { requireActor, requireProjectOwner } = require("../auth/authorization");
-const { assertPaymentMethod } = require("../domain/payment-state-machine");
+const { PAYMENT_STATES, assertPaymentMethod } = require("../domain/payment-state-machine");
 const {
   MAX_USER_REGENERATIONS_PER_VIEW,
   PRODUCTION_STATES,
@@ -88,7 +88,8 @@ function resolveDeliveryDownloadTtlSeconds({ expiresAt, now = Date.now(), storag
 class PetPackStudioService {
   constructor({ repository, paymentProvider, objectStore, workflow, logger = console } = {}) {
     this.repository = requireRepository(repository);
-    if (!paymentProvider || typeof paymentProvider.createCheckout !== "function" || typeof paymentProvider.handleNotification !== "function") {
+    if (!paymentProvider || typeof paymentProvider.createCheckout !== "function" ||
+        typeof paymentProvider.handleNotification !== "function" || typeof paymentProvider.queryStatus !== "function") {
       throw new Error("A payment provider is required");
     }
     if (!objectStore || typeof objectStore.createUploadGrant !== "function" || typeof objectStore.createDownloadGrant !== "function" || typeof objectStore.verifyUploadedObject !== "function") {
@@ -121,7 +122,12 @@ class PetPackStudioService {
     return {
       project: { id: order.projectId },
       order: { id: order.id, status: checkout.state, paymentMethod: checkout.paymentMethod, amountFen: order.amountFen },
-      checkout: { provider: checkout.provider, providerOrderId: checkout.providerOrderId, checkoutUrl: checkout.checkoutUrl, paymentChannel: checkout.paymentChannel }
+      checkout: {
+        provider: checkout.provider,
+        providerOrderId: checkout.providerOrderId,
+        nextAction: checkout.nextAction,
+        paymentChannel: checkout.paymentChannel
+      }
     };
   }
 
@@ -131,6 +137,27 @@ class PetPackStudioService {
     const items = Array.isArray(records) ? records.map(createUserProjectSummary) : [];
     this.logger.info?.("petpack.api.projects_listed", { userId: user.id, count: items.length });
     return { items };
+  }
+
+  async refreshPaymentStatus({ actor, projectId }) {
+    const bundle = await this.repository.getProjectBundle(requiredString(projectId, "Project ID"));
+    requireProjectOwner(actor, bundle.project);
+    const terminalStates = new Set([PAYMENT_STATES.PAID, PAYMENT_STATES.EXPIRED, PAYMENT_STATES.REFUNDED]);
+    if (terminalStates.has(bundle.order.status)) {
+      return { order: { id: bundle.order.id, status: bundle.order.status }, nextAction: { type: "none" } };
+    }
+    const reconciliation = await this.paymentProvider.queryStatus({ platformOrderId: bundle.order.id });
+    if (!reconciliation || reconciliation.applyToOrder === false) {
+      throw new Error("Kaipay payment status could not be confirmed");
+    }
+    const order = await this.repository.markOrderPaymentState({ platformOrderId: bundle.order.id, reconciliation });
+    if (reconciliation.state === PAYMENT_STATES.PAID && order.productionRunNeeded) {
+      await this.workflow.startPaidOrder({ order, projectId: order.projectId, runId: order.productionRunId });
+    }
+    return {
+      order: { id: order.id, status: order.status },
+      nextAction: reconciliation.nextAction || { type: "none" }
+    };
   }
 
   async createSourcePhotoUploadGrants({ actor, projectId, files }) {
@@ -318,8 +345,12 @@ class PetPackStudioService {
     return { downloadUrl: grant.url, expiresInSeconds: grant.expiresInSeconds };
   }
 
-  async handlePaymentNotification({ platformOrderId, rawNotification }) {
-    const reconciliation = await this.paymentProvider.handleNotification({ platformOrderId, rawNotification });
+  async handlePaymentNotification({ platformOrderId, rawNotification, notificationHeaders }) {
+    const reconciliation = await this.paymentProvider.handleNotification({
+      platformOrderId,
+      rawNotification,
+      notificationHeaders
+    });
     if (reconciliation.applyToOrder === false) {
       return { accepted: false, acknowledgement: reconciliation.acknowledgement };
     }

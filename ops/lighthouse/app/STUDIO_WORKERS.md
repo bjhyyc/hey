@@ -1,6 +1,6 @@
 # Studio workers deployment boundary
 
-`compose.studio-workers.yaml` is a private, disabled-by-default production boundary for the outbox dispatcher and the media Worker. It does not publish a host port and it does not alter the public Caddy routes.
+`compose.studio-workers.yaml` is the disabled-by-default production boundary for the full Studio API, outbox dispatcher, and media Worker. No service publishes a host port. The edge configuration exposes only the exact Kaipay V3 POST callback and the allowlisted Studio API surface; every non-provider route additionally requires the server-only internal bearer token.
 
 ## Current release gate
 
@@ -13,11 +13,12 @@ The media image records the exact copied FFmpeg runtime files, Debian package ve
 - Images are supplied as immutable `repository@sha256:...` references.
 - Secrets live below an absolute operator-owned `PETPACK_CONFIG_ROOT`; no release-relative `./secrets` directory is used.
 - PostgreSQL and Redis use separate CA files.
+- The Studio API joins edge, data and egress networks, but accepts non-provider routes only through the shared website gateway secret.
 - The outbox dispatcher joins only the internal data network.
 - The Worker joins the internal data network and a dedicated egress network, but never the public edge network.
 - No service publishes a host port or mounts a host project directory.
 - `/work` is a Docker named volume. `/tmp` and `/run/petpack` are bounded container tmpfs mounts.
-- Both services run as `10001:10001`, with a read-only root filesystem, all capabilities dropped and `no-new-privileges` enabled.
+- All three services run as `10001:10001`, with a read-only root filesystem, all capabilities dropped and `no-new-privileges` enabled.
 - Health checks validate a fresh runtime heartbeat backed by live PostgreSQL and Redis/BullMQ probes; a merely running PID is not considered healthy.
 
 ## Inputs to prepare later
@@ -39,6 +40,10 @@ Required private configuration root files:
 - `cos_secret_access_key`
 - `modelark_api_key`
 - `modelark_callback_secret`
+- `session_signing_key`
+- `studio_internal_token`
+- `payment_notification_encryption_key`
+- `kaipay_credentials_json`
 
 Required non-secret production settings are visible as `${NAME:?message}` entries in `compose.studio-workers.yaml`. The canonical order and the exact information that will be requested from the user are fixed in `INTEGRATION_GATES.md`.
 

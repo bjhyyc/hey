@@ -42,7 +42,7 @@ describe("zero-cost runtime support", () => {
     const resolved = buildZeroCostEnvironment({
       ...baseEnvironment(),
       MODELARK_API_KEY: "must-not-be-used",
-      KAIPAY_MERCHANT_ID: "must-not-be-used",
+      KAIPAY_SELECTED_MERCHANT_CODE: "must-not-be-used",
       PETPACK_OBJECT_STORE_ACCESS_KEY_ID: "must-not-be-used",
       PETPACK_OBJECT_STORE_SECRET_ACCESS_KEY: "must-not-be-used",
       MODELARK_API_KEY_FILE: "D:\\production-secrets\\modelark",
@@ -54,7 +54,7 @@ describe("zero-cost runtime support", () => {
       NODE_ENV: "development",
       PETPACK_PLATFORM_MODE: "development",
       KAIPAY_ALLOW_SIMULATED_PAYMENTS: "true",
-      KAIPAY_MERCHANT_ID: "",
+      KAIPAY_SELECTED_MERCHANT_CODE: "",
       CLOUDBASE_AUTH_BASE_URL: "",
       PETPACK_OBJECT_STORE_ACCESS_KEY_ID: "",
       PETPACK_OBJECT_STORE_SECRET_ACCESS_KEY: "",

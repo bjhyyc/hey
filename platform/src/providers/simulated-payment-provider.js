@@ -44,7 +44,7 @@ class SimulatedPaymentProvider {
     return {
       provider: "KAIPAY_SIMULATED",
       providerOrderId,
-      checkoutUrl: `petpack-dev://checkout/${encodeURIComponent(providerOrderId)}`,
+      nextAction: { type: "none" },
       paymentMethod: "KAIPAY",
       paymentChannel,
       state: PAYMENT_STATES.PENDING_PAYMENT
@@ -83,6 +83,27 @@ class SimulatedPaymentProvider {
       providerOrderId,
       paymentEventKey,
       acknowledgement: { status: 200, contentType: "text/plain; charset=utf-8", body: "development-only" }
+    };
+  }
+
+  async queryStatus({ platformOrderId }) {
+    const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
+    const state = Object.values(PAYMENT_STATES).includes(order.status)
+      ? order.status
+      : PAYMENT_STATES.PENDING_PAYMENT;
+    const providerOrderId = order.providerOrderId || `sim_${crypto.createHash("sha256").update(order.id).digest("hex").slice(0, 24)}`;
+    return {
+      state,
+      reason: "development_simulated_status_query",
+      providerOrderId,
+      paymentEventKey: createPaymentEventIdempotencyKey({
+        platformOrderId: order.id,
+        providerOrderId,
+        eventType: "simulated_query",
+        providerStatus: state
+      }),
+      applyToOrder: true,
+      nextAction: { type: "none" }
     };
   }
 

@@ -6,7 +6,7 @@ Key modules:
 
 - `src/config/model-registry.js` — account-provided ModelArk IDs, region, quotas, retries, and callback configuration.
 - `src/providers/modelark-client.js` — Seedream / Seedance 2.0 request, polling, and callback-ticket contract. Provider output must be archived immediately into private storage.
-- `src/providers/kaipay-payment-provider.js` and `src/providers/kaipay-epay-v1.js` — fail-closed Kaipay domain adapter plus the pinned official EPay V1 MD5 wire implementation. It creates `/epay/mapi` checkouts, verifies GET notifications, confirms payment through `/epay/api`, and returns exact plain-text acknowledgements; development simulation remains isolated in `simulated-payment-provider.js`. The public EPay documentation does not define refunds, so automatic refunds remain deliberately disabled rather than guessed.
+- `src/providers/kaipay-payment-provider.js` and `src/providers/kaipay-v3.js` — fail-closed Kaipay Pay API V3 domain/wire adapters. They use HMAC-SHA256 request signing, preserve the API credential version per order, expose only validated redirect/QR `nextAction` values, verify raw-byte V3 webhooks, confirm payment through an authoritative V3 query, and implement the documented refund request. Development simulation remains isolated in `simulated-payment-provider.js`; the EPay V1 module is historical and cannot be selected by the production factory.
 - `src/workflow/production-workflow.js` — paid-order to delivery queue plan, deterministic dedupe keys, retries, and prompt-release gate.
 - `src/qa/` and `src/media/` — `character_canvas_v1`, worker-local segmentation/FFmpeg plan, trusted re-probe, and fail-closed action QA.
 - `src/petpack/build.js` — creates a checksummed, seven-action, original-client-compatible archive only after every action passes QA and a post-build probe.
@@ -23,7 +23,7 @@ Key modules:
 - `src/persistence/postgres-transactional-workflow-store.js` and `sql/002_transactional_workflow.sql` — an optimistic-lock PostgreSQL transition writer plus leased outbox dispatcher. It writes run state, immutable seven-action rows, and ID-only queue work in one transaction; individual action QA uses database rows rather than a race-prone JSON completion array.
 - `src/persistence/postgres-petpack-studio-repository.js` — the server-only PostgreSQL implementation of checkout, bounded owner project listing, private three-to-four-photo reservation/acceptance, project progress, delivery ownership, encrypted Kaipay notification retention, verified payment reconciliation, and atomic administrator prompt version/publication-audit persistence. It exposes only IDs and private object keys to trusted server code.
 - `src/workers/production-job-worker.js`, `src/persistence/postgres-production-worker-repository.js`, and `sql/003_production_job_execution.sql` / `sql/004_video_polling.sql` — leased, idempotent Seedance action submission and authoritative delayed polling. Submission intent is persisted before the external request; explicit rejections may retry, transport/5xx ambiguity is isolated for reconciliation, and a successful provider output is immediately archived with trusted checksum/size/type metadata before an ID-only processing job is released.
-- `src/workers/image-master-worker.js`, `src/persistence/postgres-image-master-worker-repository.js`, `src/media/private-master-image-workspace.js`, `src/qa/master-image-quality-gate.js`, and `sql/007_image_master_pipeline.sql` — leased Seedream awake/sleep execution with server-only published prompt snapshots, request-intent ambiguity isolation, immediate private archival, isolated 1280×720 PNG normalization, anatomical/identity/content QA evidence, and retry-safe finalizers. Sleeping-image QA failure releases the existing automatic retry transition without another user click; no image prompt text is seeded.
+- `src/workers/image-master-worker.js`, `src/persistence/postgres-image-master-worker-repository.js`, `src/media/private-master-image-workspace.js`, `src/qa/master-image-quality-gate.js`, and `sql/007_image_master_pipeline.sql` — leased Seedream awake/sleep execution with server-only published prompt snapshots, request-intent ambiguity isolation, immediate private archival, isolated 854×480 PNG normalization, anatomical/identity/content QA evidence, and retry-safe finalizers. Seedream requests explicitly disable grouped and streaming output; sleeping-image QA failure releases the existing automatic retry transition without another user click, and no image prompt text is seeded.
 - `src/workers/petpack-pipeline-worker.js`, `src/persistence/postgres-petpack-worker-repository.js`, and `sql/006_petpack_delivery_pipeline.sql` — the run-level media gate, package build, frozen-version validation, and atomic ready-delivery chain. Queue payloads contain only `runId`; active DB leases are never acknowledged as success; build, both QA reports, run transition, and delivery remain checksum/ownership/version bound.
 
 ### Web/API integration contract
@@ -49,26 +49,29 @@ server-only gateway injects the configured product plan for checkout, forwards e
 configured session cookie, requires the configured same origin for mutations,
 and allowlists only normal-user and administrator prompt routes. It does not
 proxy the raw Kaipay callback. The checkout response includes only the newly
-owned `project.id`, safe order fields, and the temporary cashier URL so the
+  owned `project.id`, safe order fields, and a validated redirect/QR `nextAction` so the
 browser can resume the real project-ID workflow without learning provider or
 storage identifiers.
 
-### Kaipay EPay V1 production boundary
+### Kaipay Pay API V3 production boundary
 
-The current pinned adapter is `kaipay-epay-v1-md5/1`. It accepts only the
-official domestic production origin `https://api.kaipay.cn`, the `ALIPAY` and
-`WXPAY` product channels, positive decimal merchant IDs, and a server-only
-credentials JSON with the exact shape `{ "epayKey": "..." }`. The browser
-never receives the merchant ID or EPay key. Payment is marked paid only after
-both the signed GET notification and an authoritative order query agree on the
-platform order, Kaipay trade number, amount, currency, method, and paid state.
-Invalid callbacks and temporary query failures are audited but cannot mutate a
-customer order.
+The pinned adapter is `kaipay-pay-api-v3-hmac-sha256/1`. Production accepts only
+the official domestic origin `https://api.kaipay.cn`, Alipay `web` and WeChat
+`native`, and an external server-only credential ring containing the active
+API Key/Secret plus retained historical pairs. Every external order freezes a
+credential-version digest, provider and scene. The browser never receives an
+API credential: it receives only a validated HTTPS redirect or QR action.
+Payment is marked paid only after the raw JSON webhook passes V3 HMAC/body hash,
+timestamp, event and identity checks and an authoritative V3 order query agrees
+on both order IDs, amount, actual amount, currency, provider, scene and paid
+state. Invalid callbacks and temporary query failures are audited but cannot
+mutate a customer order. Refund requests use a stable unique request number and
+the same frozen credential as the original order.
 
 Deployment values and the secret-file procedure are documented in
 `ops/lighthouse/app/KAIPAY_SETUP.md`. Do not execute a real checkout until the
-merchant ID, secret-file path, callback reachability, and a one-order test
-budget have been explicitly confirmed.
+V3 key permissions, secret-file path, callback reachability, channel approval,
+and a bounded acceptance budget have been explicitly confirmed.
 
 ### Local authentication-only runtime
 

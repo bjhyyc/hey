@@ -20,6 +20,7 @@ function readySchemaRow(overrides = {}) {
     has_usage_attempt: true,
     has_side_master: true,
     has_kaipay_adapter_version: true,
+    has_kaipay_v3_identity: true,
     ...overrides
   };
 }
@@ -79,13 +80,16 @@ describe("Studio Worker runtime", () => {
     })).toThrow(/retention days are required/);
   });
 
-  it("requires worker tables, the side-master migration, and Kaipay migration", async () => {
+  it("requires worker tables, the side-master migration, and Kaipay V3 migration", async () => {
     await expect(assertStudioWorkerSchemaReady({
       query: vi.fn(async () => ({ rows: [readySchemaRow({ has_side_master: false })] }))
-    })).rejects.toThrow(/migration 014/);
+    })).rejects.toThrow(/migration 015/);
+    await expect(assertStudioWorkerSchemaReady({
+      query: vi.fn(async () => ({ rows: [readySchemaRow({ has_kaipay_v3_identity: false })] }))
+    })).rejects.toThrow(/migration 015/);
     await expect(assertStudioWorkerSchemaReady({
       query: vi.fn(async () => ({ rows: [readySchemaRow()] }))
-    })).resolves.toEqual({ ready: true, migration: 14 });
+    })).resolves.toEqual({ ready: true, migration: 15 });
   });
 
   it("forbids a real provider fallback in development and requires production assurance", () => {

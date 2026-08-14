@@ -54,10 +54,14 @@ async function readBoundedBody(request, maxBodyBytes) {
 function writeResponse(response, result) {
   const status = Number.isSafeInteger(result?.status) ? result.status : 500;
   const headers = safeHeaders(result?.headers);
-  const contentType = headers["content-type"] || "application/json; charset=utf-8";
-  const body = contentType.toLowerCase().startsWith("application/json")
-    ? JSON.stringify(result?.body === undefined ? {} : result.body)
-    : String(result?.body === undefined ? "" : result.body);
+  const noContent = status === 204;
+  if (noContent) delete headers["content-type"];
+  const contentType = noContent ? "" : (headers["content-type"] || "application/json; charset=utf-8");
+  const body = noContent
+    ? ""
+    : contentType.toLowerCase().startsWith("application/json")
+      ? JSON.stringify(result?.body === undefined ? {} : result.body)
+      : String(result?.body === undefined ? "" : result.body);
   response.writeHead(status, {
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",

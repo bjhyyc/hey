@@ -80,18 +80,23 @@
 - 2026-08-14：新增无扣款的 Kaipay 商户只读探针 `npm run verify:kaipay`，只调用官方 `act=query` 并仅输出成功/失败，不输出密钥、用户名、余额或请求 URL；新增 `/projects/payment-return` 静态回跳页，明确同步回跳不代表支付成功，用户只查看服务端确认后的项目状态。公开 EPay V1 文档没有退款接口，自动退款继续 fail-closed，未猜测任何退款字段。
 - 2026-08-14：Kaipay 接入最终本地回归为 81 个测试文件、875 项通过，2 项 opt-in PostgreSQL 测试按设计跳过；新增协议、工厂、HTTP、错签名、通知重放、商户探针和订单不变性覆盖。网站 Next.js 生产构建成功并生成 16 个静态页面，支付回跳路由已进入产物。本轮没有读取真实商户密钥、创建真实订单或发生费用。
 - 2026-08-14：Kaipay EPay V1 代码提交为 `9f0b66af09f379a88620174fc1579569f6ac21d8`。完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-kaipay-9f0b66a.bundle`，27,451,517 字节，`git bundle verify` 通过，SHA-256 为 `DD93FB0E5E8630002C66560BEE046876D27FBBC7022B0DBE6B29F5174C618CF2`。
+- 2026-08-14：支付已按用户指定的 Kaipay Pay API V3 文档升级：生产只允许 `/pay/api/v3`，冻结 HMAC-SHA256 canonical request、capabilities/create/query/close/refund、支付宝 Web 跳转、微信 native QR，以及携带七个签名头的 JSON POST Webhook。订单冻结创建时的 credential version，密钥轮换后仍能验证历史通知；同一 `eventId` 只消费一次，验签后必须主动查单，成功返回空 204。EPay V1 仅保留历史隔离测试，生产工厂不可选择。
+- 2026-08-14：网站购买页已消费 V3 `nextAction`：支付宝只接受无凭据、无 hash 的 HTTPS redirect；微信可使用服务端二维码图片或在浏览器本地渲染二维码，并每 3 秒查询平台订单状态。手机号登录继续使用 CloudBase 浏览器验证码换取服务端 HttpOnly 会话，浏览器不接触支付或 ModelArk secret。
+- 2026-08-14：Seedream 请求已固定 `sequential_image_generation=disabled` 与 `stream=false`，确保每个母图任务只返回一张；生产 Compose 默认请求 1536×864 后再规范化为 854×480 角色画布。Seedance 2.0 请求为首尾帧图片显式写入 `first_frame`/`last_frame` role，时长只允许 4–15 秒整数，保持 480p、16:9、无音频、无水印并返回尾帧。
+- 2026-08-14：最新零密钥硬故障全链彩排报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814235337-f008d9c2\report.json`，硬中断控制报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\hard-kill-rehearsals\hard-kill-20260814165323-9073c12c\report.json`。3 张来源照、3 张母图、7 个动作、12/12 QA、38/38 执行、39/39 outbox 全部完成，API/Outbox/Worker 各自硬中断后恢复，外部调用为 0；下载的 8 文件 PetPack 已由原版客户端 `importPetpack` 实际导入。
+- 2026-08-14：最终本地回归为 84 个测试文件、891 项通过，2 个 opt-in PostgreSQL 集成文件按设计跳过；网站 4 个测试文件、22 项通过。桌宠 Vite 生产构建（67 modules）与网站 Next.js 生产构建（16 个静态页面及全部动态业务路由）均成功；`git diff --check` 无空白错误。本轮没有读取真实 API key、发送短信、创建真实订单、调用 ModelArk 或产生外部费用。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站、3–4 图/三母图/480p 合同、Kaipay EPay V1 正式 wire adapter、Studio API/outbox/Worker、完整零费用多进程闭环、第一阶段生产容器边界、数据层 TLS-only、Redis 队列丢失与 AOF 保留重启、PostgreSQL 短断恢复，以及 API/outbox/Worker 四个精确崩溃窗口均已验证。Gate 0 已全部通过，Gate 1 代码完成并等待真实商户只读验证、公开回调部署和一笔有上限小额验收；真实付费能力和 `studio-production` profile 仍保持关闭，数据层新配置尚未部署 Lighthouse。
+- 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约、Studio API/outbox/Worker 与购买→生成→下载→原版客户端导入的零密钥闭环已完成。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 在部署操作员挂载安全文件、生产视觉组件和受控费用验收前继续关闭。
 
 ## Next
 
-1. 请用户只在本机或服务器安全文件中配置 Kaipay `pid` 与 EPay 密钥，不在聊天中发送密钥；先运行无扣款 `verify:kaipay`，再部署完整 Studio API 与精确 Caddy 回调白名单。确认公网回调后，仅在用户批准最高费用时创建 1 笔最低金额订单，复验异步通知、主动查单和重复通知幂等。退款继续等待 Kaipay 单独官方文档。
+1. 部署操作员只在本机或服务器安全文件中挂载 Kaipay V3 credential ring，不在聊天中发送密钥；先运行无扣款 `verify:kaipay`，再部署完整 Studio API 与精确 Caddy 回调白名单。确认公网回调后，在预先批准的最高费用内完成支付宝、微信和退款各一笔受控验收。
 2. 补 Redis/BullMQ 队列积压、死信、Outbox oldest-age 与 Worker readiness 告警；随后选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口。
 3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
 4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
-5. Kaipay 小额验收后，依次进行有费用上限的 ModelArk、COS、CloudBase 和最终上线验收；每次真实调用前向用户确认最高费用和停止条件。
+5. Kaipay 小额验收后，依次进行有费用上限的 ModelArk、COS、CloudBase 和最终上线验收；最高费用与停止条件写入部署清单，真实 secret 始终只从安全文件加载。
 
 ## Working rules
 

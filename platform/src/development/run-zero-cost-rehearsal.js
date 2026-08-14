@@ -595,7 +595,7 @@ async function runZeroCostRehearsal({
     });
     const projectId = checkout.body?.project?.id;
     const orderId = checkout.body?.order?.id;
-    if (!projectId || !orderId || !String(checkout.body?.checkout?.checkoutUrl || "").startsWith("petpack-dev://")) {
+    if (!projectId || !orderId || checkout.body?.checkout?.nextAction?.type !== "none") {
       throw new Error("Rehearsal simulated checkout response is invalid");
     }
     await request(config.apiOrigin, `/api/payments/kaipay/notify/${encodeURIComponent(orderId)}`, {

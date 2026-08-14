@@ -25,7 +25,8 @@ const SECRET_SETTINGS = Object.freeze([
   "MODELARK_VIDEO_CALLBACK_SECRET",
   "KAIPAY_CREDENTIALS_JSON",
   "PETPACK_PAYMENT_NOTIFICATION_ENCRYPTION_KEY",
-  "PETPACK_SESSION_SIGNING_KEY"
+  "PETPACK_SESSION_SIGNING_KEY",
+  "PETPACK_STUDIO_INTERNAL_TOKEN"
 ]);
 
 const VERSION_SETTINGS = Object.freeze([
@@ -130,9 +131,10 @@ function validateProductionEnvironment(environment = process.env) {
     kaipayReady = false;
   }
   const kaipaySettings = [
-    "KAIPAY_MERCHANT_ID", "KAIPAY_CREDENTIALS_JSON", "KAIPAY_ADAPTER_VERSION",
+    "KAIPAY_CREDENTIALS_JSON", "KAIPAY_ADAPTER_VERSION",
     "KAIPAY_API_BASE_URL", "KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL",
-    "KAIPAY_DEFAULT_CHANNEL", "KAIPAY_REQUEST_TIMEOUT_MS"
+    "KAIPAY_DEFAULT_CHANNEL", "KAIPAY_ALIPAY_SCENE", "KAIPAY_WECHAT_SCENE",
+    "KAIPAY_REQUEST_TIMEOUT_MS"
   ].map((name) => ({ name, value: setting(environment, name) }));
   addCheck(checks, missing, "payment.kaipay_config", kaipayReady, "kaipay_config_invalid", kaipaySettings);
   addCheck(checks, missing, "payment.kaipay_https",
@@ -179,13 +181,15 @@ function validateProductionEnvironment(environment = process.env) {
 
   const webSettings = [
     "PETPACK_STUDIO_API_ORIGIN", "PETPACK_STUDIO_WEB_ORIGIN",
-    "PETPACK_STUDIO_SESSION_COOKIE_NAME", "PETPACK_STUDIO_PLAN_CODE"
+    "PETPACK_STUDIO_SESSION_COOKIE_NAME", "PETPACK_STUDIO_PLAN_CODE",
+    "PETPACK_STUDIO_INTERNAL_TOKEN"
   ].map((name) => ({ name, value: setting(environment, name) }));
   addCheck(checks, missing, "web.secure_gateway",
     exactHttpsUrl(setting(environment, "PETPACK_STUDIO_API_ORIGIN"), { originOnly: true }) &&
       exactHttpsUrl(setting(environment, "PETPACK_STUDIO_WEB_ORIGIN"), { originOnly: true }) &&
       /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$/.test(setting(environment, "PETPACK_STUDIO_SESSION_COOKIE_NAME")) &&
-      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(setting(environment, "PETPACK_STUDIO_PLAN_CODE")),
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(setting(environment, "PETPACK_STUDIO_PLAN_CODE")) &&
+      setting(environment, "PETPACK_STUDIO_INTERNAL_TOKEN").length >= 32,
     "web_gateway_invalid",
     webSettings);
 

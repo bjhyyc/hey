@@ -3,17 +3,18 @@ const {
   PAYMENT_STATES,
   assertAmountFen,
   assertPaymentMethod,
+  reconcileQueriedProviderPayment,
   reconcileProviderPayment
 } = require("../domain/payment-state-machine");
 const { digestNotification } = require("./payment-provider-common");
 const {
-  KAIPAY_EPAY_V1_ADAPTER_VERSION,
+  KAIPAY_V3_ADAPTER_VERSION,
   KAIPAY_OFFICIAL_API_ORIGIN,
   normalizeApiBaseUrl,
-  normalizeMerchantId,
   normalizePaymentChannel,
-  parseEpayCredentials
-} = require("./kaipay-epay-v1");
+  normalizeScene,
+  parseV3Credentials
+} = require("./kaipay-v3");
 
 function optionalString(env, name) {
   const value = env && env[name];
@@ -49,50 +50,56 @@ function requireHttpsUrl(value, label) {
 }
 
 function validateCredentialsJson(value) {
-  parseEpayCredentials(value);
+  parseV3Credentials(value);
   return value;
 }
 
 function assertKaipayRuntimeConfig(config) {
   if (!config || typeof config !== "object") throw new Error("Kaipay server configuration is required");
   if (config.mode === "production" || config.mode === "test") {
-    normalizeMerchantId(config.merchantId);
     validateCredentialsJson(config.credentialsJson);
     requireHttpsUrl(config.notifyBaseUrl, "Kaipay notification base URL");
     requireHttpsUrl(config.returnBaseUrl, "Kaipay return base URL");
     normalizeApiBaseUrl(config.apiBaseUrl, { production: config.mode === "production" });
     normalizePaymentChannel(config.defaultChannel);
+    normalizeScene("ALIPAY", config.alipayScene);
+    normalizeScene("WXPAY", config.wechatScene);
+    if (config.selectedMerchantCode && !/^[A-Za-z0-9._-]{1,128}$/.test(config.selectedMerchantCode)) {
+      throw new Error("KAIPAY_SELECTED_MERCHANT_CODE is invalid");
+    }
     const timeoutMs = Number(config.requestTimeoutMs);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 60_000) {
       throw new Error("Kaipay request timeout must be between 1000 and 60000 milliseconds");
     }
-    if (config.adapterVersion !== KAIPAY_EPAY_V1_ADAPTER_VERSION) throw new Error(`KAIPAY_ADAPTER_VERSION must be ${KAIPAY_EPAY_V1_ADAPTER_VERSION}`);
+    if (config.adapterVersion !== KAIPAY_V3_ADAPTER_VERSION) throw new Error(`KAIPAY_ADAPTER_VERSION must be ${KAIPAY_V3_ADAPTER_VERSION}`);
     if (config.allowSimulatedPayments === true) throw new Error("Simulated payments are forbidden outside development");
   }
   return config;
 }
 
 /**
- * Loads the stable deployment boundary for the official Kaipay EPay V1 MD5
- * adapter. The EPay key remains in the server-only credentials JSON secret.
+ * Loads the stable deployment boundary for the official Kaipay Pay API V3
+ * HMAC adapter. API Key/Secret pairs remain in one server-only credential
+ * ring so historical orders can continue to verify after a Secret rotation.
  */
 function loadKaipayConfig(env = process.env) {
   const mode = optionalString(env, "PETPACK_PLATFORM_MODE") || "development";
   const config = {
     mode,
-    merchantId: optionalString(env, "KAIPAY_MERCHANT_ID"),
     credentialsJson: optionalString(env, "KAIPAY_CREDENTIALS_JSON"),
     apiBaseUrl: optionalString(env, "KAIPAY_API_BASE_URL"),
     notifyBaseUrl: optionalString(env, "KAIPAY_NOTIFY_BASE_URL"),
     returnBaseUrl: optionalString(env, "KAIPAY_RETURN_BASE_URL"),
     adapterVersion: optionalString(env, "KAIPAY_ADAPTER_VERSION"),
     defaultChannel: optionalString(env, "KAIPAY_DEFAULT_CHANNEL") || "ALIPAY",
+    alipayScene: optionalString(env, "KAIPAY_ALIPAY_SCENE") || "web",
+    wechatScene: optionalString(env, "KAIPAY_WECHAT_SCENE") || "native",
+    selectedMerchantCode: optionalString(env, "KAIPAY_SELECTED_MERCHANT_CODE"),
     requestTimeoutMs: optionalString(env, "KAIPAY_REQUEST_TIMEOUT_MS") || "15000",
     allowSimulatedPayments: optionalString(env, "KAIPAY_ALLOW_SIMULATED_PAYMENTS") === "true"
   };
   if (mode === "production" || mode === "test") {
     const errors = [];
-    if (!config.merchantId) errors.push("KAIPAY_MERCHANT_ID is required");
     if (!config.credentialsJson) errors.push("KAIPAY_CREDENTIALS_JSON is required");
     else {
       try { validateCredentialsJson(config.credentialsJson); } catch (error) { errors.push(error.message); }
@@ -100,10 +107,12 @@ function loadKaipayConfig(env = process.env) {
     if (!config.apiBaseUrl) errors.push("KAIPAY_API_BASE_URL is required");
     if (!config.notifyBaseUrl) errors.push("KAIPAY_NOTIFY_BASE_URL is required");
     if (!config.returnBaseUrl) errors.push("KAIPAY_RETURN_BASE_URL is required");
-    if (config.adapterVersion !== KAIPAY_EPAY_V1_ADAPTER_VERSION) errors.push(`KAIPAY_ADAPTER_VERSION must be ${KAIPAY_EPAY_V1_ADAPTER_VERSION}`);
-    try { normalizeMerchantId(config.merchantId); } catch (error) { errors.push(error.message); }
+    if (config.adapterVersion !== KAIPAY_V3_ADAPTER_VERSION) errors.push(`KAIPAY_ADAPTER_VERSION must be ${KAIPAY_V3_ADAPTER_VERSION}`);
     try { normalizeApiBaseUrl(config.apiBaseUrl, { production: mode === "production" }); } catch (error) { errors.push(error.message); }
     try { normalizePaymentChannel(config.defaultChannel); } catch (error) { errors.push(error.message); }
+    try { normalizeScene("ALIPAY", config.alipayScene); } catch (error) { errors.push(error.message); }
+    try { normalizeScene("WXPAY", config.wechatScene); } catch (error) { errors.push(error.message); }
+    if (config.selectedMerchantCode && !/^[A-Za-z0-9._-]{1,128}$/.test(config.selectedMerchantCode)) errors.push("KAIPAY_SELECTED_MERCHANT_CODE is invalid");
     if (!/^[1-9][0-9]{3,4}$/.test(config.requestTimeoutMs) || Number(config.requestTimeoutMs) < 1000 || Number(config.requestTimeoutMs) > 60000) {
       errors.push("KAIPAY_REQUEST_TIMEOUT_MS must be between 1000 and 60000");
     }
@@ -130,8 +139,11 @@ function createCheckoutRequest({ order, returnUrl, notifyUrl, paymentChannel }) 
     subject: typeof order.displayName === "string" && order.displayName.trim()
       ? `${order.displayName.trim()}的桌宠素材包`.slice(0, 256)
       : "PetPack Studio 桌宠素材包",
+    description: "7 个动作视频、三张母图及 PetPack 桌宠素材包",
     returnUrl: requireId(returnUrl, "Return URL"),
-    notifyUrl: requireId(notifyUrl, "Notification URL")
+    notifyUrl: requireId(notifyUrl, "Notification URL"),
+    credentialVersion: order.paymentCredentialVersion || undefined,
+    scene: order.paymentScene || undefined
   });
 }
 
@@ -181,7 +193,7 @@ function requireNotificationProtocol(protocol) {
 
 function requireCanonicalStatus(value) {
   const status = String(value || "").trim().toUpperCase();
-  if (!["PAID", "PENDING", "EXPIRED", "FAILED"].includes(status)) {
+  if (!["PAID", "PENDING", "EXPIRED", "FAILED", "REFUNDED"].includes(status)) {
     throw new Error("Kaipay adapter returned an unknown canonical payment status");
   }
   return status;
@@ -192,8 +204,10 @@ function normalizeAcknowledgement(value) {
   const status = Number(value.status);
   const body = typeof value.body === "string" ? value.body : "";
   const contentType = typeof value.contentType === "string" ? value.contentType.trim() : "";
+  const noContent = status === 204 && body === "" && contentType === "";
   const permittedStatus = (status >= 200 && status <= 299) || (status >= 400 && status <= 599);
-  if (!Number.isInteger(status) || !permittedStatus || !body || Buffer.byteLength(body, "utf8") > 4096 || !contentType || contentType.length > 128) {
+  const typedBody = Boolean(body) && Buffer.byteLength(body, "utf8") <= 4096 && Boolean(contentType) && contentType.length <= 128;
+  if (!Number.isInteger(status) || !permittedStatus || (!noContent && !typedBody)) {
     throw new Error("Kaipay acknowledgement is invalid");
   }
   return Object.freeze({ status, body, contentType });
@@ -211,19 +225,27 @@ class KaipayPaymentProvider {
 
   async createCheckout({ platformOrderId, idempotencyKey, paymentChannel }) {
     const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
+    if (!order) throw new Error("Payment order was not found");
+    const requestedChannel = normalizePaymentChannel(paymentChannel || this.config.defaultChannel);
+    if (order.paymentChannel && order.paymentChannel !== requestedChannel) {
+      throw new Error("Checkout retry must preserve the original Kaipay channel");
+    }
     const request = createCheckoutRequest({
       order,
       returnUrl: createServerReturnUrl(this.config.returnBaseUrl, order.id),
       notifyUrl: createServerNotificationUrl(this.config.notifyBaseUrl, order.id),
-      paymentChannel: paymentChannel || this.config.defaultChannel
+      paymentChannel: order.paymentChannel || requestedChannel
     });
     const response = await this.client.createCheckout({
       ...request,
       idempotencyKey: requireId(idempotencyKey, "Checkout idempotency key")
     });
     const providerOrderId = requireId(response && response.providerOrderId, "Kaipay provider order ID");
-    const checkoutUrl = requireId(response && response.checkoutUrl, "Kaipay checkout URL");
-    if (this.config.mode === "production") requireHttpsUrl(checkoutUrl, "Kaipay checkout URL");
+    const credentialVersion = requireId(response && response.credentialVersion, "Kaipay credential version");
+    const providerCode = requireId(response && response.providerCode, "Kaipay provider code");
+    const scene = requireId(response && response.scene, "Kaipay payment scene");
+    const nextAction = response && response.nextAction;
+    if (!nextAction || typeof nextAction !== "object") throw new Error("Kaipay nextAction is required");
     await this.eventStore.appendIdempotent({
       idempotencyKey: `checkout:${idempotencyKey}`,
       type: "checkout_created",
@@ -231,6 +253,9 @@ class KaipayPaymentProvider {
       providerOrderId,
       paymentMethod: request.paymentMethod,
       paymentChannel: request.paymentChannel,
+      providerCode,
+      scene,
+      credentialVersion,
       amountFen: request.amountFen,
       provider: "KAIPAY",
       adapterVersion: this.config.adapterVersion
@@ -239,27 +264,77 @@ class KaipayPaymentProvider {
       platformOrderId: request.platformOrderId,
       paymentMethod: request.paymentMethod,
       paymentChannel: request.paymentChannel,
+      providerCode,
+      scene,
+      credentialVersion,
       adapterVersion: this.config.adapterVersion
     });
     return {
       provider: "KAIPAY",
       providerOrderId,
-      checkoutUrl,
+      nextAction,
       paymentMethod: request.paymentMethod,
       paymentChannel: request.paymentChannel,
       state: PAYMENT_STATES.PENDING_PAYMENT
     };
   }
 
-  async handleNotification({ platformOrderId, rawNotification }) {
+  async queryStatus({ platformOrderId }) {
     const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
+    if (!order) throw new Error("Payment order was not found");
+    const queried = await this.client.queryOrder({
+      platformOrderId: requireId(order.id, "Platform order ID"),
+      providerOrderId: requireId(order.providerOrderId, "Kaipay provider order ID"),
+      credentialVersion: requireId(order.paymentCredentialVersion, "Kaipay credential version"),
+      paymentChannel: requireId(order.paymentChannel, "Kaipay payment channel"),
+      providerCode: requireId(order.paymentProviderCode, "Kaipay provider code"),
+      scene: requireId(order.paymentScene, "Kaipay payment scene")
+    });
+    const queriedOrder = {
+      platformOrderId: requireId(queried && queried.platformOrderId, "Queried platform order ID"),
+      providerOrderId: requireId(queried && queried.providerOrderId, "Queried Kaipay order ID"),
+      amountFen: assertAmountFen(queried && queried.amountFen),
+      currency: requireId(queried && queried.currency, "Queried currency"),
+      paymentMethod: assertPaymentMethod(queried && queried.paymentMethod),
+      paymentChannel: requireId(queried && queried.paymentChannel, "Queried Kaipay channel"),
+      providerCode: requireId(queried && queried.providerCode, "Queried Kaipay provider"),
+      scene: requireId(queried && queried.scene, "Queried Kaipay scene"),
+      status: requireCanonicalStatus(queried && queried.status)
+    };
+    const reconciliation = reconcileQueriedProviderPayment({ order, queriedOrder });
+    await this.eventStore.appendIdempotent({
+      idempotencyKey: `provider-status:${reconciliation.paymentEventKey}`,
+      type: "payment_status_queried",
+      platformOrderId: order.id,
+      providerOrderId: queriedOrder.providerOrderId,
+      state: reconciliation.state,
+      reason: reconciliation.reason,
+      provider: "KAIPAY",
+      providerStatus: queriedOrder.status,
+      adapterVersion: this.config.adapterVersion,
+      credentialVersion: order.paymentCredentialVersion
+    });
+    return {
+      ...reconciliation,
+      applyToOrder: true,
+      nextAction: queried && queried.nextAction
+    };
+  }
+
+  async handleNotification({ platformOrderId, rawNotification, notificationHeaders }) {
+    const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
+    if (!order) throw new Error("Payment order was not found");
     const rawBytes = requireRawNotification(rawNotification);
     let notification = null;
     let verificationError = null;
     try {
       notification = await this.notificationProtocol.verify(rawBytes, {
-        expectedMerchantId: this.config.merchantId,
         expectedPlatformOrderId: order.id,
+        expectedProviderOrderId: order.providerOrderId,
+        expectedProviderCode: order.paymentProviderCode,
+        expectedAmountFen: order.amountFen,
+        expectedCredentialVersion: order.paymentCredentialVersion,
+        headers: notificationHeaders,
         adapterVersion: this.config.adapterVersion
       });
     } catch (error) {
@@ -275,16 +350,20 @@ class KaipayPaymentProvider {
       valid: Boolean(
         !verificationError &&
         notification && notification.valid === true &&
-        notification.merchantId === this.config.merchantId &&
         notification.platformOrderId === order.id &&
+        notification.credentialVersion === order.paymentCredentialVersion &&
         typeof notification.providerOrderId === "string" && notification.providerOrderId.trim()
       ),
       providerOrderId: notification && notification.providerOrderId,
-      status: canonicalStatus
+      status: canonicalStatus,
+      eventId: notification && notification.eventId,
+      credentialVersion: notification && notification.credentialVersion
     };
     const notificationDigest = digestNotification(rawBytes);
     await this.eventStore.appendIdempotent({
-      idempotencyKey: `notification-received:${order.id}:${notificationDigest}`,
+      idempotencyKey: verifiedNotification.valid && verifiedNotification.eventId
+        ? `notification-received:${verifiedNotification.eventId}`
+        : `notification-received:${order.id}:${notificationDigest}`,
       type: "payment_notification_received",
       platformOrderId: order.id,
       providerOrderId: verifiedNotification.providerOrderId || null,
@@ -293,7 +372,9 @@ class KaipayPaymentProvider {
       verificationError: verificationError ? "notification_verification_failed" : null,
       provider: "KAIPAY",
       providerStatus: verifiedNotification.status,
-      adapterVersion: this.config.adapterVersion
+      adapterVersion: this.config.adapterVersion,
+      credentialVersion: order.paymentCredentialVersion || null,
+      providerEventId: verifiedNotification.eventId || null
     });
     await this.eventStore.storeEncryptedNotification({
       idempotencyKey: `notification-raw:${order.id}:${notificationDigest}`,
@@ -301,14 +382,19 @@ class KaipayPaymentProvider {
       providerOrderId: verifiedNotification.providerOrderId || null,
       rawNotification: rawBytes,
       provider: "KAIPAY",
-      adapterVersion: this.config.adapterVersion
+      adapterVersion: this.config.adapterVersion,
+      credentialVersion: order.paymentCredentialVersion || null
     });
     let queriedOrder = null;
     if (verifiedNotification.valid) {
       try {
         const queried = await this.client.queryOrder({
           platformOrderId: order.id,
-          providerOrderId: requireId(verifiedNotification.providerOrderId, "Kaipay provider order ID")
+          providerOrderId: requireId(verifiedNotification.providerOrderId, "Kaipay provider order ID"),
+          credentialVersion: requireId(order.paymentCredentialVersion, "Kaipay credential version"),
+          paymentChannel: requireId(order.paymentChannel, "Kaipay payment channel"),
+          providerCode: requireId(order.paymentProviderCode, "Kaipay provider code"),
+          scene: requireId(order.paymentScene, "Kaipay payment scene")
         });
         queriedOrder = {
           platformOrderId: requireId(queried && queried.platformOrderId, "Queried platform order ID"),
@@ -316,6 +402,9 @@ class KaipayPaymentProvider {
           amountFen: assertAmountFen(queried && queried.amountFen),
           currency: requireId(queried && queried.currency, "Queried currency"),
           paymentMethod: assertPaymentMethod(queried && queried.paymentMethod),
+          paymentChannel: requireId(queried && queried.paymentChannel, "Queried Kaipay channel"),
+          providerCode: requireId(queried && queried.providerCode, "Queried Kaipay provider"),
+          scene: requireId(queried && queried.scene, "Queried Kaipay scene"),
           status: requireCanonicalStatus(queried && queried.status)
         };
       } catch (_error) {
@@ -333,7 +422,9 @@ class KaipayPaymentProvider {
       reason: reconciliation.reason,
       provider: "KAIPAY",
       providerStatus: queriedOrder?.status || verifiedNotification.status,
-      adapterVersion: this.config.adapterVersion
+      adapterVersion: this.config.adapterVersion,
+      credentialVersion: order.paymentCredentialVersion || null,
+      providerEventId: verifiedNotification.eventId || null
     });
     const acknowledgement = normalizeAcknowledgement(await this.notificationProtocol.acknowledge({
       verified: verifiedNotification.valid,
@@ -359,7 +450,8 @@ class KaipayPaymentProvider {
       refundId: requireId(refundId, "Refund ID"),
       amountFen: assertAmountFen(amountFen),
       reason: requireId(reason, "Refund reason"),
-      idempotencyKey: requireId(idempotencyKey, "Refund idempotency key")
+      idempotencyKey: requireId(idempotencyKey, "Refund idempotency key"),
+      credentialVersion: requireId(order && order.paymentCredentialVersion, "Kaipay credential version")
     };
     if (request.amountFen > Number(order.amountFen)) throw new Error("Refund amount cannot exceed the paid order amount");
     const response = await this.client.refund(request);
@@ -371,14 +463,16 @@ class KaipayPaymentProvider {
       refundId: request.refundId,
       amountFen: request.amountFen,
       provider: "KAIPAY",
-      adapterVersion: this.config.adapterVersion
+      adapterVersion: this.config.adapterVersion,
+      credentialVersion: request.credentialVersion,
+      providerStatus: response && response.providerStatus
     });
     return { ...response, state: PAYMENT_STATES.REFUND_PENDING };
   }
 }
 
 module.exports = {
-  KAIPAY_EPAY_V1_ADAPTER_VERSION,
+  KAIPAY_V3_ADAPTER_VERSION,
   KAIPAY_OFFICIAL_API_ORIGIN,
   KaipayPaymentProvider,
   PAYMENT_METHODS,

@@ -1,5 +1,5 @@
 const { KaipayPaymentProvider } = require("./kaipay-payment-provider");
-const { createKaipayEpayV1Adapters } = require("./kaipay-epay-v1");
+const { createKaipayV3Adapters } = require("./kaipay-v3");
 const { SimulatedPaymentProvider } = require("./simulated-payment-provider");
 
 function createPaymentProvider({ config, ...dependencies } = {}) {
@@ -14,7 +14,7 @@ function createPaymentProvider({ config, ...dependencies } = {}) {
   }
   const adapters = injectedClient
     ? { kaipayClient: injectedClient, notificationProtocol: injectedProtocol }
-    : createKaipayEpayV1Adapters({ config, fetchImpl: dependencies.fetchImpl });
+    : createKaipayV3Adapters({ config, fetchImpl: dependencies.fetchImpl });
   return new KaipayPaymentProvider({ config, ...dependencies, ...adapters });
 }
 

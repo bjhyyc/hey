@@ -11,7 +11,7 @@ const compose = fs.readFileSync(
 
 describe("private production Studio workers Compose contract", () => {
   it("is disabled by default and never publishes a host port", () => {
-    expect(compose.match(/profiles: \["studio-production"\]/g)).toHaveLength(2);
+    expect(compose.match(/profiles: \["studio-production"\]/g)).toHaveLength(3);
     expect(compose).not.toMatch(/^\s*ports:/m);
     expect(compose).not.toMatch(/host(_|-)network|network_mode:\s*host/i);
     expect(compose).not.toMatch(/[A-Z]:\\|\/mnt\/[a-z]\//i);
@@ -28,15 +28,28 @@ describe("private production Studio workers Compose contract", () => {
 
   it("keeps the Worker private, non-root, read-only, bounded, and observable", () => {
     expect(compose).toContain('user: "10001:10001"');
-    expect(compose.match(/read_only: true/g)).toHaveLength(2);
-    expect(compose.match(/no-new-privileges:true/g)).toHaveLength(2);
-    expect(compose.match(/cap_drop:/g)).toHaveLength(2);
+    expect(compose.match(/read_only: true/g)).toHaveLength(3);
+    expect(compose.match(/no-new-privileges:true/g)).toHaveLength(3);
+    expect(compose.match(/cap_drop:/g)).toHaveLength(3);
     expect(compose).toContain("PETPACK_RUNTIME_HEARTBEAT_FILE: /run/petpack/worker-heartbeat.json");
     expect(compose).toContain('["CMD", "node", "src/runtime/check-runtime-heartbeat.js"]');
     expect(compose).toContain("petpack-worker-work:/work");
     expect(compose).toContain("PETPACK_WORKER_COMPONENTS_MODULE: ${PETPACK_WORKER_COMPONENTS_MODULE:?");
     expect(compose).toContain('command: ["src/runtime/start-outbox-dispatcher.js"]');
     expect(compose).not.toContain('command: ["node",');
+  });
+
+  it("runs the full Studio API with V3 secrets and no published host port", () => {
+    const studioApi = compose.slice(compose.indexOf("  studio-api:"), compose.indexOf("  outbox-dispatcher:"));
+    expect(studioApi).toContain('command: ["src/runtime/start-studio-api.js"]');
+    expect(studioApi).toContain("PETPACK_STUDIO_INTERNAL_TOKEN_FILE: /run/secrets/studio_internal_token");
+    expect(studioApi).toContain("KAIPAY_CREDENTIALS_JSON_FILE: /run/secrets/kaipay_credentials_json");
+    expect(studioApi).toContain("KAIPAY_ADAPTER_VERSION: kaipay-pay-api-v3-hmac-sha256/1");
+    expect(studioApi).toContain("KAIPAY_ALIPAY_SCENE: web");
+    expect(studioApi).toContain("KAIPAY_WECHAT_SCENE: native");
+    expect(studioApi).toContain("- petpack-edge");
+    expect(studioApi).toContain("- petpack-egress");
+    expect(studioApi).not.toContain("ports:");
   });
 
   it("does not attach the outbox dispatcher to the egress network", () => {

@@ -20,6 +20,7 @@ function readySchemaRow(overrides = {}) {
     has_video_prompts: true,
     has_image_prompts: true,
     has_kaipay_adapter_version: true,
+    has_kaipay_v3_identity: true,
     ...overrides
   };
 }
@@ -49,25 +50,34 @@ describe("Studio API runtime", () => {
     expect(loadStudioApiRuntimeConfig({
       PETPACK_PLATFORM_MODE: "production",
       PETPACK_API_PORT: "8787",
-      PETPACK_PHONE_AUTH_ENABLED: "true"
+      PETPACK_PHONE_AUTH_ENABLED: "true",
+      PETPACK_STUDIO_INTERNAL_TOKEN: "internal-token-at-least-32-bytes-long"
     })).toMatchObject({
       mode: "production",
       host: "0.0.0.0",
       port: 8787,
       allowNonLoopback: true,
-      phoneAuthExchangeEnabled: true
+      phoneAuthExchangeEnabled: true,
+      internalBearerToken: "internal-token-at-least-32-bytes-long"
     });
+    expect(() => loadStudioApiRuntimeConfig({
+      PETPACK_PLATFORM_MODE: "production",
+      PETPACK_API_PORT: "8787"
+    })).toThrow(/internal gateway token/);
     expect(() => loadStudioApiRuntimeConfig({ PETPACK_PLATFORM_MODE: "preview" })).toThrow(/development, test, or production/);
     expect(() => loadStudioApiRuntimeConfig({ PETPACK_API_PORT: "80" })).toThrow(/port/);
   });
 
-  it("requires the full Studio and Kaipay schema through migration 014", async () => {
+  it("requires the full Studio and Kaipay V3 schema through migration 015", async () => {
     await expect(assertStudioApiSchemaReady({
       query: vi.fn(async () => ({ rows: [readySchemaRow({ has_kaipay_adapter_version: false })] }))
-    })).rejects.toThrow(/migration 014/);
+    })).rejects.toThrow(/migration 015/);
+    await expect(assertStudioApiSchemaReady({
+      query: vi.fn(async () => ({ rows: [readySchemaRow({ has_kaipay_v3_identity: false })] }))
+    })).rejects.toThrow(/migration 015/);
     await expect(assertStudioApiSchemaReady({
       query: vi.fn(async () => ({ rows: [readySchemaRow()] }))
-    })).resolves.toEqual({ ready: true, migration: 14 });
+    })).resolves.toEqual({ ready: true, migration: 15 });
   });
 
   it("checks readiness before listening and closes cleanly", async () => {
@@ -116,9 +126,9 @@ describe("Studio API runtime", () => {
     const controlsRepository = { publishPriceCard: vi.fn(), summarizeProviderUsage: vi.fn() };
     const workflow = { startPaidOrder: vi.fn(), photosAccepted: vi.fn(), confirmCharacterMasters: vi.fn(), regenerateCharacterMaster: vi.fn() };
     const objectStore = { createUploadGrant: vi.fn(), createDownloadGrant: vi.fn(), verifyUploadedObject: vi.fn() };
-    const paymentProvider = { createCheckout: vi.fn(), handleNotification: vi.fn() };
+    const paymentProvider = { createCheckout: vi.fn(), queryStatus: vi.fn(), handleNotification: vi.fn() };
     const service = {
-      createCheckout: vi.fn(), listProjects: vi.fn(), createSourcePhotoUploadGrants: vi.fn(),
+      createCheckout: vi.fn(), listProjects: vi.fn(), refreshPaymentStatus: vi.fn(), createSourcePhotoUploadGrants: vi.fn(),
       confirmSourcePhotoUpload: vi.fn(), regenerateCharacterMaster: vi.fn(), confirmCharacter: vi.fn(),
       getProjectView: vi.fn(), createPetpackDownload: vi.fn(), handlePaymentNotification: vi.fn()
     };

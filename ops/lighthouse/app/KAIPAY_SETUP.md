@@ -1,77 +1,115 @@
-# Kaipay EPay V1 production setup
+# Kaipay Pay API V3 production setup
 
-The application is pinned to the official domestic Kaipay EPay V1 gateway and
-adapter version. Do not place the merchant key in Git, a shell history, chat,
-Docker image layers, or Compose environment values.
+PetPack Studio is pinned to Kaipay Pay API V3. EPay V1/MD5 is retained only as
+historical code and cannot be selected by the production factory.
 
-## 1. Find the two merchant values
+## 1. Create the correct API key
 
-Open the Kaipay merchant console and locate the EPay configuration:
+In the Kaipay console, create or enable a **Pay API V3** key with only these
+permissions:
 
-- `pid`: the positive decimal merchant ID;
-- EPay key: the shared MD5 signing secret.
+- `order:create`
+- `order:query`
+- `order:refund`
 
-The merchant ID is non-secret. Treat the EPay key as a production secret.
+The earlier “EPay 兼容密钥” is not a V3 API Key and must not be put into the V3
+credential file. Complete the console's authorized-domain verification before
+the real payment gate is opened.
 
-## 2. Create the secret file on the server
+## 2. Store the credential ring outside Git
 
-Create an operator-owned file outside every release directory, for example:
-
-`/opt/petpack/config/payment/secrets/kaipay_credentials.json`
-
-Its entire content must have this exact JSON shape:
+Create the Docker secret file `kaipay_credentials_json` under the external
+`PETPACK_CONFIG_ROOT`. Its exact JSON shape is:
 
 ```json
-{"epayKey":"REPLACE_DIRECTLY_ON_THE_SERVER"}
+{
+  "active": {
+    "apiKey": "<current V3 API Key>",
+    "apiSecret": "<current V3 API Secret>"
+  },
+  "previous": []
+}
 ```
 
-Use owner-only read/write permissions. Mount it read-only into the Studio API
-container, for example at `/run/secrets/kaipay_credentials_json`, and configure
-`KAIPAY_CREDENTIALS_JSON_FILE=/run/secrets/kaipay_credentials_json`. Never set
-both `KAIPAY_CREDENTIALS_JSON` and `KAIPAY_CREDENTIALS_JSON_FILE`.
+When rotating the secret, move the old pair into `previous` before replacing
+`active`. Keep every pair until all orders created with that credential have
+left their payment/refund retention window. Each order stores a non-secret
+credential-version digest so webhooks, queries and refunds always use the same
+secret that created it. Never paste the real key or secret into chat, Git,
+Compose environment values, images, or logs.
 
-The callback ciphertext key is separate. Keep
-`PETPACK_PAYMENT_NOTIFICATION_ENCRYPTION_KEY_FILE` configured with its own
-32-byte key; it must not reuse the EPay key.
+Create a separate 32-byte application key for
+`payment_notification_encryption_key`. It encrypts raw webhook evidence and
+must not reuse a Kaipay API Secret.
 
-## 3. Configure non-secret production values
+## 3. Production environment
 
 ```text
-PETPACK_PLATFORM_MODE=production
-KAIPAY_MERCHANT_ID=<positive decimal pid>
+KAIPAY_CREDENTIALS_JSON_FILE=/run/secrets/kaipay_credentials_json
+PETPACK_PAYMENT_NOTIFICATION_ENCRYPTION_KEY_FILE=/run/secrets/payment_notification_encryption_key
 KAIPAY_API_BASE_URL=https://api.kaipay.cn
 KAIPAY_NOTIFY_BASE_URL=https://api.heyirmy.com/api/payments/kaipay/notify
 KAIPAY_RETURN_BASE_URL=https://heyirmy.com/projects/payment-return
-KAIPAY_ADAPTER_VERSION=kaipay-epay-v1-md5/1
+KAIPAY_ADAPTER_VERSION=kaipay-pay-api-v3-hmac-sha256/1
 KAIPAY_DEFAULT_CHANNEL=ALIPAY
+KAIPAY_ALIPAY_SCENE=web
+KAIPAY_WECHAT_SCENE=native
 KAIPAY_REQUEST_TIMEOUT_MS=15000
 KAIPAY_ALLOW_SIMULATED_PAYMENTS=false
 ```
 
-The application appends the platform order ID to the notification base URL.
-The exact provider callback therefore looks like:
+`KAIPAY_SELECTED_MERCHANT_CODE` is optional. Leave it unset unless the V3
+capabilities/merchant configuration explicitly requires a selected merchant
+code for this account.
 
-`GET /api/payments/kaipay/notify/<platformOrderId>?pid=...&trade_no=...&...`
+The browser never receives API credentials. Alipay uses `provider=alipay`,
+`scene=web`, and a validated HTTPS redirect action. WeChat uses
+`provider=wechat`, `scene=native`, and a QR action rendered by the website.
 
-The customer chooses either Alipay or WeChat before checkout. The backend maps
-those choices to EPay `alipay` and `wxpay`; UnionPay is intentionally not
-offered by this product.
+## 4. Public callback
 
-## 4. Required checks before the first real order
+Allow only:
 
-1. Run `npm run verify:kaipay` from `platform/`. It performs only the official
-   read-only `act=query` merchant check, prints no merchant balance, username,
-   key, or URL, and creates no order.
-2. Run the production configuration preflight without printing secret values.
-3. Confirm the callback URL is publicly reachable through Caddy to the full
-   Studio API; the auth-only API is not sufficient.
-4. Keep the public purchase gate closed.
-5. Agree on one minimum-value test order and a hard spending limit.
-6. Confirm an invalid signature returns `fail` and cannot change order state.
-7. Confirm a valid notification is followed by `/epay/api` order query and only
-   then returns plain text `success`.
-8. Replay the same notification and prove the workflow starts once.
+```text
+POST /api/payments/kaipay/notify/<platformOrderId>
+```
 
-The public EPay V1 documentation does not define a refund endpoint. Automatic
-refunds remain fail-closed until a separate official Kaipay refund protocol is
-provided and tested.
+The callback must preserve the raw JSON bytes and these seven headers exactly:
+
+- `X-KPay-API-Version`
+- `X-KPay-Event`
+- `X-KPay-Timestamp`
+- `X-KPay-Nonce`
+- `X-KPay-Signature-Method`
+- `X-KPay-Body-SHA256`
+- `X-KPay-Signature`
+
+The adapter verifies HMAC-SHA256, the five-minute timestamp window, body hash,
+event/order/amount/currency/provider identity, then performs an authoritative V3
+order query. Only both proofs together may mark an order paid. A verified paid
+notification returns HTTP 204 with an empty body. GET callbacks and the old
+Alipay/EPay routes remain closed.
+
+## 5. No-charge probe and controlled acceptance
+
+After the secret file is mounted, run from `platform/`:
+
+```text
+npm run verify:kaipay
+```
+
+It sends only the signed `GET /pay/api/v3/capabilities` request and prints only
+`kaipay_v3_capabilities=ok` or a safe failure category. It confirms that the
+credential can use the V3 API matrix for `alipay/web` and `wechat/native`; it
+does not prove that both merchant payment channels are approved, and it does
+not create an order.
+
+Only after callback reachability and the merchant channel page are confirmed:
+
+1. create one minimum-amount Alipay order;
+2. complete payment and verify the V3 webhook plus active query;
+3. replay the same webhook and prove no second run is created;
+4. create one minimum-amount WeChat native order and verify the QR action;
+5. execute one explicitly approved refund using a unique refund request number.
+
+Keep purchasing and real generation disabled until all bounded checks pass.

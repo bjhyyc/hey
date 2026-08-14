@@ -90,7 +90,7 @@ async function assertStudioWorkerSchemaReady(database) {
             to_regclass('public.master_image_generation') IS NOT NULL AS has_master_generation,
             to_regclass('public.petpack_input_snapshot') IS NOT NULL AS has_petpack_snapshot,
             to_regclass('public.provider_usage_attempt') IS NOT NULL AS has_usage_attempt,
-            EXISTS (
+             EXISTS (
               SELECT 1 FROM information_schema.columns
                WHERE table_schema = 'public' AND table_name = 'production_run'
                  AND column_name = 'side_generation_attempts'
@@ -99,17 +99,27 @@ async function assertStudioWorkerSchemaReady(database) {
               SELECT 1 FROM information_schema.columns
                WHERE table_schema = 'public' AND table_name = 'payment_event'
                  AND column_name = 'adapter_version'
-            ) AS has_kaipay_adapter_version`
+             ) AS has_kaipay_adapter_version,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'payment_attempt'
+                  AND column_name = 'credential_version'
+             ) AND EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'payment_event'
+                  AND column_name = 'provider_event_id'
+             ) AS has_kaipay_v3_identity`
   );
   const row = result && Array.isArray(result.rows) ? result.rows[0] : null;
   const required = [
     "has_execution", "has_master_generation", "has_petpack_snapshot",
-    "has_usage_attempt", "has_side_master", "has_kaipay_adapter_version"
+    "has_usage_attempt", "has_side_master", "has_kaipay_adapter_version",
+    "has_kaipay_v3_identity"
   ];
   if (!row || required.some((name) => row[name] !== true)) {
-    throw new Error("PostgreSQL Studio Worker schema is not ready through migration 014");
+    throw new Error("PostgreSQL Studio Worker schema is not ready through migration 015");
   }
-  return Object.freeze({ ready: true, migration: 14 });
+  return Object.freeze({ ready: true, migration: 15 });
 }
 
 async function assertWorkerTempRoot(tempRoot) {

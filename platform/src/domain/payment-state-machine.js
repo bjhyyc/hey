@@ -19,6 +19,7 @@ const SUCCESS_PROVIDER_STATUSES = new Set(["PAID"]);
 const PENDING_PROVIDER_STATUSES = new Set(["PENDING"]);
 const EXPIRED_PROVIDER_STATUSES = new Set(["EXPIRED"]);
 const FAILED_PROVIDER_STATUSES = new Set(["FAILED"]);
+const REFUNDED_PROVIDER_STATUSES = new Set(["REFUNDED"]);
 
 function assertPaymentMethod(method) {
   if (!PAYMENT_METHODS.includes(method)) {
@@ -44,12 +45,56 @@ function providerStatusToPaymentState(status) {
   if (PENDING_PROVIDER_STATUSES.has(normalized)) return PAYMENT_STATES.PENDING_PAYMENT;
   if (EXPIRED_PROVIDER_STATUSES.has(normalized)) return PAYMENT_STATES.EXPIRED;
   if (FAILED_PROVIDER_STATUSES.has(normalized)) return PAYMENT_STATES.PAYMENT_REVIEW;
+  if (REFUNDED_PROVIDER_STATUSES.has(normalized)) return PAYMENT_STATES.REFUNDED;
   return PAYMENT_STATES.PAYMENT_REVIEW;
 }
 
 function createPaymentEventIdempotencyKey({ platformOrderId, providerOrderId, eventType, providerStatus }) {
   const material = [platformOrderId, providerOrderId || "", eventType, normalizeProviderStatus(providerStatus)].join("|");
   return crypto.createHash("sha256").update(material).digest("hex");
+}
+
+function reconcileQueriedProviderPayment({ order, queriedOrder, confirmedByNotification = false }) {
+  if (!order || !order.id) throw new Error("Platform order is required");
+  if (!queriedOrder) throw new Error("An authoritative provider query is required");
+
+  const mismatches = [];
+  if (queriedOrder.platformOrderId !== order.id) mismatches.push("platform_order_id");
+  if (order.providerOrderId && queriedOrder.providerOrderId !== order.providerOrderId) mismatches.push("provider_order_id");
+  if (Number(queriedOrder.amountFen) !== Number(order.amountFen)) mismatches.push("amount");
+  if (queriedOrder.currency && queriedOrder.currency !== "CNY") mismatches.push("currency");
+  if (queriedOrder.paymentMethod && queriedOrder.paymentMethod !== order.paymentMethod) mismatches.push("payment_method");
+  if (queriedOrder.paymentChannel && order.paymentChannel && queriedOrder.paymentChannel !== order.paymentChannel) mismatches.push("payment_channel");
+  if (queriedOrder.providerCode && order.paymentProviderCode && queriedOrder.providerCode !== order.paymentProviderCode) mismatches.push("provider_code");
+  if (queriedOrder.scene && order.paymentScene && queriedOrder.scene !== order.paymentScene) mismatches.push("payment_scene");
+  if (mismatches.length > 0) {
+    return {
+      state: PAYMENT_STATES.PAYMENT_REVIEW,
+      reason: `provider_query_mismatch:${mismatches.join(",")}`,
+      providerOrderId: order.providerOrderId || queriedOrder.providerOrderId,
+      paymentEventKey: createPaymentEventIdempotencyKey({
+        platformOrderId: order.id,
+        providerOrderId: queriedOrder.providerOrderId,
+        eventType: "query_mismatch",
+        providerStatus: queriedOrder.status
+      })
+    };
+  }
+
+  const state = providerStatusToPaymentState(queriedOrder.status);
+  return {
+    state,
+    reason: state === PAYMENT_STATES.PAID
+      ? (confirmedByNotification ? "verified_notification_and_provider_query" : "authoritative_provider_query")
+      : "provider_query_not_paid",
+    providerOrderId: queriedOrder.providerOrderId,
+    paymentEventKey: createPaymentEventIdempotencyKey({
+      platformOrderId: order.id,
+      providerOrderId: queriedOrder.providerOrderId,
+      eventType: "provider_query",
+      providerStatus: queriedOrder.status
+    })
+  };
 }
 
 function reconcileProviderPayment({
@@ -83,16 +128,11 @@ function reconcileProviderPayment({
     };
   }
 
-  const mismatches = [];
-  if (queriedOrder.platformOrderId !== order.id) mismatches.push("platform_order_id");
-  if (queriedOrder.providerOrderId !== verifiedNotification.providerOrderId) mismatches.push("provider_order_id");
-  if (Number(queriedOrder.amountFen) !== Number(order.amountFen)) mismatches.push("amount");
-  if (queriedOrder.currency && queriedOrder.currency !== "CNY") mismatches.push("currency");
-  if (queriedOrder.paymentMethod && queriedOrder.paymentMethod !== order.paymentMethod) mismatches.push("payment_method");
-  if (mismatches.length > 0) {
+  if (queriedOrder.providerOrderId !== verifiedNotification.providerOrderId) {
     return {
       state: PAYMENT_STATES.PAYMENT_REVIEW,
-      reason: `provider_query_mismatch:${mismatches.join(",")}`,
+      reason: "provider_query_mismatch:provider_order_id",
+      providerOrderId: order.providerOrderId || verifiedNotification.providerOrderId,
       paymentEventKey: createPaymentEventIdempotencyKey({
         platformOrderId: order.id,
         providerOrderId: queriedOrder.providerOrderId,
@@ -101,19 +141,7 @@ function reconcileProviderPayment({
       })
     };
   }
-
-  const state = providerStatusToPaymentState(queriedOrder.status);
-  return {
-    state,
-    reason: state === PAYMENT_STATES.PAID ? "verified_notification_and_provider_query" : "provider_query_not_paid",
-    providerOrderId: queriedOrder.providerOrderId,
-    paymentEventKey: createPaymentEventIdempotencyKey({
-      platformOrderId: order.id,
-      providerOrderId: queriedOrder.providerOrderId,
-      eventType: "provider_query",
-      providerStatus: queriedOrder.status
-    })
-  };
+  return reconcileQueriedProviderPayment({ order, queriedOrder, confirmedByNotification: true });
 }
 
 module.exports = {
@@ -124,5 +152,6 @@ module.exports = {
   createPaymentEventIdempotencyKey,
   normalizeProviderStatus,
   providerStatusToPaymentState,
+  reconcileQueriedProviderPayment,
   reconcileProviderPayment
 };

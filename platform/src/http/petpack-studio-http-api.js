@@ -1,4 +1,4 @@
-const { createHash } = require("node:crypto");
+const { createHash, timingSafeEqual } = require("node:crypto");
 const { readCookieValue } = require("../auth/phone-auth-service");
 
 const DEFAULT_MAX_JSON_BYTES = 1024 * 1024;
@@ -18,8 +18,7 @@ const HTTP_API_ROUTES = Object.freeze({
   CONFIRM_CHARACTER: "POST /api/projects/:projectId/character/confirm",
   GET_PROJECT: "GET /api/projects/:projectId",
   CREATE_PETPACK_DOWNLOAD: "POST /api/projects/:projectId/petpack-download",
-  KAIPAY_NOTIFICATION: "GET /api/payments/kaipay/notify/:platformOrderId",
-  KAIPAY_NOTIFICATION_LEGACY_POST: "POST /api/payments/kaipay/notify/:platformOrderId",
+  KAIPAY_NOTIFICATION: "POST /api/payments/kaipay/notify/:platformOrderId",
   ADMIN_OPERATIONS: "GET /api/admin/operations",
   ADMIN_OPERATION_COSTS: "GET /api/admin/operations/costs",
   ADMIN_RETENTION_PLAN: "GET /api/admin/retention/plan",
@@ -63,7 +62,7 @@ function requireFunction(value, label) {
 
 function requireNormalUserService(service) {
   const methods = [
-    "createCheckout", "listProjects",
+    "createCheckout", "listProjects", "refreshPaymentStatus",
     "createSourcePhotoUploadGrants",
     "confirmSourcePhotoUpload",
     "regenerateCharacterMaster",
@@ -122,14 +121,10 @@ function decodeJsonObject(value, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES } = {})
   return parsed;
 }
 
-// Kaipay EPay V1 signs the decoded fields delivered in its GET query. Preserve
-// the bounded original query bytes for encrypted audit storage and let the
-// pinned protocol adapter perform duplicate-field rejection and verification.
-// The POST branch remains only for the development simulator and older tests.
-function readBoundedRawNotification(request, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES, rawSearch = "" } = {}) {
-  const rawNotification = String(request?.method || "").toUpperCase() === "GET"
-    ? rawSearch
-    : request.rawBody;
+// Kaipay V3 signs the SHA-256 of the exact POST body. Preserve the bounded raw
+// bytes and let the pinned protocol adapter verify them before JSON parsing.
+function readBoundedRawNotification(request, { maxJsonBytes = DEFAULT_MAX_JSON_BYTES } = {}) {
+  const rawNotification = request?.rawBody;
   if (typeof rawNotification === "string" || Buffer.isBuffer(rawNotification)) {
     if (!rawNotification.length || Buffer.byteLength(rawNotification) > maxJsonBytes) throw badRequest("支付通知内容无效");
     return rawNotification;
@@ -141,10 +136,11 @@ function requirePaymentAcknowledgement(value) {
   const status = Number(value && value.status);
   const body = value && typeof value.body === "string" ? value.body : "";
   const contentType = value && typeof value.contentType === "string" ? value.contentType.trim() : "";
+  const noContent = status === 204 && body === "" && contentType === "";
   const permittedStatus = (status >= 200 && status <= 299) || (status >= 400 && status <= 599);
   if (!Number.isInteger(status) || !permittedStatus ||
-      !body || Buffer.byteLength(body, "utf8") > 4096 ||
-      !/^[A-Za-z0-9!#$&^_.+\-]+\/[A-Za-z0-9!#$&^_.+\-]+(?:; ?charset=[A-Za-z0-9._-]+)?$/.test(contentType)) {
+      (!noContent && (!body || Buffer.byteLength(body, "utf8") > 4096 ||
+        !/^[A-Za-z0-9!#$&^_.+\-]+\/[A-Za-z0-9!#$&^_.+\-]+(?:; ?charset=[A-Za-z0-9._-]+)?$/.test(contentType)))) {
     throw new Error("The Kaipay adapter returned an invalid callback acknowledgement");
   }
   return { status, body, contentType };
@@ -395,8 +391,59 @@ function serializeCheckout(value) {
       paymentMethod: safeString(value?.order?.paymentMethod, { maxLength: 16 }),
       amountFen: safeInteger(value?.order?.amountFen)
     }),
-    checkout: compactObject({ checkoutUrl: safeString(value?.checkout?.checkoutUrl, { maxLength: 4096 }) })
+    checkout: compactObject({
+      paymentChannel: safeString(value?.checkout?.paymentChannel, { maxLength: 16 }),
+      nextAction: serializeKaipayNextAction(value?.checkout?.nextAction)
+    })
   };
+}
+
+function serializeKaipayNextAction(value) {
+  if (!isPlainObject(value)) return undefined;
+  const type = safeString(value.type, { maxLength: 32 });
+  if (type === "redirect") {
+    const url = safeString(value.url, { maxLength: 8192 });
+    return url ? { type, url } : undefined;
+  }
+  if (type === "qr_code") {
+    const qrCode = safeString(value.qrCode, { maxLength: 8192 });
+    const qrCodeImageUrl = safeString(value.qrCodeImageUrl, { maxLength: 8192 });
+    return qrCode || qrCodeImageUrl ? compactObject({ type, qrCode, qrCodeImageUrl }) : undefined;
+  }
+  if (type === "retry" || type === "poll") {
+    const retryAfterSeconds = safeInteger(value.retryAfterSeconds);
+    if (!retryAfterSeconds || retryAfterSeconds > 3600) return undefined;
+    return compactObject({
+      type,
+      retryAfterSeconds,
+      message: safeString(value.message, { maxLength: 256 })
+    });
+  }
+  return type === "none" ? { type } : undefined;
+}
+
+function serializePaymentStatus(value) {
+  return {
+    order: compactObject({
+      id: safeString(value?.order?.id, { maxLength: 256 }),
+      status: safeString(value?.order?.status, { maxLength: 64 })
+    }),
+    nextAction: serializeKaipayNextAction(value?.nextAction)
+  };
+}
+
+const KAIPAY_V3_WEBHOOK_HEADERS = Object.freeze([
+  "X-KPay-API-Version",
+  "X-KPay-Event",
+  "X-KPay-Timestamp",
+  "X-KPay-Nonce",
+  "X-KPay-Signature-Method",
+  "X-KPay-Body-SHA256",
+  "X-KPay-Signature"
+]);
+
+function readKaipayV3WebhookHeaders(request) {
+  return Object.fromEntries(KAIPAY_V3_WEBHOOK_HEADERS.map((name) => [name, requestHeader(request, name)]));
 }
 
 function serializeProjectList(value) {
@@ -708,10 +755,11 @@ function serializeAdminValue(value, { depth = 0 } = {}) {
 }
 
 function jsonResponse(status, body, extraHeaders = {}) {
+  const noContent = Number(status) === 204 && body === "";
   return {
     status,
     headers: {
-      "content-type": "application/json; charset=utf-8",
+      ...(noContent ? {} : { "content-type": "application/json; charset=utf-8" }),
       "cache-control": "no-store",
       ...extraHeaders
     },
@@ -746,6 +794,23 @@ function requestHeader(request, name) {
   if (typeof headers.get === "function") return headers.get(name) || undefined;
   const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
   return entry && entry[1];
+}
+
+function normalizeInternalBearerToken(value) {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value !== "string" || value.length < 32 || value.length > 4096 || /[\r\n\u0000]/.test(value)) {
+    throw new Error("Studio internal bearer token is invalid");
+  }
+  return value;
+}
+
+function hasValidInternalBearer(request, expectedToken) {
+  if (!expectedToken) return true;
+  const supplied = requestHeader(request, "authorization");
+  if (typeof supplied !== "string" || !supplied.startsWith("Bearer ")) return false;
+  const candidate = Buffer.from(supplied.slice(7), "utf8");
+  const expected = Buffer.from(expectedToken, "utf8");
+  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
 
 function mapError(error) {
@@ -808,6 +873,9 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
 
   if (normalService && method === "POST" && is("api", "checkout")) return { id: "checkout", requiresActor: true };
   if (normalService && method === "GET" && is("api", "projects")) return { id: "project_list", requiresActor: true };
+  if (normalService && method === "POST" && projectPrefix && segments.length === 4 && segments[2] && segments[3] === "payment-status") {
+    return { id: "payment_status", requiresActor: true, projectId: requirePathParameter(segments[2], "项目 ID") };
+  }
   if (normalService && method === "POST" && projectPrefix && segments.length === 5 && segments[2] && segments[3] === "photos" && segments[4] === "upload-grants") {
     return { id: "photo_upload_grants", requiresActor: true, projectId: requirePathParameter(segments[2], "项目 ID") };
   }
@@ -836,8 +904,8 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
   if (normalService && method === "POST" && projectPrefix && segments.length === 4 && segments[2] && segments[3] === "petpack-download") {
     return { id: "petpack_download", requiresActor: true, projectId: requirePathParameter(segments[2], "项目 ID") };
   }
-  if (normalService && ["GET", "POST"].includes(method) && ((is("api", "payments", "kaipay", "notify", segments[4])) || (is("api", "payments", "kaipay", "notifications", segments[4])))) {
-    return { id: "kaipay_notification", acceptsQuery: method === "GET", callbackMethod: method, platformOrderId: requirePathParameter(segments[4], "平台订单 ID") };
+  if (normalService && method === "POST" && is("api", "payments", "kaipay", "notify", segments[4])) {
+    return { id: "kaipay_notification", platformOrderId: requirePathParameter(segments[4], "平台订单 ID") };
   }
   if (method === "GET" && is("api", "admin", "operations") && typeof adminOperationsService?.listOperations === "function") {
     return { id: "admin_operations", requiresActor: true, acceptsQuery: true };
@@ -893,11 +961,12 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
  * text for payment callbacks). `resolveActor` is intentionally injected: session, login, PII,
  * and CORS policy remain deployment decisions listed in BLOCKED.md.
  */
-function createPetPackStudioHttpApi({ service, petpackService, authService, phoneAuthExchangeEnabled = false, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService, resolveActor, sessionCookieName, secureSessionCookie = true, logger = console, maxJsonBytes = DEFAULT_MAX_JSON_BYTES, now = () => new Date().toISOString() } = {}) {
+function createPetPackStudioHttpApi({ service, petpackService, authService, phoneAuthExchangeEnabled = false, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService, resolveActor, sessionCookieName, secureSessionCookie = true, internalBearerToken, logger = console, maxJsonBytes = DEFAULT_MAX_JSON_BYTES, now = () => new Date().toISOString() } = {}) {
   const normalServiceCandidate = service || petpackService;
   const normalService = normalServiceCandidate ? requireNormalUserService(normalServiceCandidate) : null;
   const phoneAuthService = authService ? requireAuthService(authService) : null;
   const actorResolver = requireFunction(resolveActor, "A server-side actor resolver");
+  const gatewayToken = normalizeInternalBearerToken(internalBearerToken);
   const cookieName = phoneAuthService ? requireCookieName(sessionCookieName) : null;
   if (typeof phoneAuthExchangeEnabled !== "boolean") throw new Error("Phone auth exchange gate must be a boolean");
   if (typeof secureSessionCookie !== "boolean") throw new Error("Secure session-cookie policy is invalid");
@@ -943,6 +1012,11 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         assertNoBody(request);
         return { status: 200, body: serializeProjectList(await normalService.listProjects({ actor })) };
       }
+      case "payment_status": {
+        assertExactKeys(decodeJsonObject(request.body, { maxJsonBytes }), { allowed: [] });
+        const result = await normalService.refreshPaymentStatus({ actor, projectId: route.projectId });
+        return { status: 200, body: serializePaymentStatus(result) };
+      }
       case "photo_upload_grants": {
         const body = parsePhotoUploadGrantsBody(decodeJsonObject(request.body, { maxJsonBytes }));
         return { status: 201, body: serializeUploadGrants(await normalService.createSourcePhotoUploadGrants({ actor, projectId: route.projectId, ...body })) };
@@ -972,13 +1046,20 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         return { status: 200, body: serializeDownload(await normalService.createPetpackDownload({ actor, projectId: route.projectId })) };
       }
       case "kaipay_notification": {
-        if (route.callbackMethod === "GET") assertNoBody(request);
-        const rawNotification = readBoundedRawNotification(request, { maxJsonBytes, rawSearch: route.rawSearch });
-        const result = await normalService.handlePaymentNotification({ platformOrderId: route.platformOrderId, rawNotification });
+        const rawNotification = readBoundedRawNotification(request, { maxJsonBytes });
+        const result = await normalService.handlePaymentNotification({
+          platformOrderId: route.platformOrderId,
+          rawNotification,
+          notificationHeaders: readKaipayV3WebhookHeaders(request)
+        });
         // The exact Kaipay acknowledgement is supplied by the pinned protocol
         // adapter. The HTTP layer validates it but never guesses provider text.
         const acknowledgement = requirePaymentAcknowledgement(result && result.acknowledgement);
-        return { status: acknowledgement.status, headers: { "content-type": acknowledgement.contentType }, body: acknowledgement.body };
+        return {
+          status: acknowledgement.status,
+          headers: acknowledgement.contentType ? { "content-type": acknowledgement.contentType } : {},
+          body: acknowledgement.body
+        };
       }
       case "admin_operations": {
         assertNoBody(request);
@@ -1059,13 +1140,14 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         const target = parseRequestTarget(request);
         route = matchRoute(method, target.segments, normalService, phoneAuthService, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService);
         if (!route) throw notFound();
+        if (route.id !== "kaipay_notification" && !hasValidInternalBearer(request, gatewayToken)) {
+          throw new HttpApiError({ status: 401, code: "invalid_gateway", message: "服务端网关认证失败" });
+        }
         if (route.id === "auth_cloudbase_session" && !phoneAuthExchangeEnabled) {
           throw integrationDisabled("手机号登录暂未开放");
         }
         if (target.hasSearch && !route.acceptsQuery) throw badRequest("请求路径无效");
-        if (route.id === "kaipay_notification") {
-          route.rawSearch = target.rawSearch;
-        } else if (route.acceptsQuery) {
+        if (route.acceptsQuery) {
           if (route.id === "admin_operation_costs") route.query = parseAdminCostQuery(target.searchParams);
           else if (route.id === "admin_retention_plan") route.query = parseAdminRetentionQuery(target.searchParams);
           else route.query = parseAdminOperationsQuery(target.searchParams);

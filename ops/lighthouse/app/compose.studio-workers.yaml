@@ -1,4 +1,98 @@
 services:
+  studio-api:
+    profiles: ["studio-production"]
+    image: ${PETPACK_RUNTIME_IMAGE:?Set PETPACK_RUNTIME_IMAGE to an immutable image digest}
+    container_name: petpack-studio-api
+    command: ["src/runtime/start-studio-api.js"]
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    environment:
+      NODE_ENV: production
+      PETPACK_PLATFORM_MODE: production
+      PETPACK_API_PORT: "8787"
+      PETPACK_POSTGRES_URL_FILE: /run/secrets/postgres_url
+      PETPACK_POSTGRES_CA_PEM_FILE: /run/secrets/postgres_ca
+      PETPACK_POSTGRES_APPLICATION_NAME: petpack-production-studio-api
+      PETPACK_POSTGRES_POOL_MAX: "12"
+      PETPACK_POSTGRES_CONNECTION_TIMEOUT_MS: "5000"
+      PETPACK_POSTGRES_IDLE_TIMEOUT_MS: "10000"
+      PETPACK_POSTGRES_STATEMENT_TIMEOUT_MS: "30000"
+      PETPACK_SESSION_SIGNING_KEY_FILE: /run/secrets/session_signing_key
+      PETPACK_STUDIO_INTERNAL_TOKEN_FILE: /run/secrets/studio_internal_token
+      PETPACK_PAYMENT_NOTIFICATION_ENCRYPTION_KEY_FILE: /run/secrets/payment_notification_encryption_key
+      PETPACK_SESSION_TTL_SECONDS: "2592000"
+      PETPACK_SESSION_COOKIE_SECURE: "true"
+      PETPACK_STUDIO_SESSION_COOKIE_NAME: petpack_session
+      PETPACK_AUTH_POLICY_VERSION: cloudbase-phone-v1
+      PETPACK_PHONE_AUTH_ENABLED: ${PETPACK_PHONE_AUTH_ENABLED:-false}
+      CLOUDBASE_ENV_ID: petpack-staging-d3ffsbun2dc89fae
+      CLOUDBASE_REGION: ap-shanghai
+      CLOUDBASE_AUTH_TIMEOUT_MS: "8000"
+      PETPACK_OBJECT_STORE_ENDPOINT: ${PETPACK_OBJECT_STORE_ENDPOINT:?Set the production COS HTTPS endpoint}
+      PETPACK_OBJECT_STORE_BUCKET: ${PETPACK_OBJECT_STORE_BUCKET:?Set the production COS bucket}
+      PETPACK_OBJECT_STORE_REGION: ${PETPACK_OBJECT_STORE_REGION:?Set the production COS region}
+      PETPACK_OBJECT_STORE_ACCESS_KEY_ID_FILE: /run/secrets/cos_access_key_id
+      PETPACK_OBJECT_STORE_SECRET_ACCESS_KEY_FILE: /run/secrets/cos_secret_access_key
+      MODEL_REGISTRY_VERSION: ${MODEL_REGISTRY_VERSION:?Set the frozen model registry version}
+      MODELARK_BASE_URL: ${MODELARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      MODELARK_REGION: ${MODELARK_REGION:?Set the ModelArk region}
+      MODELARK_API_KEY_FILE: /run/secrets/modelark_api_key
+      MODELARK_SEEDREAM_ENDPOINT_ID: ${MODELARK_SEEDREAM_ENDPOINT_ID:?Set the Seedream endpoint ID}
+      MODELARK_SEEDANCE_ENDPOINT_ID: ${MODELARK_SEEDANCE_ENDPOINT_ID:?Set the Seedance endpoint ID}
+      MODELARK_SEEDREAM_OUTPUT_SIZE: ${MODELARK_SEEDREAM_OUTPUT_SIZE:-1536x864}
+      MODELARK_VIDEO_RESOLUTION: "480p"
+      MODELARK_VIDEO_CALLBACK_BASE_URL: ${MODELARK_VIDEO_CALLBACK_BASE_URL:?Set the HTTPS ModelArk callback base URL}
+      MODELARK_VIDEO_CALLBACK_SECRET_FILE: /run/secrets/modelark_callback_secret
+      KAIPAY_CREDENTIALS_JSON_FILE: /run/secrets/kaipay_credentials_json
+      KAIPAY_API_BASE_URL: https://api.kaipay.cn
+      KAIPAY_NOTIFY_BASE_URL: https://api.heyirmy.com/api/payments/kaipay/notify
+      KAIPAY_RETURN_BASE_URL: https://heyirmy.com/projects/payment-return
+      KAIPAY_ADAPTER_VERSION: kaipay-pay-api-v3-hmac-sha256/1
+      KAIPAY_DEFAULT_CHANNEL: ALIPAY
+      KAIPAY_ALIPAY_SCENE: web
+      KAIPAY_WECHAT_SCENE: native
+      KAIPAY_SELECTED_MERCHANT_CODE: ${KAIPAY_SELECTED_MERCHANT_CODE:-}
+      KAIPAY_REQUEST_TIMEOUT_MS: "15000"
+      KAIPAY_ALLOW_SIMULATED_PAYMENTS: "false"
+    secrets:
+      - postgres_url
+      - postgres_ca
+      - session_signing_key
+      - studio_internal_token
+      - payment_notification_encryption_key
+      - cos_access_key_id
+      - cos_secret_access_key
+      - modelark_api_key
+      - modelark_callback_secret
+      - kaipay_credentials_json
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 192
+    mem_limit: 1g
+    cpus: "1.00"
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/readyz').then(r=>{if(!r.ok)throw new Error('not-ready')})"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - petpack-edge
+      - petpack-data
+      - petpack-egress
+
   outbox-dispatcher:
     profiles: ["studio-production"]
     image: ${PETPACK_RUNTIME_IMAGE:?Set PETPACK_RUNTIME_IMAGE to an immutable image digest}
@@ -109,7 +203,7 @@ services:
       MODELARK_API_KEY_FILE: /run/secrets/modelark_api_key
       MODELARK_SEEDREAM_ENDPOINT_ID: ${MODELARK_SEEDREAM_ENDPOINT_ID:?Set the Seedream endpoint ID}
       MODELARK_SEEDANCE_ENDPOINT_ID: ${MODELARK_SEEDANCE_ENDPOINT_ID:?Set the Seedance endpoint ID}
-      MODELARK_SEEDREAM_OUTPUT_SIZE: ${MODELARK_SEEDREAM_OUTPUT_SIZE:-1280x720}
+      MODELARK_SEEDREAM_OUTPUT_SIZE: ${MODELARK_SEEDREAM_OUTPUT_SIZE:-1536x864}
       MODELARK_VIDEO_RESOLUTION: "480p"
       MODELARK_IMAGE_MAX_CONCURRENT: "1"
       MODELARK_VIDEO_MAX_CONCURRENT: "1"
@@ -160,6 +254,9 @@ services:
       - petpack-egress
 
 networks:
+  petpack-edge:
+    external: true
+    name: petpack-edge
   petpack-data:
     external: true
     name: petpack-data
@@ -188,3 +285,11 @@ secrets:
     file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/modelark_api_key
   modelark_callback_secret:
     file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/modelark_callback_secret
+  session_signing_key:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/session_signing_key
+  studio_internal_token:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/studio_internal_token
+  payment_notification_encryption_key:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/payment_notification_encryption_key
+  kaipay_credentials_json:
+    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/kaipay_credentials_json

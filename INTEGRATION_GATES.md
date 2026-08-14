@@ -1,6 +1,6 @@
-# 真实服务接入顺序与索要清单
+# 真实服务接入顺序与安全配置清单
 
-本文固定真实外部服务的接入顺序。未通过上一道门，不启用下一项，也不把真实密钥写进 Git、聊天、日志或构建产物。
+本文固定真实外部服务的接入顺序。未通过上一道门，不启用下一项，也不把真实密钥写进 Git、聊天、日志或构建产物。真实密钥只由部署操作员写入安全文件；自动化流程不会询问密钥内容。
 
 ## Gate 0：本地零费用闭环（已通过）
 
@@ -14,27 +14,27 @@
 
 当前状态：完整零费用多进程闭环、Worker 安全点重启、空 Redis 命名空间确定性重放、PostgreSQL 18 短断恢复、原版客户端导入，以及 API、Outbox 领取前后两个边界和 Worker 活跃租约四类 hard-kill 均已通过。Redis AOF 同容器停止/启动实测也已通过：6 个 waiting 与 1 个 delayed Job 在同一数据目录恢复，重启前后完整规范化队列 SHA-256 一致，最终 39 个 Job 全部 completed，外部调用与数据删除均为 0。证据为 `D:\PetPackStudio-Rebuild-20260813\.tmp\redis-aof-rehearsals\redis-aof-20260814044430-71f00321\report.json`。
 
-## Gate 1：Kaipay 正式协议冻结（代码已完成，等待真实商户验收）
+## Gate 1：Kaipay Pay API V3（代码接入中，等待真实商户验收）
 
 到达条件：Gate 0 全部通过，支付之外的订单和生产工作流已经稳定。
 
-已按官方 EPay V1 文档冻结：国内生产网关 `https://api.kaipay.cn`、`/epay/mapi` 下单、`/epay/api` 查单、GET 异步通知、MD5 ASCII 排序签名、支付宝 `alipay`、微信 `wxpay`，以及成功回执纯文本 `success`。协议 golden fixture、篡改签名、重复字段、金额/订单身份、查单二次确认和回执测试均已进入自动化测试。
+用户最终选定 Pay API V3。生产适配器固定国内网关 `https://api.kaipay.cn`，使用 HMAC-SHA256 签名的 capabilities/create/query/close/refund 接口；支付宝为 `provider=alipay, scene=web`，微信为 `provider=wechat, scene=native`。Webhook 只接受原始 JSON POST 与 V3 七个签名头，验签后仍必须主动查单二次确认；历史订单冻结创建时所用的 credential version，密钥轮换不会误用新 Secret 验证旧订单。EPay V1 只保留历史隔离测试，生产工厂不能选择。
 
-现在只需用户在安全位置提供或配置：
+生产激活时由部署操作员在安全位置配置（不通过聊天提供）：
 
-1. Kaipay EPay 商户 ID（`pid`，可在聊天中只确认数字是否已找到，不必发送）；
-2. EPay 密钥写入的本机/服务器绝对文件路径，文件内容为 `{ "epayKey": "真实密钥" }`，密钥本身不要发到聊天中；
-3. 确认生产通知域名 `https://api.heyirmy.com` 已能公开到达 Studio API；
-4. 明确同意只创建 1 笔最低金额测试订单，以及本轮最高费用；
-5. Kaipay 后台若另有退款 API 文档，请提供该页面。当前公开 EPay 文档没有退款协议，自动退款保持关闭，绝不猜接口。
+1. 在 Kaipay 后台创建的 **V3 API Key** 已具备 `order:create`、`order:query`、`order:refund` 权限；EPay 兼容密钥不能替代；
+2. V3 API Key/Secret credential ring 已写入本机或服务器安全文件，密钥本身不要发到聊天中；
+3. 授权域名验证完成，商户支付配置中支付宝与微信渠道均已批准；
+4. 确认生产通知域名 `https://api.heyirmy.com` 已能公开到达 Studio API 的精确 POST 回调；
+5. 明确同意各 1 笔最低金额支付宝/微信订单与 1 笔退款的总费用上限。
 
-真实验收顺序：生产预检 → 最低金额支付 → GET 异步通知验签 → 主动查单 → 同一通知重放 → 确认订单只启动一次工作流。退款须等正式退款协议后单独验收。
+真实验收顺序：V3 capabilities 只读探针 → 支付渠道后台核对 → 支付宝最低金额订单 → JSON POST Webhook 验签 → 主动查单 → 同一 eventId 重放 → 微信 native QR 最低金额订单 → 一笔受控退款 → 确认每个订单只启动一次工作流。
 
 ## Gate 2：火山引擎 Seedream / Seedance
 
 到达条件：Gate 0 稳定；Kaipay 可与本门并行，但真实收费网站仍保持关闭。
 
-届时一次性向用户索要或请用户在安全文件中配置：
+生产激活时由部署操作员一次性写入安全文件和发布清单（不通过聊天提供）：
 
 1. Seedream 与 Seedance 的 endpoint ID；
 2. API key 文件路径（密钥本身不要发到聊天中）；
@@ -71,6 +71,6 @@
 ## 安全约定
 
 - 所有 secret 通过 `*_FILE` 或容器 secret 挂载；仓库只保留变量名和示例格式。
-- 每次向用户索要资料时，给出“在哪里找、填到哪个文件、如何自检”的完整步骤。
+- 只给部署操作员“在哪里找、填到哪个安全文件、如何自检”的步骤，不询问、回显或代填 secret 内容。
 - 未拿到官方协议的字段一律写入 `BLOCKED.md`，不会凭经验猜测。
 - 每次真实付费调用前明确说明预计调用数、最高费用和停止条件。
