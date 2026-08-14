@@ -39,17 +39,20 @@
 - 2026-08-13：补齐 COS 私有对象 `getPrivate`：服务器凭据 HEAD 后以 ETag 条件 GET 有界流式读取，校验 MIME、声明长度、实际传输长度与对象变化，不生成签名 URL；三个媒体 workspace 均可构造，聚焦测试 7/7 通过。
 - 2026-08-13：新增单 BullMQ 队列统一 job router，完整白名单覆盖 15 个工作名；母图、视频与 PetPack 各自只进入对应 handler，`await-photos` 作为严格校验的幂等状态标记消费，未知任务 fail-closed。路由测试 19/19 通过。
 - 2026-08-13：本轮全量回归 56 个测试文件、744 项通过、2 项 opt-in 数据库测试在常规命令中跳过且已单独在 PG18 真库通过；桌宠 Vite 生产构建（67 modules）及网站 Next.js 生产构建（21 routes）均成功。
+- 2026-08-13：新增独立 outbox dispatcher、完整 Studio API 与统一 Studio Worker 运行时入口。API 在监听前强制确认业务数据库已到迁移 014；开发只绑定 loopback，生产才允许容器内部网。Worker 将三母图、七视频/后处理和 PetPack 四段流水线统一挂到单 BullMQ consumer，开发模式强制使用 fixture ModelArk，避免误调用真实付费 API；组件、数据库、队列与临时目录均 fail-closed 并支持安全关闭。
+- 2026-08-13：新增 `INTEGRATION_GATES.md`，固定真实服务接入顺序及每一门需要向用户索取的精确资料：先零费用本地闭环，再 Kaipay 协议、ModelArk 小额分阶段验收、生产 COS、CloudBase 复核和最终发布；禁止在官方协议缺失时猜字段或自动无限付费重试。
+- 2026-08-13：运行时里程碑完整回归 59 个测试文件、760 项通过，2 项 opt-in PostgreSQL 测试在新建隔离库 `petpack_runtime_20260813_1844` 中按 001–014 全迁移后 2/2 通过；测试数据库随后正常停机。桌宠 Vite 生产构建（67 modules）与网站 Next.js 生产构建（21 routes）均成功。
 
 ## In progress
 
-- 从干净骨架重新开发；客户端、最新版网站源码、3–4 图/三母图/480p 核心合同、Kaipay 安全边界、COS 私有读取与统一队列路由已恢复并验证。当前正在装配完整 Studio API、独立 outbox dispatcher 和统一 Worker 进程。
+- 从干净骨架重新开发；客户端、最新版网站源码、3–4 图/三母图/480p 核心合同、Kaipay 安全边界、COS 私有读取、Studio API、独立 outbox dispatcher 与统一 Worker 入口已恢复并完成聚焦验证。当前进入本地多进程模拟闭环和崩溃恢复。
 
 ## Next
 
-1. 装配 Studio API：认证、仓储、工作流、COS、开发模拟支付、生产 Kaipay fail-closed 边界及完整 HTTP 路由。
-2. 新增独立 outbox dispatcher 与统一 BullMQ Worker 入口，补齐镜像依赖、健康检查和安全关闭。
-3. 用 PostgreSQL + Redis + 本地合成媒体跑通模拟支付后的 3 图、三母图、七视频并行、后处理、质检、PetPack 打包下载多进程闭环及崩溃恢复。
-4. 在 Kaipay 正式协议与 ModelArk 生产参数到位后，分别执行有费用上限的小额支付/退款和真实生成验收，再更新部署。
+1. 用 PostgreSQL + Redis + 本地合成媒体跑通模拟支付后的 3 图、三母图、七视频并行、后处理、质检、PetPack 打包下载多进程闭环。
+2. 验证 API/outbox/Worker 与 Redis 重启、租约过期重投、同一 jobId 去重和未知供应商提交结果的人工对账状态。
+3. 补齐 Worker 镜像、健康检查、资源上限、队列积压/死信监控与安全部署配置。
+4. 按 `INTEGRATION_GATES.md` 在到达门槛时向用户一次性索要 Kaipay 或 ModelArk 所需资料，执行有费用上限的真实验收。
 
 ## Working rules
 
