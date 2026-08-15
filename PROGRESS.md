@@ -116,6 +116,7 @@
 - 2026-08-14：进一步禁止 production Worker 通过运行时参数注入组件对象；生产只能从镜像内 allowlist 模块装载，避免测试夹具或内存对象绕过路径门禁。聚焦 Worker runtime 测试 8/8 通过；全量回归为 88 个测试文件、902 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；生产视觉组件仍未提供，未启动任何生产服务。
 - 2026-08-14：修复 Studio API 就绪探针与 Compose/Caddy 不一致的问题：Node HTTP 服务新增 `/livez`、依赖就绪 `/readyz`（`/healthz` 保持兼容别名，依赖失败返回 503 且不泄露错误），认证运行时明确返回 ready 状态；Caddy 的 `/readyz` 代理到 Studio API，`/health` 继续仅作边缘存活探针。聚焦就绪/Caddy/Compose 测试 9/9 通过；全量回归为 89 个测试文件、904 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；未启动生产服务。
 - 2026-08-14：新增只读 `platform/src/runtime/check-operations-snapshot.js` 与 `npm run check:operations`：聚合 Outbox pending/leased/failed/dead、最老 ready 年龄、过期租约、持久化执行 dead/reconciliation_required 及 BullMQ waiting/active/failed 等低基数状态，并按阈值返回告警退出码；不输出 payload、订单标识或密钥，不修改队列。聚焦监控合同 9/9 通过；全量回归为 90 个测试文件、906 项通过、2 项 opt-in PostgreSQL 测试按设计跳过。
+- 2026-08-15：从提交 `1268947` 构建平台运行时镜像 `petpack-platform-runtime:operations-1268947`，本地不可变 digest 为 `sha256:8e9d4ac51a866dbf36d4f1cc590e134403fc43c5a7fc610515fb8a06df4bf7f5`、大小 58,581,409 bytes、用户 `10001:10001`，构建上下文仅 74.18 kB；production npm 依赖离线审计为 0 vulnerabilities。Docker Scout 因本机未登录 Docker 账号而未生成本次镜像报告，故 OS 层 CVE 复核仍保持为发布门禁；未启动容器、未推送镜像、未删除 Docker 数据。
 
 ## In progress
 
