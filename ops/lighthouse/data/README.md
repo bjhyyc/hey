@@ -91,6 +91,16 @@ window. Do not rotate a live server certificate independently of its clients.
    docker compose -f ops/lighthouse/data/compose.yaml config --quiet
    ```
 
+   Before the maintenance window, verify that the uploaded release contains
+   the complete immutable SQL set without applying it:
+
+   ```sh
+   bash ops/lighthouse/data/verify-migration-release.sh platform/sql
+   ```
+
+   The check must report `latest=015_kaipay_v3_order_identity.sql` and print
+   one SHA-256 line per SQL file. It does not connect to PostgreSQL.
+
 4. Run `bootstrap-data.sh` only in the approved maintenance window.
 5. Run `verify-data.sh`; deployment fails unless plaintext is rejected and all
    positive TLS, migration, backup and internal-network checks pass.
