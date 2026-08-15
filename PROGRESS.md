@@ -88,6 +88,7 @@
 - 2026-08-14：Kaipay V3 与 ModelArk 契约里程碑提交为 `b5ee22a5e4bfb6d0f71c6035d2c5e4b6332fdecf`。完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-kaipay-v3-b5ee22a.bundle`，27,491,109 字节，`git bundle verify` 通过，SHA-256 为 `8E02D8B803B862660A4B17B311E86FD9EEE50FB142CFBBBDECA4A4F3F886FB8F`。
 - 2026-08-14：V3 代码验收继续收口：服务端新增一次性签名查单兜底 `POST /api/projects/:projectId/payment-status`，购买页“我已完成付款”只触发一次服务端查单，Webhook 仍为主路径；终态订单短路且查单/工作流启动幂等。最新全量回归为 84 个测试文件、891 项通过、2 项 PostgreSQL opt-in 按设计跳过；桌宠 Vite、落地页 Vite、网站 Next.js 生产构建均成功。
 - 2026-08-14：Docker 隔离零费用彩排再次通过，报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\redis-aof-rehearsals\redis-aof-20260814170913-7b3e09a1\report.json`，工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260815000926-ce3307e2\report.json`：PostgreSQL 18.4、TLS Redis AOF 同容器重启恢复、3 来源照、3 母图、7 动作、12/12 QA、38/38 执行、39/39 outbox、8 文件 PetPack 原版客户端导入成功，0 外部提供商调用，0 宿主路径删除，0 破坏性 Redis 命令。
+- 2026-08-14：使用 D 盘隔离占位 secret 文件完成 `compose.studio-workers.yaml --profile studio-production config --quiet` 静态渲染，三服务（Studio API、Outbox、Worker）的 V3 环境变量、secret-file 挂载、480p/ModelArk 配置和外部网络声明均解析成功；未执行 `up`、未读取真实密钥、未创建订单或访问支付接口。Kaipay V3/Caddy/Compose 聚焦契约测试 28/28 通过。
 
 ## In progress
 
