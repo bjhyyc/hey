@@ -2,6 +2,31 @@
 	admin off
 }
 
+http://heyirmy.com {
+	redir https://www.heyirmy.com{uri} permanent
+}
+
+heyirmy.com {
+	route {
+		@kpay_verify path /kpay-domain-verification.txt
+		handle @kpay_verify {
+			header Content-Type "text/plain; charset=utf-8"
+			respond "kpay-domain-verification=PVC7ONWXO2kmzY0caxIiz7vq" 200
+		}
+		redir https://www.heyirmy.com{uri} permanent
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
 api.heyirmy.com {
 	@health path /health
 	@ready path /readyz
