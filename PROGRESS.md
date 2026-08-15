@@ -107,6 +107,7 @@
 - 2026-08-14：只读 SSH 核验 Lighthouse 安全文件目录：`/opt/petpack/config/kaipay_credentials_json` 与 `/opt/petpack/config/payment_notification_encryption_key` 均缺失，因此尚未运行 Kaipay V3 无扣款探针，也未启动支付服务；本次未读取或回显任何密钥。
 - 2026-08-14：新增只读迁移发布集门 `ops/lighthouse/data/verify-migration-release.sh`；本地 `platform/sql` 严格通过 `001`–`015` 共 15 个 SQL，要求每个序号唯一、拒绝符号链接并固定 `015_kaipay_v3_order_identity.sql`，逐文件输出 SHA-256。该门不连接 PostgreSQL、不写数据库；聚焦迁移契约测试 4/4 通过。随后全量回归为 87 个测试文件、898 项通过、2 项 opt-in PostgreSQL 测试按设计跳过。提交 `ff01e22ee47ca5a9a0641e33e8d8682cec04e50a`，增量 bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-migration-release-ff01e22.bundle`，SHA-256 `5F65B31E1405A620C57636FA793262F37ED0B9BE8B6444C0E9A7D721E7EF4369`。
 - 2026-08-14：为固定镜像 `petpack-studio-worker:static-ffmpeg-05cc8ef` 生成 SPDX 2.3 SBOM：`.tmp/petpack-studio-worker-static-ffmpeg-05cc8ef-spdx-20260814.json`，128 个已索引组件，未发现 `libjxl`，文件 SHA-256 为 `6751CA555D164C3BDFDE687A58A4BE4AE03C0ABD8AC4BDC08D9F6B7E493ACB75`。SBOM 中部分组件许可证为 `NOASSERTION`，正式发布前仍需许可证人工复核；本次未推送镜像。
+- 2026-08-14：迁移发布门与 SBOM 记录后再次完成三套生产构建：桌宠 Vite 67 modules、落地页 Vite 7 modules、网站 Next.js 16 页面/动态业务路由均成功；未启动线上服务、未创建订单、未调用 ModelArk 或产生费用。仅有非阻塞的 `baseline-browser-mapping` 过期提示。
 
 ## In progress
 
