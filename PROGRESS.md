@@ -117,6 +117,8 @@
 - 2026-08-14：修复 Studio API 就绪探针与 Compose/Caddy 不一致的问题：Node HTTP 服务新增 `/livez`、依赖就绪 `/readyz`（`/healthz` 保持兼容别名，依赖失败返回 503 且不泄露错误），认证运行时明确返回 ready 状态；Caddy 的 `/readyz` 代理到 Studio API，`/health` 继续仅作边缘存活探针。聚焦就绪/Caddy/Compose 测试 9/9 通过；全量回归为 89 个测试文件、904 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；未启动生产服务。
 - 2026-08-14：新增只读 `platform/src/runtime/check-operations-snapshot.js` 与 `npm run check:operations`：聚合 Outbox pending/leased/failed/dead、最老 ready 年龄、过期租约、持久化执行 dead/reconciliation_required 及 BullMQ waiting/active/failed 等低基数状态，并按阈值返回告警退出码；不输出 payload、订单标识或密钥，不修改队列。聚焦监控合同 9/9 通过；全量回归为 90 个测试文件、906 项通过、2 项 opt-in PostgreSQL 测试按设计跳过。
 - 2026-08-15：从提交 `1268947` 构建平台运行时镜像 `petpack-platform-runtime:operations-1268947`，本地不可变 digest 为 `sha256:8e9d4ac51a866dbf36d4f1cc590e134403fc43c5a7fc610515fb8a06df4bf7f5`、大小 58,581,409 bytes、用户 `10001:10001`，构建上下文仅 74.18 kB；production npm 依赖离线审计为 0 vulnerabilities。无网络、只读、无 capability、无宿主挂载的一次性容器确认 `check-operations-snapshot.js` 存在且模块可加载。Docker Scout 因本机未登录 Docker 账号而未生成本次镜像报告，故 OS 层 CVE 复核仍保持为发布门禁；未推送镜像、未删除 Docker 数据。
+- 2026-08-15：Kaipay V3 credential ring 与独立的 32 字节通知加密键已从桌面安全文件上传到 Lighthouse `/opt/petpack/config`，两文件均为 `root:root`、`0600`；远端仅验证 JSON 字段结构和 Base64 解码长度，未输出密钥。PostgreSQL 先完成带恢复校验的生产备份，再在恢复出的临时数据库验证旧 001–012 基线兼容性，随后生产逐文件应用 013–015；`schema_migration` 当前严格为 15 项且最新为 `015_kaipay_v3_order_identity.sql`。
+- 2026-08-15：当前平台候选镜像 `petpack-platform-runtime:predeploy-8e511c2` 已校验传输 SHA 后装入 Lighthouse，但尚未启动 Studio API。一次性加固容器已真实签名调用 `GET /pay/api/v3/capabilities`，请求到达 Kaipay 且 HTTP 200，但业务返回 code 7（`kaipay_business_error`），没有创建订单、扣款或触发生成。Kaipay 控制台只读核验确认该 Key 已启用创建/查询/退款权限、IP 白名单为空（允许所有 IP），唯一明确门禁为 `heyirmy.com` 授权域名仍是 `0/2` 已验证；V3 继续保持选定协议，右侧无版本号 Quick Start 仅作旧版示例，不回退 V1。
 
 ## In progress
 
@@ -124,7 +126,7 @@
 
 ## Next
 
-1. 部署操作员只在本机或服务器安全文件中挂载 Kaipay V3 credential ring，不在聊天中发送密钥；先运行无扣款 `verify:kaipay`，再部署完整 Studio API 与精确 Caddy 回调白名单。确认公网回调后，在预先批准的最高费用内完成支付宝、微信和退款各一笔受控验收。
+1. 先为 Kaipay Key 完成 `heyirmy.com` TXT 或网站文件归属验证并等待控制台通过，再复跑无扣款 `verify:kaipay`；通过后部署完整 Studio API 与精确 Caddy 回调白名单。确认公网回调后，在预先批准的最高费用内完成支付宝、微信和退款各一笔受控验收。Credential ring、通知加密键和数据库 013–015 已就绪，无需重复生成或迁移。
 2. 补 Redis/BullMQ 队列积压、死信、Outbox oldest-age 与 Worker readiness 告警；随后选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口。
 3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
 4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
