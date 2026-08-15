@@ -30,7 +30,10 @@ async function createLocalAuthApiRuntime({ environment = process.env, PoolClass,
       api,
       host: "127.0.0.1",
       port: boundedPort(environment.PETPACK_LOCAL_API_PORT),
-      healthCheck: () => database.assertReady(),
+      healthCheck: async () => {
+        await database.assertReady();
+        return { ready: true };
+      },
       logger
     });
     let started = false;

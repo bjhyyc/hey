@@ -15,7 +15,9 @@ describe("Lighthouse Studio API edge allowlist", () => {
   });
 
   it("routes the allowlisted Studio surface to the full API and keeps a 404 fallback", () => {
-    expect(caddy.match(/reverse_proxy studio-api:8787/g)?.length).toBe(2);
+    expect(caddy.match(/reverse_proxy studio-api:8787/g)?.length).toBe(3);
+    expect(caddy).toContain("@ready path /readyz");
+    expect(caddy).toContain("handle @ready");
     expect(caddy).toContain("@studio path /api/auth/* /api/checkout /api/projects /api/projects/* /api/admin/*");
     expect(caddy).toMatch(/handle\s*\{\s*respond "not found" 404/s);
   });

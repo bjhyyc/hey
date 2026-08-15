@@ -34,7 +34,10 @@ async function createProductionAuthApiRuntime({ environment = process.env, PoolC
       host: "0.0.0.0",
       port: boundedPort(hydrated.PETPACK_API_PORT),
       allowNonLoopback: true,
-      healthCheck: () => database.assertReady(),
+      healthCheck: async () => {
+        await database.assertReady();
+        return { ready: true };
+      },
       logger
     });
     let started = false;

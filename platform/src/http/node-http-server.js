@@ -71,6 +71,26 @@ function writeResponse(response, result) {
   response.end(body);
 }
 
+async function writeReadinessResponse(response, { healthCheck, logger, endpoint }) {
+  try {
+    const health = await healthCheck();
+    const ready = health === true || health?.ready === true || health?.ok === true;
+    writeResponse(response, {
+      status: ready ? 200 : 503,
+      body: { status: ready ? "ok" : "unavailable", database: ready ? "ready" : "unavailable" }
+    });
+  } catch (error) {
+    logger.warn?.("petpack.node_http.readiness_failed", {
+      endpoint,
+      errorName: error && error.name ? error.name : "Error"
+    });
+    writeResponse(response, {
+      status: 503,
+      body: { status: "unavailable", database: "unavailable" }
+    });
+  }
+}
+
 function safeFailure(error) {
   if (error instanceof NodeHttpBoundaryError) {
     return { status: error.status, body: { error: { code: error.code, message: error.message } } };
@@ -99,9 +119,12 @@ function createNodeHttpServer({
 
   const server = http.createServer(async (request, response) => {
     try {
-      if (request.method === "GET" && request.url === "/healthz") {
-        const health = await healthCheck();
-        writeResponse(response, { status: 200, body: { status: "ok", database: health?.ready === true ? "ready" : "unavailable" } });
+      if (request.method === "GET" && request.url === "/livez") {
+        writeResponse(response, { status: 200, body: { status: "ok" } });
+        return;
+      }
+      if (request.method === "GET" && (request.url === "/readyz" || request.url === "/healthz")) {
+        await writeReadinessResponse(response, { healthCheck, logger, endpoint: request.url });
         return;
       }
       const rawBody = await readBoundedBody(request, bodyLimit);
@@ -160,5 +183,6 @@ module.exports = {
   DEFAULT_REQUEST_TIMEOUT_MS,
   NodeHttpBoundaryError,
   createNodeHttpServer,
-  readBoundedBody
+  readBoundedBody,
+  writeReadinessResponse
 };

@@ -4,6 +4,7 @@
 
 api.heyirmy.com {
 	@health path /health
+	@ready path /readyz
 	@kaipay_notification {
 		method POST
 		path_regexp kaipay ^/api/payments/kaipay/notify/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
@@ -12,6 +13,9 @@ api.heyirmy.com {
 
 	handle @health {
 		respond "ok" 200
+	}
+	handle @ready {
+		reverse_proxy studio-api:8787
 	}
 	handle @kaipay_notification {
 		reverse_proxy studio-api:8787
