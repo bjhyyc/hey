@@ -101,6 +101,7 @@
 - 2026-08-14：只读核验 Lighthouse 数据发布目录仍只有迁移 `001`–`012`，没有 Kaipay `013/014`；因此即使补齐安全文件，现网数据库仍不能承载当前 V3 支付与完整 Studio 工作流，必须先做备份、逐文件迁移和回滚演练。
 - 2026-08-14：新增只读 `ops/lighthouse/app/verify-studio-production.sh`，强制检查安全文件权限、不可变镜像 digest、production/480p、模拟支付关闭、生产组件路径与 Compose 解析；缺任一项即退出，脚本不包含 `up/down/pull/rm/prune`。Shell 语法和 8 项聚焦合同测试通过。
 - 2026-08-14：加入只读预检后的全量回归为 86 个测试文件、896 项通过、2 项按设计跳过；`git diff --check` 通过，未启动线上服务。
+- 2026-08-14：根目录、`platform` 与 `apps/web` 的生产依赖均通过 `npm audit --omit=dev --offline`，三处均报告 0 vulnerabilities；未联网安装或升级依赖。
 
 ## In progress
 
