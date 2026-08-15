@@ -99,6 +99,7 @@
 - 2026-08-14：从当前工作树构建平台运行时候选 `petpack-platform-runtime:predeploy-8e511c2`，digest 为 `sha256:0b337a88161cc6aca8b677841462cb147b99ce82dbc52736624a0fd5f27ed70d`、大小约 59 MB；Node 22.22.2 在无网络/只读/无 capability 容器中可运行，Docker Scout 为 0/0/0/0（126 个包）。该镜像只作为待部署候选，未推送或替换 Lighthouse 线上镜像。
 - 2026-08-14：对两个候选镜像做运行态安全检查：均固定用户 `10001:10001`，无网络/只读/无 capability 下可启动；Kaipay、ModelArk secret 路径与 `.env` 均不存在于镜像。媒体镜像仅包含经校验的 `FFMPEG_RUNTIME_SOURCE.txt` 来源元数据，未包含任何凭据。
 - 2026-08-14：只读核验 Lighthouse 数据发布目录仍只有迁移 `001`–`012`，没有 Kaipay `013/014`；因此即使补齐安全文件，现网数据库仍不能承载当前 V3 支付与完整 Studio 工作流，必须先做备份、逐文件迁移和回滚演练。
+- 2026-08-14：新增只读 `ops/lighthouse/app/verify-studio-production.sh`，强制检查安全文件权限、不可变镜像 digest、production/480p、模拟支付关闭、生产组件路径与 Compose 解析；缺任一项即退出，脚本不包含 `up/down/pull/rm/prune`。Shell 语法和 8 项聚焦合同测试通过。
 
 ## In progress
 

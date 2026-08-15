@@ -6,6 +6,8 @@
 
 Do not start the `studio-production` profile yet. The image and runtime isolation are implemented, but the production-assured source-photo, master-image, matting/QA and delivery-validator component module is still missing. `PETPACK_WORKER_COMPONENTS_MODULE` is deliberately required and the Worker fails closed if the module is absent or not marked production-assured.
 
+Before any reviewed deployment, run `verify-studio-production.sh`. It is read-only: it checks the external secret files, immutable image digests, production/480p settings, component-module path, and `docker compose ... config --quiet`; it never runs `up`, `down`, `pull`, `rm`, or `prune`.
+
 The media image records the exact copied FFmpeg runtime files, source archive digest and license under `/app`. The Debian FFmpeg path is rejected at build time when it contains `libjxl0.7`. A pinned `ffmpeg-7.0.2-amd64-static` candidate has passed local VP9/green-screen normalization and Docker Scout scanning, but final publication still requires the release pipeline to reproduce the archive checksum, emit an SBOM, and review the GPL/codec license set.
 
 ## Safety properties
