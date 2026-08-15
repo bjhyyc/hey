@@ -120,6 +120,7 @@
 - 2026-08-15：Kaipay V3 credential ring 与独立的 32 字节通知加密键已从桌面安全文件上传到 Lighthouse `/opt/petpack/config`，两文件均为 `root:root`、`0600`；远端仅验证 JSON 字段结构和 Base64 解码长度，未输出密钥。PostgreSQL 先完成带恢复校验的生产备份，再在恢复出的临时数据库验证旧 001–012 基线兼容性，随后生产逐文件应用 013–015；`schema_migration` 当前严格为 15 项且最新为 `015_kaipay_v3_order_identity.sql`。
 - 2026-08-15：当前平台候选镜像 `petpack-platform-runtime:predeploy-8e511c2` 已校验传输 SHA 后装入 Lighthouse，但尚未启动 Studio API。一次性加固容器已真实签名调用 `GET /pay/api/v3/capabilities`，请求到达 Kaipay 且 HTTP 200，但业务返回 code 7（`kaipay_business_error`），没有创建订单、扣款或触发生成。Kaipay 控制台只读核验确认该 Key 已启用创建/查询/退款权限、IP 白名单为空（允许所有 IP），唯一明确门禁为 `heyirmy.com` 授权域名仍是 `0/2` 已验证；V3 继续保持选定协议，右侧无版本号 Quick Start 仅作旧版示例，不回退 V1。
 - 2026-08-15：为不改 DNS、也不覆盖网站构建，现网 Caddy 新增精确的 `GET /kpay-domain-verification.txt` 响应；公网 `https://heyirmy.com/kpay-domain-verification.txt` 返回 HTTP 200、`text/plain` 与凯付控制台给出的校验值完全一致。Caddy 配置在本地 `caddy validate` 和服务器容器内验证均通过，edge 容器已安全重启；其余根域名跳转、auth API 与数据容器未改变。凯付后台仍需下一次自动巡检/手动重试后把域名从 `0/2` 更新为已验证。
+- 2026-08-15：DNS TXT `_kpay-verify.heyirmy.com` 与网站验证文件均从公网核对通过。按用户确认，在 Kaipay API 调试台 V3 发送一次唯一的 0.01 元支付宝 Web 测试下单请求；Kaipay 返回 HTTP 200 / 业务 code 7，响应明确为 `ownershipStatus=pending`，订单未创建、未扣款、未发送回调。该结果证明当前剩余阻塞是 Kaipay 授权域名巡检，而非本地签名、密钥或请求字段。
 
 ## In progress
 
