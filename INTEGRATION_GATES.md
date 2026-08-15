@@ -14,7 +14,7 @@
 
 当前状态：完整零费用多进程闭环、Worker 安全点重启、空 Redis 命名空间确定性重放、PostgreSQL 18 短断恢复、原版客户端导入，以及 API、Outbox 领取前后两个边界和 Worker 活跃租约四类 hard-kill 均已通过。Redis AOF 同容器停止/启动实测也已通过：6 个 waiting 与 1 个 delayed Job 在同一数据目录恢复，重启前后完整规范化队列 SHA-256 一致，最终 39 个 Job 全部 completed，外部调用与数据删除均为 0。证据为 `D:\PetPackStudio-Rebuild-20260813\.tmp\redis-aof-rehearsals\redis-aof-20260814044430-71f00321\report.json`。
 
-## Gate 1：Kaipay Pay API V3（代码接入中，等待真实商户验收）
+## Gate 1：Kaipay Pay API V3（代码已接入，等待真实商户验收）
 
 到达条件：Gate 0 全部通过，支付之外的订单和生产工作流已经稳定。
 
@@ -28,7 +28,7 @@
 4. 确认生产通知域名 `https://api.heyirmy.com` 已能公开到达 Studio API 的精确 POST 回调；
 5. 明确同意各 1 笔最低金额支付宝/微信订单与 1 笔退款的总费用上限。
 
-真实验收顺序：V3 capabilities 只读探针 → 支付渠道后台核对 → 支付宝最低金额订单 → JSON POST Webhook 验签 → 主动查单 → 同一 eventId 重放 → 微信 native QR 最低金额订单 → 一笔受控退款 → 确认每个订单只启动一次工作流。
+真实验收顺序：V3 capabilities 只读探针 → 支付渠道后台核对 → 支付宝最低金额订单 → JSON POST Webhook 验签 → 主动查单 → 同一 eventId 重放 → 微信 native QR 最低金额订单 → 一笔受控退款 → 确认每个订单只启动一次工作流。若 Webhook 尚未到达，购买页的“我已完成付款”按钮会调用服务端 `POST /api/projects/:projectId/payment-status` 做一次签名查单；它不会把浏览器轮询变成无限外部请求。
 
 ## Gate 2：火山引擎 Seedream / Seedance
 

@@ -86,6 +86,8 @@
 - 2026-08-14：最新零密钥硬故障全链彩排报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260814235337-f008d9c2\report.json`，硬中断控制报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\hard-kill-rehearsals\hard-kill-20260814165323-9073c12c\report.json`。3 张来源照、3 张母图、7 个动作、12/12 QA、38/38 执行、39/39 outbox 全部完成，API/Outbox/Worker 各自硬中断后恢复，外部调用为 0；下载的 8 文件 PetPack 已由原版客户端 `importPetpack` 实际导入。
 - 2026-08-14：最终本地回归为 84 个测试文件、891 项通过，2 个 opt-in PostgreSQL 集成文件按设计跳过；网站 4 个测试文件、22 项通过。桌宠 Vite 生产构建（67 modules）与网站 Next.js 生产构建（16 个静态页面及全部动态业务路由）均成功；`git diff --check` 无空白错误。本轮没有读取真实 API key、发送短信、创建真实订单、调用 ModelArk 或产生外部费用。
 - 2026-08-14：Kaipay V3 与 ModelArk 契约里程碑提交为 `b5ee22a5e4bfb6d0f71c6035d2c5e4b6332fdecf`。完整 Git bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-kaipay-v3-b5ee22a.bundle`，27,491,109 字节，`git bundle verify` 通过，SHA-256 为 `8E02D8B803B862660A4B17B311E86FD9EEE50FB142CFBBBDECA4A4F3F886FB8F`。
+- 2026-08-14：V3 代码验收继续收口：服务端新增一次性签名查单兜底 `POST /api/projects/:projectId/payment-status`，购买页“我已完成付款”只触发一次服务端查单，Webhook 仍为主路径；终态订单短路且查单/工作流启动幂等。最新全量回归为 84 个测试文件、891 项通过、2 项 PostgreSQL opt-in 按设计跳过；桌宠 Vite、落地页 Vite、网站 Next.js 生产构建均成功。
+- 2026-08-14：Docker 隔离零费用彩排再次通过，报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\redis-aof-rehearsals\redis-aof-20260814170913-7b3e09a1\report.json`，工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260815000926-ce3307e2\report.json`：PostgreSQL 18.4、TLS Redis AOF 同容器重启恢复、3 来源照、3 母图、7 动作、12/12 QA、38/38 执行、39/39 outbox、8 文件 PetPack 原版客户端导入成功，0 外部提供商调用，0 宿主路径删除，0 破坏性 Redis 命令。
 
 ## In progress
 

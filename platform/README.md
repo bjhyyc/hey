@@ -68,6 +68,11 @@ state. Invalid callbacks and temporary query failures are audited but cannot
 mutate a customer order. Refund requests use a stable unique request number and
 the same frozen credential as the original order.
 
+When a webhook is delayed, the project UI can call the authenticated
+`POST /api/projects/:projectId/payment-status` fallback. This performs one
+server-side signed V3 query; it is not an unbounded browser poll. A paid query
+uses the same idempotent workflow-start transaction as a paid webhook.
+
 Deployment values and the secret-file procedure are documented in
 `ops/lighthouse/app/KAIPAY_SETUP.md`. Do not execute a real checkout until the
 V3 key permissions, secret-file path, callback reachability, channel approval,

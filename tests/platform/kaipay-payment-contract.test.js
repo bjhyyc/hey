@@ -252,6 +252,55 @@ describe("Kaipay payment contract", () => {
     }));
   });
 
+  it("connects the payment-status fallback to the single paid-workflow transaction", async () => {
+    const project = { id: "project-1", userId: "user-1" };
+    const pendingOrder = { ...order(), projectId: project.id, status: "pending" };
+    const paidOrder = {
+      ...pendingOrder,
+      status: "paid",
+      productionRunId: "run-1",
+      productionRunNeeded: true
+    };
+    const repository = Object.fromEntries([
+      "createProjectOrder", "listUserProjects", "reserveSourcePhoto", "getReservedSourcePhoto",
+      "acceptSourcePhoto", "getRunByProject", "getSourcePhotoRevision", "getCharacterCandidate",
+      "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload"
+    ].map((name) => [name, vi.fn()]));
+    repository.getProjectBundle = vi.fn(async () => ({ project, order: pendingOrder }));
+    repository.markOrderPaymentState = vi.fn(async () => paidOrder);
+    const paymentProvider = {
+      createCheckout: vi.fn(),
+      handleNotification: vi.fn(),
+      queryStatus: vi.fn(async () => ({
+        state: "paid",
+        applyToOrder: true,
+        providerOrderId: pendingOrder.providerOrderId,
+        nextAction: { type: "none" }
+      }))
+    };
+    const workflow = {
+      startPaidOrder: vi.fn(),
+      photosAccepted: vi.fn(),
+      confirmCharacterMasters: vi.fn(),
+      regenerateCharacterMaster: vi.fn()
+    };
+    const objectStore = {
+      createUploadGrant: vi.fn(),
+      createDownloadGrant: vi.fn(),
+      verifyUploadedObject: vi.fn()
+    };
+    const service = new PetPackStudioService({ repository, paymentProvider, objectStore, workflow });
+    const result = await service.refreshPaymentStatus({ actor: { id: "user-1", role: "user" }, projectId: project.id });
+    expect(result).toEqual({ order: { id: pendingOrder.id, status: "paid" }, nextAction: { type: "none" } });
+    expect(paymentProvider.queryStatus).toHaveBeenCalledWith({ platformOrderId: pendingOrder.id });
+    expect(repository.markOrderPaymentState).toHaveBeenCalledWith({
+      platformOrderId: pendingOrder.id,
+      reconciliation: expect.objectContaining({ state: "paid", applyToOrder: true })
+    });
+    expect(workflow.startPaidOrder).toHaveBeenCalledOnce();
+    expect(workflow.startPaidOrder).toHaveBeenCalledWith({ order: paidOrder, projectId: project.id, runId: "run-1" });
+  });
+
   it("fails closed when signature, identity, query, amount, or canonical status cannot be proven", async () => {
     const state = stores();
     const provider = new KaipayPaymentProvider({

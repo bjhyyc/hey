@@ -113,3 +113,14 @@ Only after callback reachability and the merchant channel page are confirmed:
 5. execute one explicitly approved refund using a unique refund request number.
 
 Keep purchasing and real generation disabled until all bounded checks pass.
+
+## 6. Payment confirmation fallback
+
+The webhook is the primary settlement path. If the customer has paid but the
+webhook is delayed, the project page's **我已完成付款** action calls the
+server-only `POST /api/projects/<projectId>/payment-status` route. The server
+loads the frozen provider order and credential version, signs one V3 query, and
+starts the workflow only when the provider response independently proves the
+same order, amount, currency, provider, scene and paid state. The browser never
+receives the V3 key or secret. Repeated clicks are idempotent and terminal paid
+orders do not issue another provider query.
