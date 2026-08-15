@@ -103,6 +103,7 @@
 - 2026-08-14：加入只读预检后的全量回归为 86 个测试文件、896 项通过、2 项按设计跳过；`git diff --check` 通过，未启动线上服务。
 - 2026-08-14：根目录、`platform` 与 `apps/web` 的生产依赖均通过 `npm audit --omit=dev --offline`，三处均报告 0 vulnerabilities；未联网安装或升级依赖。
 - 2026-08-14：使用 Caddy `2.11.4-alpine` 对本地边缘配置做只读 `caddy validate`，结果为 `Valid configuration`；Kaipay 精确 POST 回调、Studio API 白名单和默认 404 分支均被 Caddy 接受，未启动代理服务。
+- 2026-08-14：Lighthouse 数据发布目录下 9 个 Bash 脚本全部通过 `bash -n`；迁移脚本只接受不可变 PostgreSQL 镜像、真实外部数据配置目录和精确只读挂载，当前尚未对线上数据执行。
 
 ## In progress
 
