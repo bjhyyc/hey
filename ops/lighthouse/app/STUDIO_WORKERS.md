@@ -41,7 +41,6 @@ Required private configuration root files:
 - `cos_access_key_id`
 - `cos_secret_access_key`
 - `modelark_api_key`
-- `modelark_callback_secret`
 - `session_signing_key`
 - `studio_internal_token`
 - `payment_notification_encryption_key`

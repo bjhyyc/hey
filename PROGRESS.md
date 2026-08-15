@@ -110,6 +110,7 @@
 - 2026-08-14：迁移发布门与 SBOM 记录后再次完成三套生产构建：桌宠 Vite 67 modules、落地页 Vite 7 modules、网站 Next.js 16 页面/动态业务路由均成功；未启动线上服务、未创建订单、未调用 ModelArk 或产生费用。仅有非阻塞的 `baseline-browser-mapping` 过期提示。
 - 2026-08-14：加固生产登录门：完整 `studio-production` Compose 不再默认关闭手机号登录，必须显式设置 `PETPACK_PHONE_AUTH_ENABLED=true`；`verify-studio-production.sh` 同步 fail-closed 检查。相关 Compose/预检合同测试 8/8 通过，使用占位配置的三服务 Compose `config --quiet` 通过；auth-only staging Compose 保持原有可选行为。
 - 2026-08-14：手机号生产门变更后的全量回归仍为 87 个测试文件、898 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；未启动线上服务、未读真实密钥、未创建订单。
+- 2026-08-14：修正 ModelArk 异步链路边界：生产不再强制配置未接通的 callback URL/Secret，改由 Seedance 任务查询作为唯一权威收口；Compose、生产预检和模型 registry 均移除该秘密依赖，并拒绝生产环境误配置 callback。相关 ModelArk/Caddy/Compose 契约测试 12/12 通过，三服务 Compose `config --quiet` 通过；回调工具函数保留在代码中，仅待未来完成持久化回调路由后再启用。
 
 ## In progress
 

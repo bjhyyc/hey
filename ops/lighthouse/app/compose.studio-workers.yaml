@@ -42,8 +42,6 @@ services:
       MODELARK_SEEDANCE_ENDPOINT_ID: ${MODELARK_SEEDANCE_ENDPOINT_ID:?Set the Seedance endpoint ID}
       MODELARK_SEEDREAM_OUTPUT_SIZE: ${MODELARK_SEEDREAM_OUTPUT_SIZE:-1536x864}
       MODELARK_VIDEO_RESOLUTION: "480p"
-      MODELARK_VIDEO_CALLBACK_BASE_URL: ${MODELARK_VIDEO_CALLBACK_BASE_URL:?Set the HTTPS ModelArk callback base URL}
-      MODELARK_VIDEO_CALLBACK_SECRET_FILE: /run/secrets/modelark_callback_secret
       KAIPAY_CREDENTIALS_JSON_FILE: /run/secrets/kaipay_credentials_json
       KAIPAY_API_BASE_URL: https://api.kaipay.cn
       KAIPAY_NOTIFY_BASE_URL: https://api.heyirmy.com/api/payments/kaipay/notify
@@ -64,7 +62,6 @@ services:
       - cos_access_key_id
       - cos_secret_access_key
       - modelark_api_key
-      - modelark_callback_secret
       - kaipay_credentials_json
     read_only: true
     tmpfs:
@@ -209,8 +206,6 @@ services:
       MODELARK_VIDEO_MAX_CONCURRENT: "1"
       MODELARK_IMAGE_MAX_RETRIES: "2"
       MODELARK_VIDEO_MAX_RETRIES: "2"
-      MODELARK_VIDEO_CALLBACK_BASE_URL: ${MODELARK_VIDEO_CALLBACK_BASE_URL:?Set the HTTPS ModelArk callback base URL}
-      MODELARK_VIDEO_CALLBACK_SECRET_FILE: /run/secrets/modelark_callback_secret
       PETPACK_RUNTIME_ROLE: studio-worker
       PETPACK_RUNTIME_HEARTBEAT_FILE: /run/petpack/worker-heartbeat.json
       PETPACK_RUNTIME_HEARTBEAT_INTERVAL_MS: "10000"
@@ -223,7 +218,6 @@ services:
       - cos_access_key_id
       - cos_secret_access_key
       - modelark_api_key
-      - modelark_callback_secret
     read_only: true
     volumes:
       - petpack-worker-work:/work
@@ -283,8 +277,6 @@ secrets:
     file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/cos_secret_access_key
   modelark_api_key:
     file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/modelark_api_key
-  modelark_callback_secret:
-    file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/modelark_callback_secret
   session_signing_key:
     file: ${PETPACK_CONFIG_ROOT:?Set PETPACK_CONFIG_ROOT}/session_signing_key
   studio_internal_token:

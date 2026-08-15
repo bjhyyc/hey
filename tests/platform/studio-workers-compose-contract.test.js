@@ -51,6 +51,8 @@ describe("private production Studio workers Compose contract", () => {
     expect(studioApi).toContain("- petpack-edge");
     expect(studioApi).toContain("- petpack-egress");
     expect(studioApi).not.toContain("ports:");
+    expect(studioApi).not.toContain("MODELARK_VIDEO_CALLBACK");
+    expect(studioApi).not.toContain("modelark_callback_secret");
   });
 
   it("does not attach the outbox dispatcher to the egress network", () => {

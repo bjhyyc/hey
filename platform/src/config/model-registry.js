@@ -68,8 +68,9 @@ function loadModelRegistry(env = process.env) {
     assertConfigured(registry.modelArk.apiKey, "MODELARK_API_KEY", errors);
     assertConfigured(registry.modelArk.image.endpointId, "MODELARK_SEEDREAM_ENDPOINT_ID", errors);
     assertConfigured(registry.modelArk.video.endpointId, "MODELARK_SEEDANCE_ENDPOINT_ID", errors);
-    assertConfigured(registry.modelArk.video.callbackBaseUrl, "MODELARK_VIDEO_CALLBACK_BASE_URL", errors);
-    assertConfigured(registry.modelArk.video.callbackSecret, "MODELARK_VIDEO_CALLBACK_SECRET", errors);
+    if (registry.modelArk.video.callbackBaseUrl || registry.modelArk.video.callbackSecret) {
+      errors.push("ModelArk callback delivery is not enabled in production; use authoritative task polling");
+    }
     if (errors.length > 0) {
       throw new Error(`Model registry is not production-ready: ${errors.join("; ")}`);
     }

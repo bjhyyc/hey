@@ -22,7 +22,6 @@ const SECRET_SETTINGS = Object.freeze([
   "PETPACK_OBJECT_STORE_ACCESS_KEY_ID",
   "PETPACK_OBJECT_STORE_SECRET_ACCESS_KEY",
   "MODELARK_API_KEY",
-  "MODELARK_VIDEO_CALLBACK_SECRET",
   "KAIPAY_CREDENTIALS_JSON",
   "PETPACK_PAYMENT_NOTIFICATION_ENCRYPTION_KEY",
   "PETPACK_SESSION_SIGNING_KEY",
@@ -109,16 +108,12 @@ function validateProductionEnvironment(environment = process.env) {
   }
   const modelSettings = [
     "MODEL_REGISTRY_VERSION", "MODELARK_REGION", "MODELARK_API_KEY",
-    "MODELARK_SEEDREAM_ENDPOINT_ID", "MODELARK_SEEDANCE_ENDPOINT_ID",
-    "MODELARK_VIDEO_CALLBACK_BASE_URL", "MODELARK_VIDEO_CALLBACK_SECRET"
+    "MODELARK_SEEDREAM_ENDPOINT_ID", "MODELARK_SEEDANCE_ENDPOINT_ID"
   ].map((name) => ({ name, value: setting(environment, name) }));
   addCheck(checks, missing, "provider.modelark_registry", modelRegistryReady, "model_registry_invalid", modelSettings);
   addCheck(checks, missing, "provider.modelark_https",
     exactHttpsUrl(setting(environment, "MODELARK_BASE_URL") || "https://ark.cn-beijing.volces.com/api/v3"),
     "modelark_https_required");
-  addCheck(checks, missing, "provider.modelark_callback_https",
-    exactHttpsUrl(setting(environment, "MODELARK_VIDEO_CALLBACK_BASE_URL")),
-    "modelark_callback_https_required");
   addCheck(checks, missing, "provider.video_resolution",
     setting(environment, "MODELARK_VIDEO_RESOLUTION") === "480p",
     "video_resolution_must_be_480p",
