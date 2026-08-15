@@ -104,7 +104,7 @@
 - 2026-08-14：根目录、`platform` 与 `apps/web` 的生产依赖均通过 `npm audit --omit=dev --offline`，三处均报告 0 vulnerabilities；未联网安装或升级依赖。
 - 2026-08-14：使用 Caddy `2.11.4-alpine` 对本地边缘配置做只读 `caddy validate`，结果为 `Valid configuration`；Kaipay 精确 POST 回调、Studio API 白名单和默认 404 分支均被 Caddy 接受，未启动代理服务。
 - 2026-08-14：Lighthouse 数据发布目录下 9 个 Bash 脚本全部通过 `bash -n`；迁移脚本只接受不可变 PostgreSQL 镜像、真实外部数据配置目录和精确只读挂载，当前尚未对线上数据执行。
-- 2026-08-14：新增只读迁移发布集门 `ops/lighthouse/data/verify-migration-release.sh`；本地 `platform/sql` 严格通过 `001`–`015` 共 15 个 SQL，要求每个序号唯一、拒绝符号链接并固定 `015_kaipay_v3_order_identity.sql`，逐文件输出 SHA-256。该门不连接 PostgreSQL、不写数据库；聚焦迁移契约测试 4/4 通过。提交 `ff01e22ee47ca5a9a0641e33e8d8682cec04e50a`，增量 bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-migration-release-ff01e22.bundle`，SHA-256 `5F65B31E1405A620C57636FA793262F37ED0B9BE8B6444C0E9A7D721E7EF4369`。
+- 2026-08-14：新增只读迁移发布集门 `ops/lighthouse/data/verify-migration-release.sh`；本地 `platform/sql` 严格通过 `001`–`015` 共 15 个 SQL，要求每个序号唯一、拒绝符号链接并固定 `015_kaipay_v3_order_identity.sql`，逐文件输出 SHA-256。该门不连接 PostgreSQL、不写数据库；聚焦迁移契约测试 4/4 通过。随后全量回归为 87 个测试文件、898 项通过、2 项 opt-in PostgreSQL 测试按设计跳过。提交 `ff01e22ee47ca5a9a0641e33e8d8682cec04e50a`，增量 bundle 为 `C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-migration-release-ff01e22.bundle`，SHA-256 `5F65B31E1405A620C57636FA793262F37ED0B9BE8B6444C0E9A7D721E7EF4369`。
 
 ## In progress
 
