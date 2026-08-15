@@ -15,6 +15,7 @@ fail() {
 
 [[ -f "${COMPOSE_FILE}" && ! -L "${COMPOSE_FILE}" ]] || fail "compose_file_missing"
 [[ "${PETPACK_PLATFORM_MODE:-}" == "production" ]] || fail "PETPACK_PLATFORM_MODE_must_be_production"
+[[ "${PETPACK_PHONE_AUTH_ENABLED:-}" == "true" ]] || fail "phone_auth_must_be_enabled"
 [[ "${KAIPAY_ALLOW_SIMULATED_PAYMENTS:-false}" != "true" ]] || fail "simulated_payments_forbidden"
 [[ "${MODELARK_VIDEO_RESOLUTION:-}" == "480p" ]] || fail "video_resolution_must_be_480p"
 [[ "${PETPACK_RUNTIME_IMAGE:-}" == *@sha256:* ]] || fail "runtime_image_must_be_immutable_digest"

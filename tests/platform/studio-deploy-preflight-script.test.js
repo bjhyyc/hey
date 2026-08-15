@@ -12,6 +12,7 @@ const script = fs.readFileSync(
 describe("read-only Studio production preflight", () => {
   it("requires immutable images, production mode, 480p, and disabled simulation", () => {
     expect(script).toContain('"${PETPACK_PLATFORM_MODE:-}" == "production"');
+    expect(script).toContain('"${PETPACK_PHONE_AUTH_ENABLED:-}" == "true"');
     expect(script).toContain('"${KAIPAY_ALLOW_SIMULATED_PAYMENTS:-false}" != "true"');
     expect(script).toContain('"${MODELARK_VIDEO_RESOLUTION:-}" == "480p"');
     expect(script).toContain('"${PETPACK_RUNTIME_IMAGE:-}" == *@sha256:*');
