@@ -109,6 +109,7 @@
 - 2026-08-14：为固定镜像 `petpack-studio-worker:static-ffmpeg-05cc8ef` 生成 SPDX 2.3 SBOM：`.tmp/petpack-studio-worker-static-ffmpeg-05cc8ef-spdx-20260814.json`，128 个已索引组件，未发现 `libjxl`，文件 SHA-256 为 `6751CA555D164C3BDFDE687A58A4BE4AE03C0ABD8AC4BDC08D9F6B7E493ACB75`。SBOM 中部分组件许可证为 `NOASSERTION`，正式发布前仍需许可证人工复核；本次未推送镜像。
 - 2026-08-14：迁移发布门与 SBOM 记录后再次完成三套生产构建：桌宠 Vite 67 modules、落地页 Vite 7 modules、网站 Next.js 16 页面/动态业务路由均成功；未启动线上服务、未创建订单、未调用 ModelArk 或产生费用。仅有非阻塞的 `baseline-browser-mapping` 过期提示。
 - 2026-08-14：加固生产登录门：完整 `studio-production` Compose 不再默认关闭手机号登录，必须显式设置 `PETPACK_PHONE_AUTH_ENABLED=true`；`verify-studio-production.sh` 同步 fail-closed 检查。相关 Compose/预检合同测试 8/8 通过，使用占位配置的三服务 Compose `config --quiet` 通过；auth-only staging Compose 保持原有可选行为。
+- 2026-08-14：手机号生产门变更后的全量回归仍为 87 个测试文件、898 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；未启动线上服务、未读真实密钥、未创建订单。
 
 ## In progress
 
