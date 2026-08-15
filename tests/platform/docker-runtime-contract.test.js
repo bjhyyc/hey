@@ -38,7 +38,10 @@ describe("production Docker build contracts", () => {
     const dockerfile = read("platform/docker/media-worker/Dockerfile");
     expect(dockerfile).toContain("node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e");
     expect(dockerfile).toContain("gcr.io/distroless/cc-debian12:nonroot@sha256:adcd20c7b4c988b73cbfbddb26d2eee574571e6d7c9ffea29b3821e0690efb77");
-    expect(dockerfile).toContain("install -y --no-install-recommends ffmpeg");
+    expect(dockerfile).toContain("FFMPEG_STATIC_URL=https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz");
+    expect(dockerfile).toContain("FFMPEG_STATIC_SHA256=ABDA8D77CE8309141F83AB8EDF0596834087C52467F6BADF376A6A2A4C87CF67");
+    expect(dockerfile).toContain("sha256sum --check --status");
+    expect(dockerfile).not.toContain("install -y --no-install-recommends ffmpeg");
     expect(dockerfile).toContain("Acquire::http::Timeout=30");
     expect(dockerfile).toContain("Acquire::Retries=3");
     expect(dockerfile).toContain("COPY platform/package.json platform/package-lock.json ./");
@@ -47,6 +50,7 @@ describe("production Docker build contracts", () => {
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/node"]');
     expect(dockerfile).toContain('CMD ["src/runtime/start-studio-worker.js"]');
     expect(dockerfile).toContain("assemble-media-runtime");
+    expect(dockerfile).toContain("FFMPEG_RUNTIME_SOURCE.txt");
     expect(dockerfile).toContain("COPY --from=build /opt/media-root/ /");
     expect(dockerfile).not.toContain("COPY platform ./platform");
     expect(dockerfile).not.toContain("FROM node:20");

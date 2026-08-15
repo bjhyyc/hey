@@ -6,7 +6,7 @@
 
 Do not start the `studio-production` profile yet. The image and runtime isolation are implemented, but the production-assured source-photo, master-image, matting/QA and delivery-validator component module is still missing. `PETPACK_WORKER_COMPONENTS_MODULE` is deliberately required and the Worker fails closed if the module is absent or not marked production-assured.
 
-The media image records the exact copied FFmpeg runtime files, Debian package versions and copyright notices under `/app`. Docker Scout reports no known vulnerability for the minimized image, but the manual package manifest still contains `libjxl0.7`; the previously reported unfixed jpeg-xl advisory remains an explicit launch blocker until FFmpeg is rebuilt with the minimum required codec/filter set or an equivalent patched runtime is verified.
+The media image records the exact copied FFmpeg runtime files, source archive digest and license under `/app`. The Debian FFmpeg path is rejected at build time when it contains `libjxl0.7`. A pinned `ffmpeg-7.0.2-amd64-static` candidate has passed local VP9/green-screen normalization and Docker Scout scanning, but final publication still requires the release pipeline to reproduce the archive checksum, emit an SBOM, and review the GPL/codec license set.
 
 ## Safety properties
 
