@@ -26,6 +26,12 @@ const { WorkflowJobRouter } = require("../workers/workflow-job-router");
 const { ProductionWorkflow } = require("../workflow/production-workflow");
 const { hydrateEnvironmentFromSecretFiles } = require("./load-secret-files");
 
+// Production images have one reviewed component bundle location. Keeping this
+// path fixed prevents an operator from accidentally pointing a production
+// Worker at a development/fixture module that only passes the filesystem
+// checks below.
+const PRODUCTION_WORKER_COMPONENTS_MODULE = "/app/platform/src/runtime/production-worker-components.js";
+
 function boundedInteger(value, fallback, minimum, maximum, label, { nullable = false } = {}) {
   if (nullable && (value === undefined || value === "" || value === null)) return null;
   const parsed = value === undefined || value === "" ? fallback : Number(value);
@@ -128,12 +134,15 @@ async function assertWorkerTempRoot(tempRoot) {
   return fsp.realpath(tempRoot);
 }
 
-async function loadWorkerComponentsModule({ environment = process.env, context = {} } = {}) {
+async function loadWorkerComponentsModule({ environment = process.env, context = {}, production = false } = {}) {
   const modulePath = typeof environment.PETPACK_WORKER_COMPONENTS_MODULE === "string"
     ? environment.PETPACK_WORKER_COMPONENTS_MODULE.trim()
     : "";
   if (!modulePath || !path.isAbsolute(modulePath)) {
     throw new Error("PETPACK_WORKER_COMPONENTS_MODULE must be an absolute path");
+  }
+  if (production && modulePath !== PRODUCTION_WORKER_COMPONENTS_MODULE) {
+    throw new Error(`Production Worker components module must be ${PRODUCTION_WORKER_COMPONENTS_MODULE}`);
   }
   const stat = fs.lstatSync(modulePath);
   if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -257,6 +266,7 @@ async function createStudioWorkerRuntime({
     });
     const rawComponents = workerComponents || await loadWorkerComponentsModule({
       environment: hydrated,
+      production: config.production,
       context: {
         database: runtimeDatabase,
         modelRegistry: runtimeModelRegistry,

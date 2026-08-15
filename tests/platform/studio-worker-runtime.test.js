@@ -9,6 +9,7 @@ const {
   assertStudioWorkerSchemaReady,
   createStudioWorkerRuntime,
   loadStudioWorkerRuntimeConfig,
+  loadWorkerComponentsModule,
   validateWorkerComponents
 } = require("../../platform/src/runtime/create-studio-worker");
 
@@ -97,6 +98,17 @@ describe("Studio Worker runtime", () => {
     expect(validateWorkerComponents(components, { production: false })).toBe(components);
     expect(() => validateWorkerComponents({ ...components, modelArkClient: undefined }, { production: false })).toThrow(/fixture client/);
     expect(() => validateWorkerComponents(components, { production: true })).toThrow(/production-assured/);
+  });
+
+  it("rejects a development fixture path before loading it in production", async () => {
+    await expect(loadWorkerComponentsModule({
+      production: true,
+      environment: {
+        PETPACK_WORKER_COMPONENTS_MODULE: path.resolve(
+          "platform/src/development/zero-cost-worker-components.js"
+        )
+      }
+    })).rejects.toThrow(/production-worker-components\.js/);
   });
 
   it("checks database and filesystem readiness before consuming jobs", async () => {

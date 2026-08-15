@@ -20,7 +20,9 @@ fail() {
 [[ "${MODELARK_VIDEO_RESOLUTION:-}" == "480p" ]] || fail "video_resolution_must_be_480p"
 [[ "${PETPACK_RUNTIME_IMAGE:-}" == *@sha256:* ]] || fail "runtime_image_must_be_immutable_digest"
 [[ "${PETPACK_WORKER_IMAGE:-}" == *@sha256:* ]] || fail "worker_image_must_be_immutable_digest"
-[[ "${PETPACK_WORKER_COMPONENTS_MODULE:-}" == /* ]] || fail "production_components_module_must_be_absolute"
+required_components_module="/app/platform/src/runtime/production-worker-components.js"
+components_module="${PETPACK_WORKER_COMPONENTS_MODULE:-${required_components_module}}"
+[[ "${components_module}" == "${required_components_module}" ]] || fail "production_components_module_path_not_allowlisted"
 
 CONFIG_ROOT="${PETPACK_CONFIG_ROOT:-}"
 [[ -n "${CONFIG_ROOT}" && "${CONFIG_ROOT}" == /* ]] || fail "config_root_must_be_absolute"

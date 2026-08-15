@@ -4,7 +4,7 @@
 
 ## Current release gate
 
-Do not start the `studio-production` profile yet. The image and runtime isolation are implemented, but the production-assured source-photo, master-image, matting/QA and delivery-validator component module is still missing. `PETPACK_WORKER_COMPONENTS_MODULE` is deliberately required and the Worker fails closed if the module is absent or not marked production-assured.
+Do not start the `studio-production` profile yet. The image and runtime isolation are implemented, but the production-assured source-photo, master-image, matting/QA and delivery-validator component module is still missing. The production image must provide exactly `/app/platform/src/runtime/production-worker-components.js`; both Compose and the Worker reject any other module path, and the Worker also fails closed if that module is absent or not marked production-assured.
 
 Before any reviewed deployment, run `verify-studio-production.sh`. It is read-only: it checks the external secret files, immutable image digests, production/480p settings, component-module path, and `docker compose ... config --quiet`; it never runs `up`, `down`, `pull`, `rm`, or `prune`.
 

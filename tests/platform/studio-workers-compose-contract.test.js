@@ -34,7 +34,7 @@ describe("private production Studio workers Compose contract", () => {
     expect(compose).toContain("PETPACK_RUNTIME_HEARTBEAT_FILE: /run/petpack/worker-heartbeat.json");
     expect(compose).toContain('["CMD", "node", "src/runtime/check-runtime-heartbeat.js"]');
     expect(compose).toContain("petpack-worker-work:/work");
-    expect(compose).toContain("PETPACK_WORKER_COMPONENTS_MODULE: ${PETPACK_WORKER_COMPONENTS_MODULE:?");
+    expect(compose).toContain("PETPACK_WORKER_COMPONENTS_MODULE: /app/platform/src/runtime/production-worker-components.js");
     expect(compose).toContain('command: ["src/runtime/start-outbox-dispatcher.js"]');
     expect(compose).not.toContain('command: ["node",');
   });

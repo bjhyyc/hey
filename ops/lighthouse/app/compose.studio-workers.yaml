@@ -174,7 +174,7 @@ services:
       PETPACK_QUEUE_NAME: ${PETPACK_QUEUE_NAME:-petpack-production}
       PETPACK_QUEUE_PREFIX: ${PETPACK_QUEUE_PREFIX:-petpack}
       PETPACK_QUEUE_WORKER_CONCURRENCY: "4"
-      PETPACK_WORKER_COMPONENTS_MODULE: ${PETPACK_WORKER_COMPONENTS_MODULE:?Set the absolute in-image production components module}
+      PETPACK_WORKER_COMPONENTS_MODULE: /app/platform/src/runtime/production-worker-components.js
       PETPACK_WORKER_TEMP_ROOT: /work
       FFMPEG_PATH: /usr/bin/ffmpeg
       FFPROBE_PATH: /usr/bin/ffprobe

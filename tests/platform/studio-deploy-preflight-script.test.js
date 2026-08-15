@@ -17,6 +17,10 @@ describe("read-only Studio production preflight", () => {
     expect(script).toContain('"${MODELARK_VIDEO_RESOLUTION:-}" == "480p"');
     expect(script).toContain('"${PETPACK_RUNTIME_IMAGE:-}" == *@sha256:*');
     expect(script).toContain('"${PETPACK_WORKER_IMAGE:-}" == *@sha256:*');
+    expect(script).toContain('required_components_module="/app/platform/src/runtime/production-worker-components.js"');
+    expect(script).toContain('components_module="${PETPACK_WORKER_COMPONENTS_MODULE:-${required_components_module}}"');
+    expect(script).toContain('"${components_module}" == "${required_components_module}"');
+    expect(script).not.toContain('production_components_module_must_be_absolute');
   });
 
   it("checks every external secret without reading or printing its contents", () => {
