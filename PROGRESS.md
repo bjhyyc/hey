@@ -93,6 +93,7 @@
 - 2026-08-15：媒体镜像新增构建期 fail-closed 检查；当前 Debian FFmpeg 运行时因清单含 `libjxl0.7` 被明确拒绝，证明发布门不会被 Docker Scout 的 0 漏洞结果绕过。新增媒体运行时合同测试通过；全量回归为 85 个测试文件、893 项通过、2 项按设计跳过。新的无 `libjxl` FFmpeg/ffprobe 运行时仍需后续提供。
 - 2026-08-15：媒体构建已切换为固定 SHA-256 的 `ffmpeg-7.0.2-amd64-static`（归档 SHA-256 `ABDA8D77CE8309141F83AB8EDF0596834087C52467F6BADF376A6A2A4C87CF67`）。使用默认正式来源 URL 完整构建的 Worker 镜像 `petpack-studio-worker:static-ffmpeg-05cc8ef` digest 为 `sha256:626fb8bcf0b3d1897c50df16d4f418cb046d0eb7275d849136e3078132756e98`、大小约 119 MB；运行时包 127 个且不含 libjxl，Docker Scout 为 0/0/0/0。无网络/只读容器可加载 ffmpeg/ffprobe；合成绿幕输入经现有规范化计划输出 VP9、1280×720、24fps、yuv420p WebM。仍需正式 SBOM、许可证复核和真实代表媒体验收后才可推生产。
 - 2026-08-14：只读核验 Lighthouse 当前运行态：`petpack-auth-api`、`petpack-edge`、PostgreSQL 与 Redis 正常运行，但 `/opt/petpack/config` 下尚无 Kaipay、ModelArk、COS 或 Studio 业务 secret 文件，完整 Studio API/Outbox/Worker 尚未启动；因此未执行真实 Kaipay 探针、支付、退款或生成调用。
+- 2026-08-14：使用项目 `.tmp\compose-config-smoke` 内的非秘密占位文件与本地不可变镜像 digest，`compose.studio-workers.yaml --profile studio-production config --quiet` 通过，Studio API、Outbox、Worker 三服务解析成功且未执行 `up`。当前仓库没有生产组件模块，唯一零费用组件明确 `productionAssured=false`；Worker 生产门禁仍按设计拒绝启动。
 
 ## In progress
 
