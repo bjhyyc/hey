@@ -7,6 +7,10 @@ const DEFAULT_QUEUE_PREFIX = "petpack";
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MIN_DEFERRED_RETRY_MS = 1000;
 const MAX_DEFERRED_RETRY_MS = 24 * 60 * 60 * 1000;
+const QUEUE_COUNT_NAMES = Object.freeze([
+  "waiting", "active", "completed", "failed", "delayed", "paused",
+  "prioritized", "waiting-children"
+]);
 
 function requiredString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required`);
@@ -107,8 +111,19 @@ class BullMqWorkflowQueue {
 
   async assertReady() {
     if (typeof this.queue.waitUntilReady === "function") await this.queue.waitUntilReady();
-    if (typeof this.queue.getJobCounts === "function") await this.queue.getJobCounts("wait", "active", "delayed", "failed");
+    await this.getJobCounts();
     return Object.freeze({ ok: true });
+  }
+
+  async getJobCounts() {
+    if (typeof this.queue.getJobCounts !== "function") {
+      return Object.freeze(Object.fromEntries(QUEUE_COUNT_NAMES.map((name) => [name, 0])));
+    }
+    const counts = await this.queue.getJobCounts(...QUEUE_COUNT_NAMES);
+    return Object.freeze({
+      ...Object.fromEntries(QUEUE_COUNT_NAMES.map((name) => [name, 0])),
+      ...(counts && typeof counts === "object" ? counts : {})
+    });
   }
 
   async close() {
@@ -252,6 +267,7 @@ module.exports = {
   BullMqWorkflowWorker,
   DEFAULT_QUEUE_NAME,
   DEFAULT_QUEUE_PREFIX,
+  QUEUE_COUNT_NAMES,
   createRedisConnectionOptions,
   deferredRetryDelayMs,
   loadBullMqConfig,

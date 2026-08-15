@@ -22,6 +22,7 @@ The media image records the exact copied FFmpeg runtime files, source archive di
 - `/work` is a Docker named volume. `/tmp` and `/run/petpack` are bounded container tmpfs mounts.
 - All three services run as `10001:10001`, with a read-only root filesystem, all capabilities dropped and `no-new-privileges` enabled.
 - Health checks validate a fresh runtime heartbeat backed by live PostgreSQL and Redis/BullMQ probes; a merely running PID is not considered healthy.
+- The read-only `npm run check:operations` command emits a bounded JSON snapshot of Outbox, durable executions, and BullMQ counts. It returns non-zero for an old ready Outbox row, dead execution, reconciliation-required execution, dead Outbox row, or failed queue job. It performs no queue mutation and does not start a Worker.
 
 ## Inputs to prepare later
 
@@ -60,3 +61,16 @@ docker compose \
 ```
 
 Deployment must reference the final pushed image digests, not local tags. Never use `docker system prune`, `docker volume rm`, a disk-root bind mount, or a project-root bind mount in this workflow.
+
+After the services are running, an operator may execute the same read-only check
+inside the existing dispatcher container (it does not create a container or
+change queue state):
+
+```sh
+docker exec petpack-outbox-dispatcher node src/runtime/check-operations-snapshot.js
+```
+
+The command exits non-zero only when one of the configured alert thresholds is
+crossed. Thresholds are supplied as non-secret environment values, for example
+`PETPACK_ALERT_OUTBOX_OLDEST_READY_SECONDS=60` and
+`PETPACK_ALERT_QUEUE_FAILED_COUNT=0`.

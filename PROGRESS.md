@@ -115,6 +115,7 @@
 - 2026-08-14：收紧生产 Worker 组件装载边界：Compose 固定使用 `/app/platform/src/runtime/production-worker-components.js`，只读预检默认并仅允许该镜像内路径，运行时在 production 模式下会在加载模块前拒绝 development/fixture 路径；新增回归覆盖，当前全量回归为 88 个测试文件、901 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；生产视觉组件本身仍缺失，profile 继续保持关闭。
 - 2026-08-14：进一步禁止 production Worker 通过运行时参数注入组件对象；生产只能从镜像内 allowlist 模块装载，避免测试夹具或内存对象绕过路径门禁。聚焦 Worker runtime 测试 8/8 通过；全量回归为 88 个测试文件、902 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；生产视觉组件仍未提供，未启动任何生产服务。
 - 2026-08-14：修复 Studio API 就绪探针与 Compose/Caddy 不一致的问题：Node HTTP 服务新增 `/livez`、依赖就绪 `/readyz`（`/healthz` 保持兼容别名，依赖失败返回 503 且不泄露错误），认证运行时明确返回 ready 状态；Caddy 的 `/readyz` 代理到 Studio API，`/health` 继续仅作边缘存活探针。聚焦就绪/Caddy/Compose 测试 9/9 通过；全量回归为 89 个测试文件、904 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；未启动生产服务。
+- 2026-08-14：新增只读 `platform/src/runtime/check-operations-snapshot.js` 与 `npm run check:operations`：聚合 Outbox pending/leased/failed/dead、最老 ready 年龄、过期租约、持久化执行 dead/reconciliation_required 及 BullMQ waiting/active/failed 等低基数状态，并按阈值返回告警退出码；不输出 payload、订单标识或密钥，不修改队列。聚焦监控合同 9/9 通过；全量回归为 90 个测试文件、906 项通过、2 项 opt-in PostgreSQL 测试按设计跳过。
 
 ## In progress
 
