@@ -95,6 +95,7 @@
 - 2026-08-14：只读核验 Lighthouse 当前运行态：`petpack-auth-api`、`petpack-edge`、PostgreSQL 与 Redis 正常运行，但 `/opt/petpack/config` 下尚无 Kaipay、ModelArk、COS 或 Studio 业务 secret 文件，完整 Studio API/Outbox/Worker 尚未启动；因此未执行真实 Kaipay 探针、支付、退款或生成调用。
 - 2026-08-14：使用项目 `.tmp\compose-config-smoke` 内的非秘密占位文件与本地不可变镜像 digest，`compose.studio-workers.yaml --profile studio-production config --quiet` 通过，Studio API、Outbox、Worker 三服务解析成功且未执行 `up`。当前仓库没有生产组件模块，唯一零费用组件明确 `productionAssured=false`；Worker 生产门禁仍按设计拒绝启动。
 - 2026-08-14：最终构建复核通过：桌宠 Vite 67 modules、落地页 Vite 7 modules、网站 Next.js 16 个静态页面及动态业务路由均成功生成；`dist` 与 `.next` 构建产物未发现 Kaipay 凭据、服务器地址或本地项目路径。仅有非阻塞的 `baseline-browser-mapping` 版本提示，未自动升级依赖。
+- 2026-08-14：公开面只读冒烟确认 `https://heyirmy.com/` 与 `/api/health` 返回 200，`https://api.heyirmy.com/health` 返回静态 `ok`，但 `/api/health` 与 Kaipay 通知路径仍返回 404；这与 Lighthouse 当前 auth-only 服务一致，未发送任何回调或支付请求。
 
 ## In progress
 
