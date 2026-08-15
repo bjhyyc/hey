@@ -10,6 +10,7 @@ export function PhoneLoginForm({ environmentId, region, enabled }: {
   enabled: boolean;
 }) {
   const configured = Boolean(enabled && environmentId && region === "ap-shanghai");
+  const unavailableMessage = "手机号登录尚未完成腾讯云环境配置。";
   const authRef = useRef<Promise<CloudBasePhoneAuth> | null>(null);
   const verifyRef = useRef<((input: { token: string }) => Promise<unknown>) | null>(null);
   const [phone, setPhone] = useState("");
@@ -17,7 +18,7 @@ export function PhoneLoginForm({ environmentId, region, enabled }: {
   const [codeSent, setCodeSent] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState(configured ? "" : "手机号登录暂未开放");
+  const [message, setMessage] = useState(configured ? "" : unavailableMessage);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -26,7 +27,7 @@ export function PhoneLoginForm({ environmentId, region, enabled }: {
   }, [countdown]);
 
   async function client() {
-    if (!configured || !environmentId || !region) throw new Error("手机号登录暂未开放");
+    if (!configured || !environmentId || !region) throw new Error(unavailableMessage);
     authRef.current ||= createCloudBasePhoneAuth({ environmentId, region });
     return authRef.current;
   }
@@ -71,7 +72,7 @@ export function PhoneLoginForm({ environmentId, region, enabled }: {
           inputMode="numeric"
           maxLength={11}
           onChange={(event) => setPhone(event.target.value.replace(/\D/g, "").slice(0, 11))}
-          placeholder="请输入 11 位手机号"
+          placeholder="11 位手机号"
           value={phone}
         /></span>
       </label>
@@ -85,7 +86,7 @@ export function PhoneLoginForm({ environmentId, region, enabled }: {
         placeholder="请输入 6 位验证码"
         value={code}
       /></label> : null}
-      <button className="primary-button form-submit" disabled={!configured || busy} type="submit">
+      <button className="button button-primary form-submit" disabled={!configured || busy} type="submit">
         {busy ? "请稍候…" : codeSent ? "登录" : "获取验证码"}
       </button>
       {codeSent ? <button

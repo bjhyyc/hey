@@ -17,11 +17,11 @@ export function AccountControl() {
   }, []);
 
   if (!authenticated) {
-    return <Link className="login-link" href="/login">登录</Link>;
+    return <Link className="text-link header-login header-account-placeholder" href="/login">登录</Link>;
   }
   return (
     <button
-      className="login-link account-logout"
+      className="text-link header-login header-logout account-logout"
       disabled={busy}
       onClick={async () => {
         setBusy(true);

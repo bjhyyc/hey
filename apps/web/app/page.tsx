@@ -5,8 +5,8 @@ import { SiteHeader } from "@/components/SiteHeader";
 export default function HomePage() {
   return (
     <div className="site-shell home-shell">
-      <SiteHeader />
-      <main className="home-main">
+      <SiteHeader home />
+      <main className="pika-home">
         <HomeUploadEntry />
       </main>
       <SiteFooter />

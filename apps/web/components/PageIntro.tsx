@@ -10,10 +10,10 @@ export function PageIntro({
   children?: ReactNode;
 }) {
   return (
-    <header className="page-intro">
+    <div className="page-intro">
       {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
       <h1>{title}</h1>
-      {children ? <div className="page-intro-copy">{children}</div> : null}
-    </header>
+      {children ? <p className="page-intro-copy">{children}</p> : null}
+    </div>
   );
 }

@@ -1,11 +1,11 @@
-import Link from "next/link";
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
 
 export default function DownloadClientPage() { return <PageShell compact>
   <PageIntro title="桌宠客户端">安装后导入 PetPack 即可使用。</PageIntro>
-  <section className="workflow-card"><ol className="process-steps"><li>下载并安装客户端</li><li>打开客户端首页</li><li>点击“导入我的 PetPack”</li><li>选择从 Hey 下载的素材包</li></ol>
-    <p className="form-message">正式签名安装包准备后将在这里提供下载。</p>
-    <Link className="primary-button inline-button" href="/projects">导入我的 PetPack</Link>
+  <section className="download-card">
+    <div className="client-window" aria-hidden="true"><div className="window-dots"><i></i><i></i><i></i></div><div className="window-import">导入我的 PetPack</div></div>
+    <div><h2>导入一次即可使用</h2><ol className="instruction-list compact-list"><li><span>1</span>下载并安装桌宠客户端。</li><li><span>2</span>在首页点击“导入我的 PetPack”。</li><li><span>3</span>选择你的 <code>.petpack</code> 文件。</li></ol>
+    <button className="button button-primary" disabled type="button">客户端安装包准备后提供下载</button></div>
   </section>
 </PageShell>; }

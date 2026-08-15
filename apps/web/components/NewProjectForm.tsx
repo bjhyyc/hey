@@ -21,6 +21,7 @@ export function NewProjectForm() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
+  const showWxpay = process.env.NEXT_PUBLIC_KAIPAY_WXPAY_ENABLED === "true";
 
   useEffect(() => {
     if (!qrPayment) return;
@@ -107,22 +108,27 @@ export function NewProjectForm() {
     }).catch(() => setMessage("暂时无法查询付款状态，请稍后再试"))} type="button">我已完成付款</button>
   </section>;
 
-  return <section className="workflow-card">
-    <label className="field-label">宠物名字<input
-      maxLength={40}
+  return <section aria-labelledby="payment-title" className="payment-picker">
+    <div><h2 id="payment-title">选择支付方式</h2></div>
+    <label className="payment-name-field">宠物名字<input
+      maxLength={120}
       onChange={(event) => setDisplayName(event.target.value)}
-      placeholder="例如：淘淘"
+      placeholder="例如：团团"
       value={displayName}
     /></label>
-    <fieldset className="payment-channel-picker">
-      <legend>付款方式</legend>
-      <button aria-pressed={paymentChannel === "ALIPAY"} className={paymentChannel === "ALIPAY" ? "is-selected" : ""} disabled={busy} onClick={() => setPaymentChannel("ALIPAY")} type="button">支付宝</button>
-      <button aria-pressed={paymentChannel === "WXPAY"} className={paymentChannel === "WXPAY" ? "is-selected" : ""} disabled={busy} onClick={() => setPaymentChannel("WXPAY")} type="button">微信支付</button>
-    </fieldset>
-    <div className="plan-summary"><span>PetPack</span><strong>7 个视频</strong><small>正面与 45° 母图 · 自动睡姿 · 自动打包</small></div>
-    <button className="primary-button form-submit" disabled={busy} onClick={() => void submit()} type="button">
-      {busy ? "正在创建…" : "购买并开始制作"}
+    <div aria-label="支付方式" className={`payment-methods${showWxpay ? " has-wechat" : ""}`} role="radiogroup">
+      <label className={`payment-method${paymentChannel === "ALIPAY" ? " is-selected" : ""}`}>
+        <input checked={paymentChannel === "ALIPAY"} disabled={busy} name="payment-method" onChange={() => setPaymentChannel("ALIPAY")} type="radio" value="ALIPAY" />
+        <span><strong>支付宝</strong><small>支付宝收银台</small></span>
+      </label>
+      {showWxpay ? <label className={`payment-method${paymentChannel === "WXPAY" ? " is-selected" : ""}`}>
+        <input checked={paymentChannel === "WXPAY"} disabled={busy} name="payment-method" onChange={() => setPaymentChannel("WXPAY")} type="radio" value="WXPAY" />
+        <span><strong>微信支付</strong><small>微信扫码支付</small></span>
+      </label> : null}
+    </div>
+    <button className="button button-primary" disabled={busy} onClick={() => void submit()} type="button">
+      {busy ? "正在创建…" : "创建订单并前往付款"}
     </button>
-    <p className="form-message" aria-live="polite">{message || "付款成功后才会上传照片和调用生成模型"}</p>
+    <p className="form-message" aria-live="polite">{message}</p>
   </section>;
 }

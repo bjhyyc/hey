@@ -6,7 +6,7 @@ export function PageShell({ children, compact = false }: { children: ReactNode; 
   return (
     <div className="site-shell">
       <SiteHeader />
-      <main className={`page-main${compact ? " compact-page" : ""}`}>{children}</main>
+      <main className={`shell page-main page-space${compact ? " narrow-page compact-page" : ""}`}>{children}</main>
       <SiteFooter />
     </div>
   );

@@ -172,20 +172,14 @@ export function HomeUploadEntry() {
   }
 
   return (
-    <div className="home-center">
-      <h1>Hey, I really miss you.</h1>
-      <p className="home-promise">把思念带回桌面</p>
-      <p className="home-automation-note">
-        无需编写复杂的动作提示词，无需在不同的 AI 视觉模型之间切换
-      </p>
-      <div className="species-switch" aria-label="选择宠物类型">
-        <button className={species === "dog" ? "active" : ""} onClick={() => void updateSpecies("dog")} type="button">狗狗</button>
-        <button className={species === "cat" ? "active" : ""} onClick={() => void updateSpecies("cat")} type="button">猫咪</button>
-      </div>
-      <section
-        className="home-upload"
-        aria-label="上传两张正面全身照和一至两张四十五度全身照并开始制作"
-      >
+    <section className="home-minimal-shell" aria-labelledby="home-greeting">
+      <div className="home-center">
+        <h1 id="home-greeting" lang="en">Hey, I really miss you.</h1>
+        <p className="home-promise"><span>把思念带回桌面</span></p>
+        <section
+          className="home-upload"
+          aria-label="上传两张正面全身照和一至两张四十五度全身照并开始制作"
+        >
         <div className={`home-upload-copy${count > 0 ? " has-photos" : ""}`}>
           {count > 0 ? (
             <span className="home-photo-thumbnails" aria-label={`已选择 ${count} 张照片`}>
@@ -224,7 +218,7 @@ export function HomeUploadEntry() {
           ) : null}
           <span className="home-upload-copy-text">
             <strong>{count > 0 ? `已选择 ${count} 张照片` : "上传 2 张正面照 + 1~2 张 45° 照"}</strong>
-            <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面全身照必选，45° 全身照至少一张")}</small>
+            <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面全身照必选，45°全身照至少一张")}</small>
             <span className="home-upload-slot-guide" aria-label="照片槽位要求">
               {PHOTO_SLOT_DEFINITIONS.map((slot, index) => (
                 <i className={photos[index] ? "is-filled" : ""} key={slot.id}>
@@ -247,7 +241,7 @@ export function HomeUploadEntry() {
                 event.currentTarget.value = "";
               }}
             />
-            <button className="home-upload-icon" disabled={busy} onClick={() => picker.current?.click()} type="button" aria-label={count ? "继续添加宠物照片" : "选择宠物照片"}>
+            <button className="home-upload-icon" disabled={busy} onClick={() => picker.current?.click()} type="button" aria-label="继续添加宠物照片">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" /></svg>
               <span className="home-upload-count">{count === 4 ? "✓" : count || "3+"}</span>
             </button>
@@ -257,13 +251,17 @@ export function HomeUploadEntry() {
               <span className="home-model-tag"><PawIcon kind="cat" />Seedream 5.0 Pro</span>
               <span className="home-model-tag"><PawIcon kind="dog" />Seedance 2.0</span>
             </span>
-            <button className="home-upload-action" aria-disabled={!ready || busy} onClick={startMaking} type="button">
+            <button className="home-upload-action" disabled={!ready || busy} onClick={startMaking} type="button">
               <svg className="home-spark-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8c.8 4.7 2.5 6.4 7.2 7.2-4.7.8-6.4 2.5-7.2 7.2-.8-4.7-2.5-6.4-7.2-7.2 4.7-.8 6.4-2.5 7.2-7.2Z" /><path d="M19.1 15.4c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z" /></svg>
               <span>开始制作</span>
             </button>
           </span>
         </div>
-      </section>
-    </div>
+        </section>
+        <p className="home-automation-note">
+          无需编写复杂的动作提示词，无需在不同的 AI 视觉模型之间切换
+        </p>
+      </div>
+    </section>
   );
 }
