@@ -113,7 +113,7 @@
 - 2026-08-14：修正 ModelArk 异步链路边界：生产不再强制配置未接通的 callback URL/Secret，改由 Seedance 任务查询作为唯一权威收口；Compose、生产预检和模型 registry 均移除该秘密依赖，并拒绝生产环境误配置 callback。相关 ModelArk/Caddy/Compose 契约测试 12/12 通过，三服务 Compose `config --quiet` 通过；回调工具函数保留在代码中，仅待未来完成持久化回调路由后再启用。
 - 2026-08-14：轮询路径修复后的全量回归为 88 个测试文件、900 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；未调用真实 ModelArk、Kaipay 或 CloudBase。
 - 2026-08-14：收紧生产 Worker 组件装载边界：Compose 固定使用 `/app/platform/src/runtime/production-worker-components.js`，只读预检默认并仅允许该镜像内路径，运行时在 production 模式下会在加载模块前拒绝 development/fixture 路径；新增回归覆盖，当前全量回归为 88 个测试文件、901 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；生产视觉组件本身仍缺失，profile 继续保持关闭。
-- 2026-08-14：进一步禁止 production Worker 通过运行时参数注入组件对象；生产只能从镜像内 allowlist 模块装载，避免测试夹具或内存对象绕过路径门禁。聚焦 Worker runtime 测试 8/8 通过；生产视觉组件仍未提供，未启动任何生产服务。
+- 2026-08-14：进一步禁止 production Worker 通过运行时参数注入组件对象；生产只能从镜像内 allowlist 模块装载，避免测试夹具或内存对象绕过路径门禁。聚焦 Worker runtime 测试 8/8 通过；全量回归为 88 个测试文件、902 项通过、2 项 opt-in PostgreSQL 测试按设计跳过；生产视觉组件仍未提供，未启动任何生产服务。
 
 ## In progress
 
