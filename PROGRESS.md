@@ -92,6 +92,7 @@
 - 2026-08-14：使用 Docker Desktop 29.7.2 从当前工作树构建 `petpack-platform-runtime:predeploy-97d2d74`（镜像 digest `sha256:63ea405a025b410ae0f0dfad31f45a30a23617e0d5c9086cb6dc8dfd71550689`）与 `petpack-studio-worker:predeploy-97d2d74`（镜像 digest `sha256:448debff8482481aa2381f217a580d66c184f32486cab80fca944fe0d1960b64`）；两镜像无网络、只读、cap-drop smoke 均通过，Worker 内 ffmpeg/ffprobe 可加载。生产 Worker 组件模块仍未提供，`PETPACK_WORKER_COMPONENTS_MODULE` 门禁继续 fail-closed，未启动生产服务。
 - 2026-08-15：媒体镜像新增构建期 fail-closed 检查；当前 Debian FFmpeg 运行时因清单含 `libjxl0.7` 被明确拒绝，证明发布门不会被 Docker Scout 的 0 漏洞结果绕过。新增媒体运行时合同测试通过；全量回归为 85 个测试文件、893 项通过、2 项按设计跳过。新的无 `libjxl` FFmpeg/ffprobe 运行时仍需后续提供。
 - 2026-08-15：已将媒体构建切换为固定 SHA-256 的 `ffmpeg-7.0.2-amd64-static` 候选（归档 SHA-256 `ABDA8D77CE8309141F83AB8EDF0596834087C52467F6BADF376A6A2A4C87CF67`）。候选 Worker 镜像 `petpack-studio-worker:static-ffmpeg-97d2d74` digest 为 `sha256:1087604526bb4a07c931d1ef5d772dfd7f1339d8f8562a8367a0999296615e30`、大小约 119 MB；运行时包 127 个且不含 libjxl，Docker Scout 为 0/0/0/0。无网络/只读容器可加载 ffmpeg/ffprobe；合成绿幕输入经现有规范化计划输出 VP9、1280×720、24fps、yuv420p WebM。该候选仍需正式 SBOM、许可证复核和真实代表媒体验收后才可推生产。
+- 2026-08-14：只读核验 Lighthouse 当前运行态：`petpack-auth-api`、`petpack-edge`、PostgreSQL 与 Redis 正常运行，但 `/opt/petpack/config` 下尚无 Kaipay、ModelArk、COS 或 Studio 业务 secret 文件，完整 Studio API/Outbox/Worker 尚未启动；因此未执行真实 Kaipay 探针、支付、退款或生成调用。
 
 ## In progress
 
