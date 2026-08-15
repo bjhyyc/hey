@@ -51,6 +51,16 @@ fi
 
 sort -u "$path_manifest" -o "$path_manifest"
 sort -u "$package_list" -o "$package_list"
+
+# libjxl is pulled in by Debian's shared libavcodec package and is not part of
+# the approved production media runtime.  Do not let a seemingly successful
+# image build hide that dependency; the replacement FFmpeg runtime must be
+# supplied before a production image can be produced.
+if grep -Eiq '(^|/)libjxl([^/ ]*)' "$package_list" || grep -Eiq '(^|/)libjxl([^/ ]*)' "$path_manifest"; then
+  echo "refusing media runtime containing libjxl" >&2
+  exit 1
+fi
+
 if [ -f "$runtime_base/var/lib/dpkg/status" ]; then
   cp "$runtime_base/var/lib/dpkg/status" "$target_root/var/lib/dpkg/status"
 else

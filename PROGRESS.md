@@ -90,6 +90,7 @@
 - 2026-08-14：Docker 隔离零费用彩排再次通过，报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\redis-aof-rehearsals\redis-aof-20260814170913-7b3e09a1\report.json`，工作流报告为 `D:\PetPackStudio-Rebuild-20260813\.tmp\zero-cost-rehearsals\rehearsal-20260815000926-ce3307e2\report.json`：PostgreSQL 18.4、TLS Redis AOF 同容器重启恢复、3 来源照、3 母图、7 动作、12/12 QA、38/38 执行、39/39 outbox、8 文件 PetPack 原版客户端导入成功，0 外部提供商调用，0 宿主路径删除，0 破坏性 Redis 命令。
 - 2026-08-14：使用 D 盘隔离占位 secret 文件完成 `compose.studio-workers.yaml --profile studio-production config --quiet` 静态渲染，三服务（Studio API、Outbox、Worker）的 V3 环境变量、secret-file 挂载、480p/ModelArk 配置和外部网络声明均解析成功；未执行 `up`、未读取真实密钥、未创建订单或访问支付接口。Kaipay V3/Caddy/Compose 聚焦契约测试 28/28 通过。
 - 2026-08-14：使用 Docker Desktop 29.7.2 从当前工作树构建 `petpack-platform-runtime:predeploy-97d2d74`（镜像 digest `sha256:63ea405a025b410ae0f0dfad31f45a30a23617e0d5c9086cb6dc8dfd71550689`）与 `petpack-studio-worker:predeploy-97d2d74`（镜像 digest `sha256:448debff8482481aa2381f217a580d66c184f32486cab80fca944fe0d1960b64`）；两镜像无网络、只读、cap-drop smoke 均通过，Worker 内 ffmpeg/ffprobe 可加载。生产 Worker 组件模块仍未提供，`PETPACK_WORKER_COMPONENTS_MODULE` 门禁继续 fail-closed，未启动生产服务。
+- 2026-08-15：媒体镜像新增构建期 fail-closed 检查；当前 Debian FFmpeg 运行时因清单含 `libjxl0.7` 被明确拒绝，证明发布门不会被 Docker Scout 的 0 漏洞结果绕过。新增媒体运行时合同测试通过；全量回归为 85 个测试文件、893 项通过、2 项按设计跳过。新的无 `libjxl` FFmpeg/ffprobe 运行时仍需后续提供。
 
 ## In progress
 
