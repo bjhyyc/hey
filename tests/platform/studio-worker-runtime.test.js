@@ -111,6 +111,20 @@ describe("Studio Worker runtime", () => {
     })).rejects.toThrow(/production-worker-components\.js/);
   });
 
+  it("does not allow production callers to inject an in-memory component set", async () => {
+    await expect(createStudioWorkerRuntime({
+      environment: {
+        PETPACK_PLATFORM_MODE: "production",
+        PETPACK_WORKER_TEMP_ROOT: "/work",
+        FFMPEG_PATH: "/usr/bin/ffmpeg",
+        FFPROBE_PATH: "/usr/bin/ffprobe",
+        PETPACK_DELIVERY_RETENTION_DAYS: "30"
+      },
+      workerComponents: fakeComponents(),
+      database: fakeDatabase()
+    })).rejects.toThrow(/allowlisted image module/);
+  });
+
   it("checks database and filesystem readiness before consuming jobs", async () => {
     const database = fakeDatabase();
     const queueWorker = {

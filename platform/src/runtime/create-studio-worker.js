@@ -254,6 +254,9 @@ async function createStudioWorkerRuntime({
 } = {}) {
   const hydrated = hydrateEnvironmentFromSecretFiles({ environment });
   const config = loadStudioWorkerRuntimeConfig(hydrated);
+  if (config.production && workerComponents) {
+    throw new Error("Production Worker components must be loaded from the allowlisted image module");
+  }
   const runtimeDatabase = database || createPostgresDatabase({ environment: hydrated, PoolClass, logger });
   let componentsToClose = null;
   try {
