@@ -125,6 +125,7 @@
 - 2026-08-16：按用户确认将 ModelArk 与腾讯云 COS 密钥以一次性临时文件传输到 Lighthouse，解析后写入 root:10001、0440 的运行时目录并清理临时副本；未进入镜像、Git 或日志。按当前工作树重新构建平台运行时镜像 `petpack-platform-runtime:deploy-20260816-cbe6b44`，传输归档 SHA-256 为 `1AFDA3044F0FF495232E303E1A7688429DD764D3FB0115E79CBD099CDFEB3C7D`，远端镜像摘要为 `sha256:c107f86e5f3f760cfc3becdfd83e9023db5d24acc3bab56c7c3b26ab93d048a9`（58,581,409 字节）。仅启动 `petpack-studio-api`，保持 Outbox 与 Worker 关闭；容器运行中且健康，使用 staging COS、Seedream 5.0 Pro、Seedance 2.0、480p 与 Kaipay V3。
 - 2026-08-16：Caddy 精确加入 `/readyz` 与 `POST /api/payments/kaipay/notify/<orderId>` 代理，保留原 auth 路由；公网验收 `GET /readyz` 返回 200 且 database=ready，空 JSON 回调探针返回应用层 400（非 Caddy 404），证明通知入口已到达 Studio API；未创建订单、未调用真实 ModelArk、未启动 Outbox/Worker。旧 Caddyfile 保留为 `/opt/petpack/config/edge/Caddyfile.pre-studio-api-20260816`。
 - 2026-08-16：用户明确确认后，仅发起一次受控 0.01 元支付宝 Web 创建请求（平台订单 `hey-test-001-3103cdb6c095447`）；Kaipay 返回业务拒绝 `kaipay_business_error`，未返回 provider 订单号，未产生扣款或回调，未自动重试。随后无费用 `GET /pay/api/v3/capabilities` 仍返回 `ok`，确认 V3 凭据、签名和能力探针正常；下单侧需在 Kaipay 控制台继续核对授权域名/电脑网站产品状态，不能把本次失败记为支付成功。
+- 2026-08-16：针对 Kaipay 巡查“无法抓取 `https://api.heyirmy.com`”，确认 API 根路径原先为 404；在 Caddy 增加精确根路径验证响应 `Hey PetPack API`（不改变 `/health`、`/readyz`、业务和回调路由），配置校验通过，edge 重启后公网根路径为 HTTPS 200，`/health` 与 `/readyz` 仍为 200。请在 Kaipay 控制台重新发起该子域名巡查。
 
 ## In progress
 
