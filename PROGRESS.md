@@ -124,6 +124,7 @@
 - 2026-08-16：`api.heyirmy.com` 的 Kaipay TXT 归属记录已由阿里公共 DNS 与 Google DNS 同时返回正确值，用户确认控制台内全部授权域名均已验证；随后从 Lighthouse 使用安全文件复跑 V3 `GET /pay/api/v3/capabilities`，结果为 `kaipay_v3_capabilities=ok`，未创建订单或发生费用。公网边缘 `/health` 为 200，但 `/readyz` 仍为 404，服务器当前只运行 auth-api、edge、PostgreSQL 与 Redis，故 Studio API/Kaipay 回调尚未部署，不能把域名验证成功误判为支付闭环完成。
 - 2026-08-16：按用户确认将 ModelArk 与腾讯云 COS 密钥以一次性临时文件传输到 Lighthouse，解析后写入 root:10001、0440 的运行时目录并清理临时副本；未进入镜像、Git 或日志。按当前工作树重新构建平台运行时镜像 `petpack-platform-runtime:deploy-20260816-cbe6b44`，传输归档 SHA-256 为 `1AFDA3044F0FF495232E303E1A7688429DD764D3FB0115E79CBD099CDFEB3C7D`，远端镜像摘要为 `sha256:c107f86e5f3f760cfc3becdfd83e9023db5d24acc3bab56c7c3b26ab93d048a9`（58,581,409 字节）。仅启动 `petpack-studio-api`，保持 Outbox 与 Worker 关闭；容器运行中且健康，使用 staging COS、Seedream 5.0 Pro、Seedance 2.0、480p 与 Kaipay V3。
 - 2026-08-16：Caddy 精确加入 `/readyz` 与 `POST /api/payments/kaipay/notify/<orderId>` 代理，保留原 auth 路由；公网验收 `GET /readyz` 返回 200 且 database=ready，空 JSON 回调探针返回应用层 400（非 Caddy 404），证明通知入口已到达 Studio API；未创建订单、未调用真实 ModelArk、未启动 Outbox/Worker。旧 Caddyfile 保留为 `/opt/petpack/config/edge/Caddyfile.pre-studio-api-20260816`。
+- 2026-08-16：用户明确确认后，仅发起一次受控 0.01 元支付宝 Web 创建请求（平台订单 `hey-test-001-3103cdb6c095447`）；Kaipay 返回业务拒绝 `kaipay_business_error`，未返回 provider 订单号，未产生扣款或回调，未自动重试。随后无费用 `GET /pay/api/v3/capabilities` 仍返回 `ok`，确认 V3 凭据、签名和能力探针正常；下单侧需在 Kaipay 控制台继续核对授权域名/电脑网站产品状态，不能把本次失败记为支付成功。
 
 ## In progress
 
@@ -131,7 +132,7 @@
 
 ## Next
 
-1. Kaipay 授权域名、无费用 V3 capabilities、Studio API `/readyz` 与精确通知入口已通过；下一步只在用户明确确认后创建一笔最高 0.01 元的支付宝测试订单，成功后再做回调/查单记录。微信、退款和真实 ModelArk 生成仍按独立费用上限逐项确认。
+1. Kaipay 授权域名、无费用 V3 capabilities、Studio API `/readyz` 与精确通知入口已通过；已按用户确认只尝试一次最高 0.01 元支付宝测试订单，但下单业务层拒绝且无扣款。下一步需先在 Kaipay 控制台确认授权域名巡检和电脑网站产品已对当前二级商户生效，再由用户明确授权是否重试；未获授权前不再创建订单。微信、退款和真实 ModelArk 生成仍按独立费用上限逐项确认。
 2. 补 Redis/BullMQ 队列积压、死信、Outbox oldest-age 与 Worker readiness 告警；随后选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口。
 3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
 4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
