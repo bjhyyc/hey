@@ -121,6 +121,7 @@
 - 2026-08-15：当前平台候选镜像 `petpack-platform-runtime:predeploy-8e511c2` 已校验传输 SHA 后装入 Lighthouse，但尚未启动 Studio API。一次性加固容器已真实签名调用 `GET /pay/api/v3/capabilities`，请求到达 Kaipay 且 HTTP 200，但业务返回 code 7（`kaipay_business_error`），没有创建订单、扣款或触发生成。Kaipay 控制台只读核验确认该 Key 已启用创建/查询/退款权限、IP 白名单为空（允许所有 IP），唯一明确门禁为 `heyirmy.com` 授权域名仍是 `0/2` 已验证；V3 继续保持选定协议，右侧无版本号 Quick Start 仅作旧版示例，不回退 V1。
 - 2026-08-15：为不改 DNS、也不覆盖网站构建，现网 Caddy 新增精确的 `GET /kpay-domain-verification.txt` 响应；公网 `https://heyirmy.com/kpay-domain-verification.txt` 返回 HTTP 200、`text/plain` 与凯付控制台给出的校验值完全一致。Caddy 配置在本地 `caddy validate` 和服务器容器内验证均通过，edge 容器已安全重启；其余根域名跳转、auth API 与数据容器未改变。凯付后台仍需下一次自动巡检/手动重试后把域名从 `0/2` 更新为已验证。
 - 2026-08-15：DNS TXT `_kpay-verify.heyirmy.com` 与网站验证文件均从公网核对通过。按用户确认，在 Kaipay API 调试台 V3 发送一次唯一的 0.01 元支付宝 Web 测试下单请求；Kaipay 返回 HTTP 200 / 业务 code 7，响应明确为 `ownershipStatus=pending`，订单未创建、未扣款、未发送回调。该结果证明当前剩余阻塞是 Kaipay 授权域名巡检，而非本地签名、密钥或请求字段。
+- 2026-08-16：`api.heyirmy.com` 的 Kaipay TXT 归属记录已由阿里公共 DNS 与 Google DNS 同时返回正确值，用户确认控制台内全部授权域名均已验证；随后从 Lighthouse 使用安全文件复跑 V3 `GET /pay/api/v3/capabilities`，结果为 `kaipay_v3_capabilities=ok`，未创建订单或发生费用。公网边缘 `/health` 为 200，但 `/readyz` 仍为 404，服务器当前只运行 auth-api、edge、PostgreSQL 与 Redis，故 Studio API/Kaipay 回调尚未部署，不能把域名验证成功误判为支付闭环完成。
 
 ## In progress
 
@@ -128,7 +129,7 @@
 
 ## Next
 
-1. 等待/触发 Kaipay 对 `https://heyirmy.com/kpay-domain-verification.txt` 的下一次巡检并确认域名状态变为已验证，再复跑无扣款 `verify:kaipay`；通过后部署完整 Studio API 与精确 Caddy 回调白名单。确认公网回调后，在预先批准的最高费用内完成支付宝、微信和退款各一笔受控验收。Credential ring、通知加密键和数据库 013–015 已就绪，无需重复生成或迁移。
+1. Kaipay 授权域名与无费用 V3 capabilities 已通过；下一步部署 Studio API 与精确 Caddy 回调白名单，并先确认 `/readyz` 及通知路径真实到达应用。公网回调就绪后，在预先批准的最高费用内完成支付宝、微信和退款各一笔受控验收。Credential ring、通知加密键和数据库 013–015 已就绪，无需重复生成或迁移。
 2. 补 Redis/BullMQ 队列积压、死信、Outbox oldest-age 与 Worker readiness 告警；随后选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口。
 3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
 4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。

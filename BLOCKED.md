@@ -5,7 +5,7 @@
 ## 外部资质与账号
 
 - 营业执照申请及最终主体信息。
-- Kaipay Pay API V3 的 capabilities/create/query/close/refund、HMAC-SHA256 请求签名、JSON Webhook 原始字节验签、事件幂等、主动查单二次确认和 204 回执已完成；Lighthouse 的 V3 credential ring 与独立通知加密键已安全挂载，数据库 013–015 已应用。现网 `https://heyirmy.com/kpay-domain-verification.txt` 与 `_kpay-verify.heyirmy.com` TXT 均已按控制台值返回正确结果，但 Kaipay 后台授权域名仍为 `ownershipStatus=pending`。已在 API 调试台提交一次 0.01 元 V3 测试下单请求，Kaipay 返回 HTTP 200 / 业务 code 7，订单未创建且无扣款；必须等待下一次归属巡检通过后再重试。
+- Kaipay Pay API V3 的 capabilities/create/query/close/refund、HMAC-SHA256 请求签名、JSON Webhook 原始字节验签、事件幂等、主动查单二次确认和 204 回执已完成；Lighthouse 的 V3 credential ring 与独立通知加密键已安全挂载，数据库 013–015 已应用。`heyirmy.com` 与 `api.heyirmy.com` 的归属验证均已通过，复跑无费用 V3 capabilities 返回 `ok`；域名门禁已解除。之前在域名待验证时提交的 0.01 元请求未创建订单且无扣款，域名通过后尚未创建新的受控测试订单。
 - 当前 Lighthouse 公开 API 仍是 auth-only 部署；必须先部署完整 Studio API，并让 Caddy 只放行 Kaipay 通知所需的精确路径，确认 `https://api.heyirmy.com/api/payments/kaipay/notify/<orderId>` 可达后，才能验收小额支付、重复通知、错误签名、未知状态和主动查询。Webhook 延迟时，网站会调用受保护的 `POST /api/projects/:projectId/payment-status` 服务端查单兜底；该路由已在本地合同测试通过，但仍需随完整 Studio API 一起部署验收。
 - Kaipay V3 退款契约已实现；仍需部署操作员在明确费用上限内做一笔受控退款验收，证明 credential version 冻结、唯一 `refundRequestNo` 与人工审核分支符合商户实况。
 - ModelArk Seedream 单图非流式多参考输入和 Seedance 2.0 首尾帧、4–15 秒、480p、无音频/水印、异步权威查询契约已实现；生产链路暂不配置未接通的回调 URL/Secret，避免把回调成功误认为业务完成。仍需部署操作员在安全文件配置生产端点和额度后复核精确价格、并发/限流与真实媒体质量，自动化流程不索要真实 API key。
