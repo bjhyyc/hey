@@ -27,6 +27,13 @@ export type ProjectView = {
     canConfirm: boolean;
   };
   progress: Array<{ id?: string; label?: string; state?: string }>;
+  actions: Array<{
+    actionId: string;
+    label: string;
+    stateLabel: string;
+    regenerated: boolean;
+    complete: boolean;
+  }>;
   downloadReady: boolean;
   failed: boolean;
 };

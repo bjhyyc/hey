@@ -1751,6 +1751,28 @@ class PostgresPetPackStudioRepository {
     });
   }
 
+  /**
+   * Per-action progress for the waiting customer. Video generation is the long
+   * stretch of the run - minutes of provider work across seven actions - and a
+   * single "正在生成 7 个视频" step left the page frozen for all of it, which
+   * reads like a hang. Regenerations are surfaced too: seeing an action redone
+   * is what shows the quality gate working rather than something being broken.
+   */
+  async listActionProgress(runId) {
+    const safeRunId = requiredString(runId, "Production run ID");
+    return this._transaction(async (tx) => rows(await tx.query(
+      `SELECT action_id, state, retry_count
+         FROM generation_action
+        WHERE run_id = $1
+        ORDER BY action_id`,
+      [safeRunId]
+    )).map((row) => ({
+      actionId: row.action_id,
+      state: row.state,
+      retryCount: Number(row.retry_count || 0)
+    })));
+  }
+
   async getSourcePhotoRevision({ projectId, runId } = {}) {
     const safeProjectId = requiredString(projectId, "Project ID");
     const safeRunId = requiredString(runId, "Production run ID");

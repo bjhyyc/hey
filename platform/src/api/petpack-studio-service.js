@@ -335,7 +335,17 @@ class PetPackStudioService {
       });
       signedCandidates[view] = { ...candidate, view, previewUrl: preview.url };
     }
-    return createUserProjectView({ project: bundle.project, order: bundle.order, run, characterCandidates: signedCandidates, delivery });
+    const actions = run && typeof this.repository.listActionProgress === "function"
+      ? await this.repository.listActionProgress(run.id)
+      : [];
+    return createUserProjectView({
+      project: bundle.project,
+      order: bundle.order,
+      run,
+      characterCandidates: signedCandidates,
+      delivery,
+      actions
+    });
   }
 
   async createPetpackDownload({ actor, projectId }) {

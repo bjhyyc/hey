@@ -112,10 +112,11 @@ describe("checkout species contract", () => {
     expect(response.status).toBe(400);
   });
 
-  it("rejects a checkout that omits the species instead of silently assuming dog", async () => {
+  it("keeps taking orders from a web build that predates the species picker", async () => {
     const { species, ...withoutSpecies } = validBody;
     expect(species).toBe("cat");
-    const { response } = await callCheckout(withoutSpecies);
-    expect(response.status).toBe(400);
+    const { response, received } = await callCheckout(withoutSpecies);
+    expect(response.status).toBe(201);
+    expect(received[0].species).toBe("dog");
   });
 });

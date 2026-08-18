@@ -1,6 +1,6 @@
 const { createHash, timingSafeEqual } = require("node:crypto");
 const { readCookieValue } = require("../auth/phone-auth-service");
-const { PET_SPECIES } = require("../domain/action-catalog");
+const { DEFAULT_PET_SPECIES, PET_SPECIES } = require("../domain/action-catalog");
 
 const DEFAULT_MAX_JSON_BYTES = 1024 * 1024;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -233,10 +233,14 @@ function parsePhotoUploadGrantsBody(body) {
 }
 
 function parseCheckoutBody(body) {
-  assertExactKeys(body, { allowed: ["planCode", "displayName", "paymentMethod", "paymentChannel", "idempotencyKey", "species"] });
+  const required = ["planCode", "displayName", "paymentMethod", "paymentChannel", "idempotencyKey"];
+  assertExactKeys(body, { allowed: [...required, "species"], required });
   const paymentChannel = requireString(body.paymentChannel, { maxLength: 16 }).toUpperCase();
   if (!["ALIPAY", "WXPAY"].includes(paymentChannel)) throw badRequest("支付渠道无效");
-  const species = requireString(body.species, { maxLength: 8 });
+  // The web bundle deploys on its own schedule, so a checkout from a build that
+  // predates the species picker must still work rather than taking orders down.
+  // Absent means the historical behaviour: the dog prompt set.
+  const species = body.species === undefined ? DEFAULT_PET_SPECIES : requireString(body.species, { maxLength: 8 });
   if (!PET_SPECIES.includes(species)) throw badRequest("宠物种类无效");
   return {
     planCode: requireString(body.planCode, { maxLength: 128 }),
@@ -513,6 +517,13 @@ function serializeProjectView(value) {
       id: safeString(step?.id, { maxLength: 128 }),
       label: safeString(step?.label, { maxLength: 256 }),
       state: safeString(step?.state, { maxLength: 32 })
+    })) : [],
+    actions: Array.isArray(value?.actions) ? value.actions.map((action) => ({
+      actionId: safeString(action?.actionId, { maxLength: 64 }),
+      label: safeString(action?.label, { maxLength: 64 }),
+      stateLabel: safeString(action?.stateLabel, { maxLength: 32 }),
+      regenerated: safeBoolean(action?.regenerated),
+      complete: safeBoolean(action?.complete)
     })) : [],
     downloadReady: safeBoolean(value?.downloadReady),
     failed: safeBoolean(value?.failed)

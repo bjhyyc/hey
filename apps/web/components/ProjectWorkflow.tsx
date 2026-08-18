@@ -94,6 +94,15 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
     <ol className="progress-list">{view.progress.map((step, index) => <li className={`progress-${step.state || "pending"}`} key={step.id || index}>
       <i>{step.state === "completed" ? "✓" : index + 1}</i><span>{step.label || "处理中"}</span>
     </li>)}</ol>
+    {view.actions.length > 0 ? <div className="action-progress">
+      <p className="action-progress-heading">
+        七个动作　已完成 {view.actions.filter((action) => action.complete).length}/{view.actions.length}
+      </p>
+      <ul>{view.actions.map((action) => <li className={action.complete ? "is-complete" : undefined} key={action.actionId}>
+        <span>{action.label}</span>
+        <small>{action.regenerated && !action.complete ? `${action.stateLabel}（质量不达标，正在重做）` : action.stateLabel}</small>
+      </li>)}</ul>
+    </div> : null}
     {view.failed ? <p className="error-state">制作遇到问题，已转入内部处理，不需要重新付款。</p> : null}
     {view.downloadReady ? <Link className="primary-button inline-button" href={`/projects/${encodeURIComponent(projectId)}/delivery`}>下载 PetPack</Link> : <p className="form-message">页面会自动更新，关闭后稍后回来也不会丢失进度。</p>}
   </section>;

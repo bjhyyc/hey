@@ -63,7 +63,46 @@ function getProgressStepState(runState) {
   }));
 }
 
-function createUserProjectView({ project, order, run, characterCandidates, delivery } = {}) {
+// The seven actions in the order the customer sees them, with the wording used
+// everywhere else in the product rather than the internal action IDs.
+const ACTION_LABELS = Object.freeze({
+  idle: "待机",
+  sneeze: "打喷嚏",
+  roll: "打滚",
+  stretch: "伸懒腰",
+  "hover-attention": "抬头看你",
+  "sleep-transition": "入睡",
+  "sleep-loop": "睡眠循环"
+});
+const ACTION_ORDER = Object.freeze([
+  "idle", "sneeze", "roll", "stretch", "hover-attention", "sleep-transition", "sleep-loop"
+]);
+const ACTION_STATE_LABELS = Object.freeze({
+  queued: "排队中",
+  running: "生成中",
+  succeeded: "已生成",
+  processed: "抠像中",
+  qa_passed: "已完成",
+  failed: "未通过"
+});
+
+function createActionProgress(actions) {
+  const byId = new Map((Array.isArray(actions) ? actions : []).map((action) => [action.actionId, action]));
+  return ACTION_ORDER.filter((actionId) => byId.has(actionId)).map((actionId) => {
+    const action = byId.get(actionId);
+    return {
+      actionId,
+      label: ACTION_LABELS[actionId] || actionId,
+      state: action.state,
+      stateLabel: ACTION_STATE_LABELS[action.state] || action.state,
+      // A redo is worth showing: it is the quality gate working, not a fault.
+      regenerated: Number(action.retryCount || 0) > 0,
+      complete: action.state === "qa_passed"
+    };
+  });
+}
+
+function createUserProjectView({ project, order, run, characterCandidates, delivery, actions } = {}) {
   const paidAndConfirming = Boolean(order && order.status === "paid" && run && run.state === PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION);
   const candidateFor = (view) => {
     const candidate = characterCandidates && characterCandidates[view];
@@ -89,6 +128,7 @@ function createUserProjectView({ project, order, run, characterCandidates, deliv
       canConfirm: paidAndConfirming && Boolean(front && side)
     },
     progress: getProgressStepState(run && run.state),
+    actions: createActionProgress(actions),
     downloadReady: Boolean(delivery && delivery.status === "ready"),
     failed: Boolean(run && run.state === PRODUCTION_STATES.FAILED)
   };

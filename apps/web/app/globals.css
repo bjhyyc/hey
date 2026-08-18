@@ -504,6 +504,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .candidate-card footer span { display: grid; gap: 3px; }
 .candidate-card footer small { color: var(--muted); font-size: .7rem; }
 .candidate-card footer button { padding: 7px 10px; border: 0; border-radius: 10px; cursor: pointer; }
+.action-progress { margin: 16px 0 0; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.action-progress-heading { margin: 0 0 10px; color: var(--ink); font-size: .8rem; font-weight: 600; }
+.action-progress ul { margin: 0; padding: 0; display: grid; gap: 7px; list-style: none; }
+.action-progress li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .78rem; }
+.action-progress li.is-complete { color: var(--emerald); }
+.action-progress li small { color: inherit; opacity: .85; }
 .progress-list { margin: 0; padding: 0; display: grid; gap: 10px; list-style: none; }
 .progress-list li { padding: 12px; display: flex; align-items: center; gap: 12px; color: var(--muted); background: #efede9; border-radius: 13px; }
 .progress-list i { width: 28px; height: 28px; display: grid; place-items: center; color: var(--ink); background: white; border-radius: 50%; font-style: normal; font-size: .72rem; }
