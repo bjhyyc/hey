@@ -163,6 +163,10 @@
 
 - 2026-08-18：按用户选择的方案 A 完成死执行对账。先导出证据存档（`docs/operations/dead-execution-reconciliation-20260818.md` 与同 run 全部 100 条执行记录清单），再在事务内按精确 ID 删除唯一一条 dead 记录（`6f2421b5`，`petpack.validate-package`，错误码 `petpack_validation_failed`），删除条件同时校验 status 与 error_code；执行前后计数为 dead 1→0，同 run 保留 99 条成功执行，`production_run`（state=failed）与 `customer_order`（status=paid，1 分）历史完整未动。删除后 `check-operations-snapshot` 首次返回 `ok:true`、`alerts: []`、退出码 0：Outbox 全零、执行 99 成功/0 死亡/0 待对账、BullMQ 0 等待/0 失败，公网 `/readyz`=200。
 
+- 2026-08-18：Kaipay 首笔真实支付验收（进行中）：用户下单后连续定位并修复三道拦截。（1）销售准入开关 `PETPACK_GENERATION_SALES_ENABLED` 未设置，生产模式 fail-closed，checkout 直接 500；新发布目录 `/opt/petpack/releases/studio-api-sales-open-20260818/`（仅加一行环境项）重启 studio-api 后生效，原 r11 目录保留回滚。（2）商品套餐 `kaipay-alipay-live-smoke-1fen-20260817` 为 `enabled=false`（Codex 上次冒烟后刻意关闭），`WHERE enabled=true` 查不到行导致事务内抛错；经用户确认后置 true（验收后改回）。（3）网站上传照片必失败：确认接口 `assertExactKeys` 只接受 `{sha256, byteSize}`，前端把含 `contentType` 的授权元数据原样转发，每张照片确认都 400；修复 `PhotoUploadWorkflow.tsx` 只传两字段并新增契约测试（提交 `e5b0135`），待用户部署 CloudBase 网站包 r9。
+- 2026-08-18：用户 0.01 元支付宝付款成功：订单 `17da889e` 于 13:44:54 创建、13:45:19 经主动查单转 paid（下单后 25 秒），项目停在 `awaiting_photos` 等网站修复。全链只读契约审计（请求体+响应体逐接口比对线上镜像）除已修项外全部匹配。
+- 2026-08-18：根除 Kaipay Webhook 从未成功的存量缺陷：全库 `payment_notification_received` 计数为 0，两笔 paid 订单均靠主动查单兜底。13:45:24 真实回调 400 的根因是 `payment_event_provider_event_id_check` 约束正则用了 `{1,256}`，超出 PostgreSQL 重复计数上限 255，且该列仅回调事件非空——平时全绿、回调必炸。新迁移 `017_payment_event_provider_event_id_bound.sql` 改用 `char_length BETWEEN 1 AND 256` 表达同一规则，服务器单事务应用、真实同款数据插入-回滚探针通过、`schema_migration` 记账（SHA `26febc70…`）。等待凯付重试回调或下一笔支付验证。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
