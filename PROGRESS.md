@@ -152,6 +152,8 @@
 - 2026-08-18：打包与交付验证完成：`buildPetpack` 产出 `hey-border-collie-v2prompt-20260818.petpack`（3,023,829 字节，SHA-256 `c043483a50a7940da432960d149e73dd58e93f41cb80a966e7a3b43b036dcd77`）；生产级 `PetpackDeliveryValidator`（pinned 仓库干净树上游导入 + 本机真实 Electron 31.7.7 交互 runner）验证 ok=true：原版导入通过，七项真实交互检查全过（startupStretchThenIdle / singleClickSneeze / doubleClickRollWithoutSneeze / rightClickStretchAndWake / idleTwentyTwoSecondsThenSleepLoop / hoverTwoSecondsOnceWithCooldown / noMovementOrProps）。完整报告 `.tmp/production-qa-calibration/calibration-2026-08-18T0957/report.json`；成品复制至 `final-delivery/`。全量回归 108 个测试文件、1089 项通过、2 项按设计跳过。
 - 2026-08-18：遗留事项：线上 r4 Worker 为批前校准版本，需按当前工作树重建 r5 镜像、镜像内重出 manifest SHA、复用既定 tar+SHA 流程替换（机制已验证）；`execution_dead=1` 历史死执行待对账；正式 registry 化列入 P1。
 
+- 2026-08-18：P0 完成里程碑代码提交为 `a3579d1`。增量 bundle：`C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-p0-complete-a3579d1.bundle`，372,864 字节，前置提交 `ff01e22ee47ca5a9a0641e33e8d8682cec04e50a`，`git bundle verify` 通过，SHA-256 为 `04625A07A867B79F6BB071C64DC37734B3EB2E9D2628B5D2F246E300101F439C`。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
