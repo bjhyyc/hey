@@ -16,6 +16,7 @@ const { PetpackValidationError, isProductionAssuredValidator } = require("../pet
 const { isPostgresInfrastructureError } = require("../persistence/postgres-database");
 const { ACTION_QA_CONTRACT_VERSION } = require("../qa/action-quality-gate");
 const { validateChromaSubjectInspection } = require("../qa/chroma-subject-integrity");
+const { resolveActionMotionPolicy } = require("../qa/action-quality-gate");
 const { validateDecodedEndpointInspection } = require("../qa/frame-continuity-metrics");
 const { MASTER_IMAGE_QA_CONTRACT_VERSION } = require("../qa/master-image-quality-gate");
 const {
@@ -71,7 +72,7 @@ function assertRelationalProvenanceBinding({
  * evidence class and hashes; the relational comparisons bind those hashes to
  * the currently selected database assets and processor rows.
  */
-function assertProductionMediaSnapshotEvidence({ masterEvidence, actions } = {}) {
+function assertProductionMediaSnapshotEvidence({ masterEvidence, actions, policy = null } = {}) {
   const masters = isRecord(masterEvidence) ? masterEvidence : {};
   const actionList = Array.isArray(actions) ? actions : [];
   const actionRecords = new Map();
@@ -161,9 +162,20 @@ function assertProductionMediaSnapshotEvidence({ masterEvidence, actions } = {})
       errors.push(`${path}.chromaIntegrity must be passing`);
     }
     const chromaEvidence = report?.evidence?.chromaIntegrity;
+    // The action gate accepted this evidence under the action's calibrated
+    // motion envelope; re-validating it here under the default ceiling would
+    // reject every fluffy-fur pack that legitimately passed. The same
+    // per-action ceiling applies at both gates.
+    const actionMotion = policy ? resolveActionMotionPolicy(policy, actionId, { production: true }) : null;
+    if (actionMotion && !actionMotion.ok) {
+      errors.push(`${path} has no production motion envelope for chroma re-validation`);
+    }
     const chroma = validateChromaSubjectInspection(chromaEvidence, {
       production: true,
-      expectedFrameCount: sampledFrameCount
+      expectedFrameCount: sampledFrameCount,
+      ...(actionMotion && actionMotion.ok && actionMotion.chromaThresholds
+        ? { thresholds: actionMotion.chromaThresholds }
+        : {})
     });
     appendDecisionErrors(errors, `${path}.evidence.chromaIntegrity`, chroma);
     if (!isDeepStrictEqual(report?.chromaIntegrity?.evidence, chromaEvidence)) {
@@ -282,6 +294,7 @@ class PetpackPipelineWorker {
     leaseSeconds = 180,
     maxConcurrentHeavyJobs = 1,
     packageMatteMode = "green-screen",
+    qaPolicyProvider = null,
     productionMode = process.env.PETPACK_PLATFORM_MODE === "production",
     deliveryRetentionDays = null,
     logger = console
@@ -304,8 +317,10 @@ class PetpackPipelineWorker {
       throw new Error("PetPack pipeline lease seconds must be between 30 and 3600");
     }
     this.productionMode = Boolean(productionMode);
+    this.qaPolicyProvider = qaPolicyProvider;
     if (this.productionMode) {
       requireMethod(repository, "failMediaSnapshotEvidence", "Production PetPack worker repository");
+      requireMethod(qaPolicyProvider, "getPolicy", "Production PetPack QA policy provider");
     }
     if (deliveryRetentionDays !== null && (!Number.isInteger(deliveryRetentionDays) || deliveryRetentionDays < 1 || deliveryRetentionDays > 3650)) {
       throw new Error("Delivery retention days must be between 1 and 3650");
@@ -471,7 +486,8 @@ class PetpackPipelineWorker {
       const productionEvidence = this.productionMode
         ? assertProductionMediaSnapshotEvidence({
             masterEvidence: claim.masterEvidence,
-            actions: claim.actions
+            actions: claim.actions,
+            policy: await this.qaPolicyProvider.getPolicy({ runId: claim.runId })
           })
         : null;
       const snapshot = createPackageInputRevision({

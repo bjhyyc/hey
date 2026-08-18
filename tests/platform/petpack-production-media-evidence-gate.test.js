@@ -282,11 +282,21 @@ function queueJob(id = "media-gate-job") {
   };
 }
 
+// Generous per-action envelopes so the parity re-validation at the package
+// gate exercises the wiring without becoming the subject under test here.
+const TEST_ACTION_MOTION_ENVELOPES = Object.fromEntries(REQUIRED_ACTION_IDS.map((actionId) => [
+  actionId,
+  { maxGroundDeltaPx: 64, maxCanvasScaleDelta: 0.8, maxRelativeScaleJitter: 1.4, minAdjacentMaskIoU: 0.5, maxRowSpanHoleRatio: 0.3, minEdgeMarginPx: 0 }
+]));
+
 function createBareWorker(repository, { productionMode }) {
   const worker = Object.create(PetpackPipelineWorker.prototype);
   Object.assign(worker, {
     repository,
     productionMode,
+    qaPolicyProvider: {
+      getPolicy: vi.fn(async () => ({ actionMotionEnvelopes: TEST_ACTION_MOTION_ENVELOPES }))
+    },
     workerId: "petpack-worker-test",
     leaseSeconds: 180,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }

@@ -501,6 +501,7 @@ async function createStudioWorkerRuntime({
       leaseSeconds: config.petpackLeaseSeconds,
       maxConcurrentHeavyJobs: config.heavyJobConcurrency,
       packageMatteMode: components.packageMatteMode,
+      qaPolicyProvider: components.qaPolicyProvider,
       productionMode: config.productionEvidence,
       deliveryRetentionDays: config.deliveryRetentionDays,
       logger
