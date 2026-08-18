@@ -33,7 +33,12 @@ export function PhotoUploadWorkflow({ projectId }: { projectId: string }) {
       await Promise.all(grants.map(async (grant, index) => {
         const response = await fetch(grant.uploadUrl, { method: "PUT", headers: { "content-type": selected[index].type }, body: selected[index] });
         if (!response.ok) throw new Error(`第 ${index + 1} 张照片上传失败`);
-        await studioBrowserApi.confirmPhoto(projectId, grant.ordinal, metadata[index]);
+        // The confirmation endpoint accepts exactly {sha256, byteSize}; contentType
+        // belongs to the upload grant only, and sending it is rejected outright.
+        await studioBrowserApi.confirmPhoto(projectId, grant.ordinal, {
+          sha256: metadata[index].sha256,
+          byteSize: metadata[index].byteSize,
+        });
       }));
       await clearHomePhotoDraft().catch(() => undefined);
       window.location.assign(`/projects/${encodeURIComponent(projectId)}/character`);
