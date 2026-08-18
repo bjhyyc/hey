@@ -1,5 +1,6 @@
 const { createHash, timingSafeEqual } = require("node:crypto");
 const { readCookieValue } = require("../auth/phone-auth-service");
+const { PET_SPECIES } = require("../domain/action-catalog");
 
 const DEFAULT_MAX_JSON_BYTES = 1024 * 1024;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -232,15 +233,18 @@ function parsePhotoUploadGrantsBody(body) {
 }
 
 function parseCheckoutBody(body) {
-  assertExactKeys(body, { allowed: ["planCode", "displayName", "paymentMethod", "paymentChannel", "idempotencyKey"] });
+  assertExactKeys(body, { allowed: ["planCode", "displayName", "paymentMethod", "paymentChannel", "idempotencyKey", "species"] });
   const paymentChannel = requireString(body.paymentChannel, { maxLength: 16 }).toUpperCase();
   if (!["ALIPAY", "WXPAY"].includes(paymentChannel)) throw badRequest("支付渠道无效");
+  const species = requireString(body.species, { maxLength: 8 });
+  if (!PET_SPECIES.includes(species)) throw badRequest("宠物种类无效");
   return {
     planCode: requireString(body.planCode, { maxLength: 128 }),
     displayName: requireString(body.displayName, { maxLength: 120 }),
     paymentMethod: requireString(body.paymentMethod, { maxLength: 16 }),
     paymentChannel,
-    idempotencyKey: requireString(body.idempotencyKey, { maxLength: 256 })
+    idempotencyKey: requireString(body.idempotencyKey, { maxLength: 256 }),
+    species
   };
 }
 

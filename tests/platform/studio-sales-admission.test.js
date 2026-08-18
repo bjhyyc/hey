@@ -86,7 +86,8 @@ describe("Studio sales admission", () => {
         displayName: "Test pet",
         paymentMethod: "KAIPAY",
         paymentChannel: "ALIPAY",
-        idempotencyKey: "checkout-disabled-2"
+        idempotencyKey: "checkout-disabled-2",
+        species: "dog"
       }
     });
 

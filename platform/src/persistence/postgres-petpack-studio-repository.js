@@ -2,7 +2,13 @@ const crypto = require("node:crypto");
 
 const { PAYMENT_METHODS, PAYMENT_STATES } = require("../domain/payment-state-machine");
 const { PRODUCTION_STATES } = require("../domain/production-state-machine");
-const { REQUIRED_ACTION_IDS, VIDEO_CONSTRAINTS_VERSION, assertActionId } = require("../domain/action-catalog");
+const {
+  DEFAULT_PET_SPECIES,
+  REQUIRED_ACTION_IDS,
+  VIDEO_CONSTRAINTS_VERSION,
+  assertActionId,
+  assertPetSpecies
+} = require("../domain/action-catalog");
 const { assertPromptVersionShape } = require("../domain/prompt-lifecycle");
 const {
   assertImagePromptKind,
@@ -738,14 +744,15 @@ class PostgresPetPackStudioRepository {
    * transaction-scoped advisory lock provide the durable idempotency fence
    * without storing the caller's raw idempotency key.
    */
-  async createProjectOrder({ userId, planCode, displayName, paymentMethod, idempotencyKey, amountFen } = {}) {
+  async createProjectOrder({ userId, planCode, displayName, paymentMethod, idempotencyKey, species, amountFen } = {}) {
     if (amountFen !== undefined) throw new Error("Order amount must come from the server-side product plan");
     const input = {
       userId: requiredString(userId, "User ID"),
       planCode: requiredString(planCode, "Plan code"),
       displayName: requiredString(displayName, "Pet display name"),
       paymentMethod: assertPaymentMethod(paymentMethod),
-      idempotencyKey: requiredString(idempotencyKey, "Checkout idempotency key")
+      idempotencyKey: requiredString(idempotencyKey, "Checkout idempotency key"),
+      species: assertPetSpecies(species === undefined ? DEFAULT_PET_SPECIES : species)
     };
     const idempotencyDigest = checkoutIdempotencyDigest(input);
     return this._transaction(async (tx) => {
@@ -781,10 +788,10 @@ class PostgresPetPackStudioRepository {
       const projectId = this.idFactory();
       const orderId = this.idFactory();
       const project = oneRow(await tx.query(
-        `INSERT INTO pet_project (id, user_id, display_name, state)
-         VALUES ($1, $2, $3, 'awaiting_payment')
-         RETURNING id, user_id, display_name, state, created_at, updated_at`,
-        [projectId, input.userId, input.displayName]
+        `INSERT INTO pet_project (id, user_id, display_name, state, species)
+         VALUES ($1, $2, $3, 'awaiting_payment', $4)
+         RETURNING id, user_id, display_name, state, species, created_at, updated_at`,
+        [projectId, input.userId, input.displayName, input.species]
       ), "Pet project could not be created");
       const order = oneRow(await tx.query(
         `INSERT INTO customer_order
@@ -854,7 +861,7 @@ class PostgresPetPackStudioRepository {
                 o.created_at AS order_created_at, o.updated_at AS order_updated_at,
                 run.id AS run_id, run.order_id AS run_order_id,
                 run.character_revision_id, run.state AS run_state,
-                run.model_registry_version, run.front_generation_attempts,
+                run.model_registry_version, run.species, run.front_generation_attempts,
                 run.side_generation_attempts,
                 run.front_user_regenerations_used, run.side_user_regenerations_used,
                 run.front_qa_retries, run.side_qa_retries,
@@ -1121,7 +1128,10 @@ class PostgresPetPackStudioRepository {
     });
   }
 
-  async listPublishedMetadata() {
+  // A run freezes its species, and each action publishes one prompt per
+  // species, so the caller must say which set it is generating against.
+  async listPublishedMetadata({ species = DEFAULT_PET_SPECIES } = {}) {
+    const safeSpecies = assertPetSpecies(species);
     return this._transaction(async (tx) => rows(await tx.query(
       `SELECT version.id, template.action_id, version.title, version.prompt,
               version.negative_prompt, version.model, version.resolution,
@@ -1138,7 +1148,8 @@ class PostgresPetPackStudioRepository {
           AND version.published_at IS NOT NULL
           AND version.disabled_at IS NULL
         WHERE template.disabled_at IS NULL
-        ORDER BY template.action_id`)
+          AND template.species = $1
+        ORDER BY template.action_id`, [safeSpecies])
     ).map(mapPromptVersion));
   }
 
@@ -1725,7 +1736,7 @@ class PostgresPetPackStudioRepository {
     const safeProjectId = requiredString(projectId, "Project ID");
     return this._transaction(async (tx) => {
       const result = rows(await tx.query(
-        `SELECT id, project_id, order_id, character_revision_id, state, model_registry_version,
+        `SELECT id, project_id, order_id, character_revision_id, state, model_registry_version, species,
                 front_generation_attempts, side_generation_attempts,
                 front_user_regenerations_used, side_user_regenerations_used,
                 front_qa_retries, side_qa_retries, sleep_generation_attempts,
@@ -2063,9 +2074,13 @@ class PostgresPetPackStudioRepository {
       [order.id]
     ));
     const productionRunId = runs.length === 1 ? runs[0].id : this.idFactory();
+    // The run freezes the species chosen at checkout, so it has to travel with
+    // the paid order that starts production.
+    const project = rows(await tx.query("SELECT species FROM pet_project WHERE id = $1", [projectId]));
     return {
       ...order,
       projectId,
+      species: project.length === 1 ? project[0].species : DEFAULT_PET_SPECIES,
       productionRunId,
       productionRunNeeded: runs.length === 0
     };

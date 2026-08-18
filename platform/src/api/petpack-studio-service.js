@@ -113,7 +113,7 @@ class PetPackStudioService {
     this.logger = logger;
   }
 
-  async createCheckout({ actor, planCode, displayName, paymentMethod, paymentChannel, idempotencyKey }) {
+  async createCheckout({ actor, planCode, displayName, paymentMethod, paymentChannel, idempotencyKey, species }) {
     const user = requireActor(actor);
     if (!this.checkoutEnabled) {
       const error = new Error("New PetPack orders are temporarily disabled");
@@ -125,7 +125,8 @@ class PetPackStudioService {
       planCode: requiredString(planCode, "Plan code"),
       displayName: requiredString(displayName, "Pet display name"),
       paymentMethod: assertPaymentMethod(paymentMethod),
-      idempotencyKey: requiredString(idempotencyKey, "Checkout idempotency key")
+      idempotencyKey: requiredString(idempotencyKey, "Checkout idempotency key"),
+      species
     });
     const checkout = await this.paymentProvider.createCheckout({
       platformOrderId: order.id,
@@ -166,7 +167,12 @@ class PetPackStudioService {
     }
     const order = await this.repository.markOrderPaymentState({ platformOrderId: bundle.order.id, reconciliation });
     if (reconciliation.state === PAYMENT_STATES.PAID && order.productionRunNeeded) {
-      await this.workflow.startPaidOrder({ order, projectId: order.projectId, runId: order.productionRunId });
+      await this.workflow.startPaidOrder({
+        order,
+        projectId: order.projectId,
+        runId: order.productionRunId,
+        species: order.species
+      });
     }
     return {
       order: { id: order.id, status: order.status },

@@ -7,6 +7,8 @@ import {
   kaipayQrPresentation,
   requireHttpsPaymentUrl,
 } from "@/lib/kaipay-payment-ui";
+import { loadHomePhotoDraft } from "@/lib/home-photo-draft";
+import type { PetSpecies } from "@/lib/photo-slots";
 import {
   studioBrowserApi,
   type KaipayNextAction,
@@ -22,6 +24,16 @@ export function NewProjectForm() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
+  // The home page already asked whether this is a cat or a dog and kept the
+  // answer in the draft; before this it never reached the server, so every run
+  // generated against the dog prompt set.
+  const [species, setSpecies] = useState<PetSpecies>("dog");
+
+  useEffect(() => {
+    loadHomePhotoDraft()
+      .then((draft) => draft && setSpecies(draft.species))
+      .catch(() => undefined);
+  }, []);
   const showWxpay = process.env.NEXT_PUBLIC_KAIPAY_WXPAY_ENABLED === "true";
   const planCode = process.env.NEXT_PUBLIC_PETPACK_PLAN_CODE || "petpack-seven-action-v1";
 
@@ -100,6 +112,7 @@ export function NewProjectForm() {
         paymentMethod: "KAIPAY",
         paymentChannel,
         idempotencyKey: crypto.randomUUID(),
+        species,
       });
       await handleNextAction(result.checkout.nextAction, result.project.id, paymentChannel);
     } catch (error) {

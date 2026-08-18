@@ -1,4 +1,4 @@
-const { REQUIRED_ACTION_IDS, assertPublishedPromptSet } = require("./action-catalog");
+const { DEFAULT_PET_SPECIES, REQUIRED_ACTION_IDS, assertPetSpecies, assertPublishedPromptSet } = require("./action-catalog");
 
 const ORDER_STATES = Object.freeze({
   DRAFT: "draft",
@@ -46,7 +46,7 @@ function canStartProduction(order) {
   return Boolean(order && order.status === ORDER_STATES.PAID && order.id);
 }
 
-function startProductionRun({ order, projectId, runId, modelRegistryVersion }) {
+function startProductionRun({ order, projectId, runId, modelRegistryVersion, species }) {
   if (!canStartProduction(order)) {
     throw new Error("Only a paid order can start PetPack production");
   }
@@ -61,6 +61,9 @@ function startProductionRun({ order, projectId, runId, modelRegistryVersion }) {
     projectId,
     orderId: order.id,
     modelRegistryVersion: modelRegistryVersion.trim(),
+    // Frozen for the life of the run alongside the model registry: the prompt
+    // set is chosen by species, and a run must not switch sets midway.
+    species: assertPetSpecies(species === undefined ? DEFAULT_PET_SPECIES : species),
     characterRevisionId: null,
     state: PRODUCTION_STATES.AWAITING_PHOTOS,
     promptSnapshot: null,

@@ -166,12 +166,13 @@ class ProductionWorkflow {
     return this._commit({ previousRun, run, jobs: job ? [job] : [] });
   }
 
-  async startPaidOrder({ order, projectId, runId }) {
+  async startPaidOrder({ order, projectId, runId, species }) {
     const run = startProductionRun({
       order,
       projectId,
       runId,
-      modelRegistryVersion: this.modelRegistry.version
+      modelRegistryVersion: this.modelRegistry.version,
+      species
     });
     const job = createWorkflowJob({
       name: JOB_NAMES.AWAIT_PHOTOS,
@@ -332,7 +333,7 @@ class ProductionWorkflow {
     if (run.modelRegistryVersion !== this.modelRegistry.version) {
       throw new Error("The production run's frozen model registry is not loaded; refusing to switch models mid-run");
     }
-    const promptVersions = await this.promptStore.listPublishedMetadata();
+    const promptVersions = await this.promptStore.listPublishedMetadata({ species: run.species });
     const videoRun = transitionProductionRun(run, "promptsVerified", { promptVersions });
     const byAction = new Map(promptVersions.map((version) => [version.actionId, version]));
     const videoReference = createModelReference(this.modelRegistry, "video");

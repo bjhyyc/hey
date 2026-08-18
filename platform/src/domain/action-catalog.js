@@ -40,6 +40,20 @@ function assertActionId(actionId) {
   }
 }
 
+// Each action carries one published prompt per species. The wording differs by
+// a single word today, but idle is the identity anchor as well as the
+// most-played clip, so telling the model a cat is a dog there costs identity
+// fidelity across the whole pack.
+const PET_SPECIES = Object.freeze(["dog", "cat"]);
+const DEFAULT_PET_SPECIES = "dog";
+
+function assertPetSpecies(species) {
+  if (!PET_SPECIES.includes(species)) {
+    throw new Error(`Unsupported pet species: ${species}`);
+  }
+  return species;
+}
+
 function toStudioActionKey(actionId) {
   assertActionId(actionId);
   return ACTION_BY_ID[actionId].studioActionKey;
@@ -129,9 +143,12 @@ module.exports = {
   ACTION_BY_STUDIO_KEY,
   ACTION_DEFINITIONS,
   ACTION_ENDPOINTS,
+  DEFAULT_PET_SPECIES,
+  PET_SPECIES,
   REQUIRED_ACTION_IDS,
   VIDEO_CONSTRAINTS_VERSION,
   assertActionId,
+  assertPetSpecies,
   assertPublishedPromptSet,
   createVideoJobSnapshot,
   toActionId,

@@ -1,3 +1,4 @@
+import type { PetSpecies } from "@/lib/photo-slots";
 import { browserStudioRequest } from "./studio-gateway-core";
 
 export type ProjectSummary = {
@@ -58,7 +59,7 @@ export const studioBrowserApi = {
       ["projects", projectId, "payment-status"],
       { method: "POST", body: JSON.stringify({}) },
     ),
-  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; paymentChannel: KaipayPaymentChannel; idempotencyKey: string }) =>
+  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; paymentChannel: KaipayPaymentChannel; idempotencyKey: string; species: PetSpecies }) =>
     browserStudioRequest<{
       project: { id: string };
       order: { id: string; status: string; amountFen?: number };

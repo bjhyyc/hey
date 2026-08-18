@@ -84,6 +84,7 @@ function mapRunRow(row, fallback) {
     projectId: row.project_id || fallback.projectId,
     orderId: row.order_id || fallback.orderId,
     modelRegistryVersion: row.model_registry_version || fallback.modelRegistryVersion,
+    species: row.species || fallback.species,
     characterRevisionId: row.character_revision_id || fallback.characterRevisionId || null,
     state: row.state,
     version: Number(row.version),
@@ -200,10 +201,10 @@ class PostgresTransactionalWorkflowStore {
         (id, project_id, order_id, state, model_registry_version, prompt_snapshot,
          front_generation_attempts, side_generation_attempts,
          front_user_regenerations_used, side_user_regenerations_used,
-         front_qa_retries, side_qa_retries, sleep_generation_attempts, failure_code, version)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, 0)
+         front_qa_retries, side_qa_retries, sleep_generation_attempts, failure_code, species, version)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0)
        ON CONFLICT (order_id) DO NOTHING
-       RETURNING id, project_id, order_id, character_revision_id, state, model_registry_version, version, updated_at`,
+       RETURNING id, project_id, order_id, character_revision_id, state, model_registry_version, species, version, updated_at`,
       [
         requireId(run.id, "Run ID"),
         requireId(run.projectId, "Project ID"),
@@ -218,12 +219,13 @@ class PostgresTransactionalWorkflowStore {
         Number(run.frontQaRetries || 0),
         Number(run.sideQaRetries || 0),
         Number(run.sleepGenerationAttempts || 0),
-        run.failureCode || null
+        run.failureCode || null,
+        requireId(run.species, "Run species")
       ]
     );
     if (inserted.rows.length > 0) return { run: mapRunRow(inserted.rows[0], run), created: true };
     const existing = await tx.query(
-      "SELECT id, project_id, order_id, character_revision_id, state, model_registry_version, version, updated_at FROM production_run WHERE order_id = $1 FOR UPDATE",
+      "SELECT id, project_id, order_id, character_revision_id, state, model_registry_version, species, version, updated_at FROM production_run WHERE order_id = $1 FOR UPDATE",
       [run.orderId]
     );
     if (existing.rows.length !== 1) throw new Error("Unable to recover an idempotent production run");
