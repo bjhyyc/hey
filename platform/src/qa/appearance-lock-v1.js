@@ -4,6 +4,22 @@ const REQUIRED_FRONT_MASTER_REGIONS = Object.freeze(["head", "torso", "legs"]);
 const REQUIRED_SIDE_MASTER_REGIONS = Object.freeze(["head", "torso", "legs"]);
 const REQUIRED_SLEEP_MASTER_REGIONS = Object.freeze(["head", "torso"]);
 const REQUIRED_VIDEO_REGIONS = Object.freeze(["head", "torso"]);
+/**
+ * Left/right marking placement is decided by scoring the candidate's image
+ * halves against a reference's halves straight, then mirrored, and rejecting
+ * the candidate when the mirrored pairing wins. That comparison only means
+ * something when the candidate and the reference show the same aspect of the
+ * animal. A front master is bound to front source photos, so a coat the model
+ * mirrored is caught. A side or sleeping master is bound to references in a
+ * different projection - the approved front master, or standing photos - where
+ * one flank fills the silhouette and the two halves no longer map to the same
+ * sides of the animal. There the verdict is near arbitrary, and it rejects
+ * asymmetrically marked pets (calico cats, tortoiseshells, patchy mixed breeds)
+ * systematically rather than occasionally. Enforce it where it is decidable and
+ * record it everywhere else; the coat colour, marking topology, face identity
+ * and species gates still apply to every kind.
+ */
+const LEFT_RIGHT_ENFORCED_MASTER_KINDS = Object.freeze(["front"]);
 
 function cloneEvidence(value) {
   return value && typeof value === "object" ? JSON.parse(JSON.stringify(value)) : null;
@@ -61,8 +77,15 @@ function checkScores({ face, color, markings }, thresholds, prefix, errors, { re
  */
 function validateMasterAppearanceInspection(inspection, { kind, sourceReferenceCount, policy } = {}) {
   const errors = [];
+  const warnings = [];
+  const leftRightEnforced = LEFT_RIGHT_ENFORCED_MASTER_KINDS.includes(kind);
+  const requireLeftRight = (value, label) => {
+    if (value === true) return;
+    if (leftRightEnforced) errors.push(`${label} must be true`);
+    else warnings.push(`${label} is not decidable against a cross-view reference`);
+  };
   if (!inspection || typeof inspection !== "object" || Array.isArray(inspection)) {
-    return { ok: false, errors: ["Master appearance inspection is required"], evidence: null };
+    return { ok: false, errors: ["Master appearance inspection is required"], warnings, evidence: null };
   }
   if (inspection.contractVersion !== APPEARANCE_LOCK_CONTRACT_VERSION) {
     errors.push(`Master appearance contractVersion must be ${APPEARANCE_LOCK_CONTRACT_VERSION}`);
@@ -81,7 +104,7 @@ function validateMasterAppearanceInspection(inspection, { kind, sourceReferenceC
   requireTrue(inspection.fullReferenceCoverage, "Master appearance fullReferenceCoverage", errors);
   requireTrue(inspection.occlusionAware, "Master appearance occlusionAware", errors);
   requireTrue(inspection.leftRightAware, "Master appearance leftRightAware", errors);
-  requireTrue(inspection.asymmetryPreserved, "Master appearance asymmetryPreserved", errors);
+  requireLeftRight(inspection.asymmetryPreserved, "Master appearance asymmetryPreserved");
   requireTrue(inspection.speciesAndBreedConsistent, "Master appearance speciesAndBreedConsistent", errors);
   if (integer(inspection.unresolvedConflictCount, "Master appearance unresolvedConflictCount", errors) !== 0) {
     errors.push("Master appearance has unresolved source-reference conflicts");
@@ -122,11 +145,11 @@ function validateMasterAppearanceInspection(inspection, { kind, sourceReferenceC
           color: evidence.coatColorScore,
           markings: evidence.markingTopologyScore
         }, thresholds, `Master appearance region ${region}`, errors, { requireFace: region === "head" });
-        requireTrue(evidence.leftRightPlacementPreserved, `Master appearance region ${region}.leftRightPlacementPreserved`, errors);
+        requireLeftRight(evidence.leftRightPlacementPreserved, `Master appearance region ${region}.leftRightPlacementPreserved`);
       }
     }
   }
-  return { ok: errors.length === 0, errors, evidence: cloneEvidence(inspection) };
+  return { ok: errors.length === 0, errors, warnings, evidence: cloneEvidence(inspection) };
 }
 
 /**

@@ -79,6 +79,7 @@ function validateMasterImage({
   const normalizedKind = requireKind(kind);
   const resolvedPolicy = requireQaPolicy(policy, { production });
   const errors = [];
+  const warnings = [];
   const referenceCount = Number(sourceReferenceCount);
   const validReferenceCount = normalizedKind === "front"
     ? referenceCount >= 3 && referenceCount <= 4
@@ -114,6 +115,7 @@ function validateMasterImage({
     policy: resolvedPolicy
   });
   if (!appearance.ok) errors.push(...appearance.errors);
+  if (Array.isArray(appearance.warnings)) warnings.push(...appearance.warnings);
 
   let immutableReferenceMetrics = null;
   try {
@@ -133,6 +135,7 @@ function validateMasterImage({
   return {
     ok: errors.length === 0,
     errors,
+    warnings,
     contractVersion: MASTER_IMAGE_QA_CONTRACT_VERSION,
     canvasId: CHARACTER_CANVAS_V1.id,
     kind: normalizedKind,

@@ -32,14 +32,29 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
     } catch (error) { setMessage(error instanceof Error ? error.message : "无法读取项目"); }
   }, [projectId]);
 
+  // The character page also waits on the worker: it opens while the masters are
+  // still generating, so it has to refresh until both candidates arrive or the
+  // run gives up. Without this it showed "正在生成 正面" forever, including
+  // after the run had already failed.
+  const settled = Boolean(view && (view.failed
+    || (mode === "character" && view.characterCandidates.front && view.characterCandidates.side)));
+
+  useEffect(() => { void load(); }, [load]);
+
   useEffect(() => {
-    void load();
-    if (mode !== "progress") return;
+    if (mode === "delivery" || settled) return;
     const timer = window.setInterval(() => void load(), 5_000);
     return () => window.clearInterval(timer);
-  }, [load, mode]);
+  }, [load, mode, settled]);
 
   if (!view) return <p className="empty-state">{message}</p>;
+  if (view.failed) {
+    return <section className="workflow-card">
+      <p><strong>制作没有完成</strong></p>
+      <p className="form-message">这个项目在生成阶段中断了，照片和订单都已保留。请联系我们处理，不要重复下单。</p>
+      <Link className="secondary-link" href="/projects">返回项目列表</Link>
+    </section>;
+  }
   if (mode === "character") {
     const { front, side, canConfirm } = view.characterCandidates;
     return <section className="workflow-card">
