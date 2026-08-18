@@ -98,16 +98,33 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
   return <section className="workflow-card">
     <ol className="progress-list">{view.progress.map((step, index) => <li className={`progress-${step.state || "pending"}`} key={step.id || index}>
       <i>{step.state === "completed" ? "✓" : index + 1}</i><span>{step.label || "处理中"}</span>
+      {step.state === "active" ? <em aria-hidden="true" className="progress-live" /> : null}
     </li>)}</ol>
-    {view.actions.length > 0 ? <div className="action-progress">
-      <p className="action-progress-heading">
-        七个动作　已完成 {view.actions.filter((action) => action.complete).length}/{view.actions.length}
-      </p>
-      <ul>{view.actions.map((action) => <li className={action.complete ? "is-complete" : undefined} key={action.actionId}>
-        <span>{action.label}</span>
-        <small>{action.regenerated && !action.complete ? `${action.stateLabel}（质量不达标，正在重做）` : action.stateLabel}</small>
-      </li>)}</ul>
-    </div> : null}
+    {view.actions.length > 0 ? (() => {
+      const doneCount = view.actions.filter((action) => action.complete).length;
+      // The API sends fixed Chinese state labels; colour and motion key off
+      // them so a working step reads as alive, a finished one as settled and a
+      // redo as attention-worthy rather than broken.
+      const stateTone = (action: ProjectView["actions"][number]) => {
+        if (action.complete) return "done";
+        if (action.stateLabel.includes("生成中") || action.stateLabel.includes("抠像中")) return "working";
+        if (action.stateLabel.includes("未通过")) return "redo";
+        return "queued";
+      };
+      return <div className="action-progress">
+        <div className="action-progress-heading">
+          <p>七个动作　<strong>{doneCount}/{view.actions.length}</strong></p>
+          <div aria-hidden="true" className="action-progress-bar"><i style={{ width: `${Math.round((doneCount / view.actions.length) * 100)}%` }} /></div>
+        </div>
+        <ul>{view.actions.map((action) => {
+          const tone = stateTone(action);
+          return <li className={`tone-${tone}`} key={action.actionId}>
+            <span><i aria-hidden="true" className={`action-dot dot-${tone}`} />{action.label}</span>
+            <small>{action.regenerated && !action.complete ? `${action.stateLabel}（质量不达标，正在重做）` : action.stateLabel}</small>
+          </li>;
+        })}</ul>
+      </div>;
+    })() : null}
     {view.failed ? <p className="error-state">制作遇到问题，已转入内部处理，不需要重新付款。</p> : null}
     {view.downloadReady ? <Link className="primary-button inline-button" href={`/projects/${encodeURIComponent(projectId)}/delivery`}>下载 PetPack</Link> : <p className="form-message">页面会自动更新，关闭后稍后回来也不会丢失进度。</p>}
   </section>;

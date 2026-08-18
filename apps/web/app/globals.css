@@ -526,6 +526,24 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .progress-list i { width: 28px; height: 28px; display: grid; place-items: center; color: var(--ink); background: white; border-radius: 50%; font-style: normal; font-size: .72rem; }
 .progress-completed { color: var(--ink) !important; }
 .progress-completed i { color: white; background: var(--emerald); }
+.progress-active { position: relative; color: var(--ink) !important; background: var(--emerald-soft) !important; }
+.progress-active i { color: white; background: var(--emerald); animation: progress-breathe 2.2s ease-in-out infinite; }
+.progress-live { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--emerald); animation: progress-breathe 1.4s ease-in-out infinite; }
+@keyframes progress-breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.82); } }
+.action-progress-heading { display: grid; gap: 8px; margin: 0 0 12px; }
+.action-progress-heading p { margin: 0; color: var(--ink); font-size: .8rem; font-weight: 600; }
+.action-progress-heading strong { color: var(--emerald); }
+.action-progress-bar { height: 5px; overflow: hidden; background: rgba(23, 25, 24, 0.08); border-radius: 999px; }
+.action-progress-bar i { display: block; height: 100%; background: var(--emerald); border-radius: 999px; transition: width 600ms ease; }
+.action-dot { width: 8px; height: 8px; display: inline-block; margin-right: 8px; border-radius: 50%; vertical-align: 1px; }
+.dot-done { background: var(--emerald); }
+.dot-working { background: #d99a27; animation: progress-breathe 1.2s ease-in-out infinite; }
+.dot-queued { background: rgba(23, 25, 24, 0.22); }
+.dot-redo { background: #c05e3c; animation: progress-breathe 1.2s ease-in-out infinite; }
+.action-progress li.tone-done { color: var(--emerald); }
+.action-progress li.tone-working { color: var(--ink); }
+.action-progress li.tone-working small { color: #a4761e; }
+.action-progress li.tone-redo small { color: #c05e3c; }
 .error-state { color: #a23d35; }
 .secondary-link { color: var(--emerald); font-size: .82rem; }
 .admin-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
