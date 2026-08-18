@@ -194,6 +194,18 @@ export function buildRuntimeModel({
   const resolvedClips = clips.map(resolveClip);
   const clipById = new Map([resolvedDefault, ...resolvedClips].filter(Boolean).map((clip) => [clip.id, clip]));
 
+  // Sleeping is a sustained state, not a repeatable event: once the pet is in
+  // the sleep transition or the sleep loop, the idle rule must not fire again
+  // and restart the sequence. Expose those clip IDs so the renderer can hold
+  // the idle event until something wakes the pet.
+  const studioActionClips = manifest && manifest.studioBehavior && manifest.studioBehavior.actionClipIds;
+  const sleepStateClipIds = new Set(
+    studioActionClips
+      ? [studioActionClips.sleepTransition, studioActionClips.sleepLoop]
+        .filter((clipId) => typeof clipId === "string" && clipId !== "")
+      : []
+  );
+
   return {
     config,
     activePackage,
@@ -202,6 +214,7 @@ export function buildRuntimeModel({
       clips: resolvedClips
     },
     clipById,
+    sleepStateClipIds,
     rules: mergeRulesById(manifestRules, configRules)
   };
 }

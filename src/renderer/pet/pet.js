@@ -948,6 +948,22 @@ function resumeHoverAfterDrag(event) {
   });
 }
 
+/**
+ * Sleeping is a sustained state. While the sleep transition or the sleep loop
+ * is active (or already queued), the idle rule must not fire again: any pointer
+ * pass over the sleeping pet re-arms the idle session, and a second idle event
+ * would restart the whole sequence and visibly cut the loop back to the
+ * transition clip. Waking the pet plays another clip, which lifts this hold.
+ */
+function isSleepStateActive() {
+  const sleepClipIds = runtimeModel && runtimeModel.sleepStateClipIds;
+  if (!sleepClipIds || sleepClipIds.size === 0 || !animationController) return false;
+  const activeClip = animationController.getCurrentClip();
+  if (activeClip && sleepClipIds.has(activeClip.id)) return true;
+  const pending = animationController.pending;
+  return Boolean(pending && sleepClipIds.has(pending.clipId));
+}
+
 function scheduleRuntimeEvents() {
   clearRuntimeTimers();
 
@@ -956,6 +972,11 @@ function scheduleRuntimeEvents() {
     const intervalMs = 2000;
     const tickIdle = () => {
       const now = Date.now();
+      if (isSleepStateActive()) {
+        debugRulesLog("duration-event:held-asleep", { type: "idleDuration" });
+        scheduleRuntimeTimeout(tickIdle, intervalMs);
+        return;
+      }
       const fired = idleDurationLatch.run(() => evaluateRuntimeEvent({
         type: "idleDuration",
         timestamp: now,

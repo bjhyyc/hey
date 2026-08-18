@@ -60,6 +60,47 @@ describe("pet runtime model", () => {
       ]);
   });
 
+  it("exposes the sleep clip IDs so the idle rule cannot restart an active sleep", () => {
+    const clipIds = {
+      idle: "70000000-0000-4000-8000-000000000001",
+      sneeze: "70000000-0000-4000-8000-000000000002",
+      roll: "70000000-0000-4000-8000-000000000003",
+      sleepTransition: "70000000-0000-4000-8000-000000000004",
+      sleepLoop: "70000000-0000-4000-8000-000000000005",
+      stretch: "70000000-0000-4000-8000-000000000006",
+      hoverAttention: "70000000-0000-4000-8000-000000000007"
+    };
+    const manifest = {
+      animations: {
+        default: { id: clipIds.idle, asset: "assets/idle.webm" },
+        clips: Object.entries(clipIds).slice(1).map(([name, id]) => ({ id, name, asset: `assets/${name}.webm` }))
+      },
+      triggerRules: [],
+      studioBehavior: {
+        profile: "petpack-studio/v1",
+        actionClipIds: clipIds,
+        timing: { idleTimeoutMs: 22000, hoverDelayMs: 2000, hoverCooldownMs: 20000 }
+      }
+    };
+    const model = buildRuntimeModel({
+      config: { triggerRules: [] },
+      activePackage: { manifest, assetsByPath: {} }
+    });
+    expect(model.sleepStateClipIds).toBeInstanceOf(Set);
+    expect(model.sleepStateClipIds.has(clipIds.sleepTransition)).toBe(true);
+    expect(model.sleepStateClipIds.has(clipIds.sleepLoop)).toBe(true);
+    expect(model.sleepStateClipIds.has(clipIds.idle)).toBe(false);
+    expect(model.sleepStateClipIds.size).toBe(2);
+  });
+
+  it("keeps the sleep clip set empty when a package carries no Studio behavior", () => {
+    const model = buildRuntimeModel({
+      config: {},
+      activePackage: { manifest: { animations: { default: { id: "idle", asset: "a.svg" }, clips: [] } }, assetsByPath: {} }
+    });
+    expect(model.sleepStateClipIds.size).toBe(0);
+  });
+
   it("does not derive Studio rules from an unknown or incomplete profile", () => {
     expect(createStudioBehaviorRules({ studioBehavior: { profile: "unknown", actionClipIds: {} } })).toEqual([]);
     expect(createStudioBehaviorRules({

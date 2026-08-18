@@ -39,6 +39,14 @@ function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, expect
   const padX = Math.round(basePadX + offsetX);
   const padY = Math.round(basePadY + offsetY);
   const normalize = `trim=start=0:end=${duration},setpts=PTS-STARTPTS,fps=${CHARACTER_CANVAS_V1.fps},scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=decrease,pad=${CHARACTER_CANVAS_V1.width}:${CHARACTER_CANVAS_V1.height}:${padX}:${padY}:color=black,setsar=1`;
+  // A provider frame whose aspect ratio differs from the character canvas
+  // (Seedance returns 864x496 against the 854x480 canvas) is letterboxed by the
+  // pad above. `color=black` fills YUV limited-range black, whose luma is 16 —
+  // not 0 — so the matte's padding would merge as alpha 16 and paint a faint
+  // dark band along the padded edge. Floor the matte's near-black values so
+  // padded regions are exactly transparent.
+  const matteBlackFloor = 16;
+  const floorMatteBlack = `lut=y='if(lte(val,${matteBlackFloor}),0,val)'`;
   const greenExcess = "max(g(X,Y)-(r(X,Y)+b(X,Y))/2,0)";
   const insetAlpha = "min(alpha(X,Y),min(alpha(X-1,Y),min(alpha(X+1,Y),min(alpha(X,Y-1),alpha(X,Y+1)))))";
   const decontaminate = `geq=r='clip(r(X,Y)+(${greenExcess})*0.5,0,255)'` +
@@ -47,7 +55,7 @@ function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, expect
     `:a='${insetAlpha}'`;
   const filterComplex = [
     `[0:v]${normalize},format=rgba[pet]`,
-    `[1:v]${normalize},format=gray[matte]`,
+    `[1:v]${normalize},format=gray,${floorMatteBlack}[matte]`,
     `[pet][matte]alphamerge,${decontaminate},format=yuva420p[outv]`
   ].join(";");
   return {

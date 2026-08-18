@@ -156,6 +156,11 @@
 
 - 2026-08-18：r5 生产 Worker 镜像完成重建并替换线上 r4（批后校准随镜上线）。`petpack-studio-worker:production-qa-20260818-r5`（ID `sha256:15863a8c9d4a6a78e84f4e0a4232b06b8af9c99f6ebf9ddd7c0abf1f0d6ceae7`，373MB 索引 156 包）本地构建（缓存工件经本地 HTTP `--build-arg` 覆盖，SHA 校验不变），锁死容器内输出新组件 manifest SHA `e24e5998323784543c8570e5bb995852001366340776c9337b713f8b6cc4eed4`；Docker Scout CVE 复扫 critical/high/medium/low 全 0。gzip tar（SHA `A7033DDB…` 两端一致）传输后服务器加载 ID 逐字节一致；发布目录 `/opt/petpack/releases/production-worker-r2-20260818/`（compose + r5 tag + 新 manifest SHA），`config --quiet` 通过后切换，healthy（mode/evidenceMode production、concurrency 7），Outbox 全零、BullMQ 0 waiting/0 failed、公网 `/readyz`=200。r4 镜像与 r1 发布目录保留作回滚。至此线上 Worker 与本地 P0 完成版校准完全同源。
 
+- 2026-08-18：修复用户实测反馈的两个客户端可见缺陷（均为存量缺陷，与素材包内容无关）。（1）右侧灰色细线：Seedance 实际返回 864x496 而非 854x480，归一化 `pad` 的 `color=black` 在 YUV 限制范围写入亮度 16 而非 0，matte 走同一条链后被 `alphamerge` 当作 alpha=16，在 837~853 共 17 列形成半透明黑带；matte 链新增 `lut` 将近黑值压到真 0，重处理后右边缘 alpha 由 16 归零，与左边缘一致。（2）睡眠循环被入睡动画打断：`markInteraction()` 挂在指针移入/移出/在宠物上移动等事件上，鼠标划过熟睡的宠物即重置空闲会话，22 秒后整个入睡序列重放；睡眠是持续状态，运行时模型新增 `sleepStateClipIds`，睡眠转场或睡眠循环处于激活/待播时挂起 idle 事件，被唤醒后自动恢复。
+- 2026-08-18：顺带修补 QA 检测盲区：chroma 主体门原先只判定 `alpha<32 即算透明`，alpha=16 的黑带正好从前景阈值下方漏过；新增 `maximumBorderAlpha` 指标与 `subject_border_residual_alpha` 错误码（背景边缘必须真正透明，默认上限 8），并以合成用例验证可捕获该带。新增三项回归测试（运行时睡眠 clip 集合两项、matte 归零合同一项）。
+- 2026-08-18：用修复后的管线对同一批已生成媒体重新处理（零额外供应商费用）：母图 3/3、动作 7/7 通过生产 QA 门，交付验证 ok=true，pinned 干净树上游导入与真实 Electron 七项交互全部通过。成品 `final-delivery/Hey-Pet-border-collie-v2prompt-20260818-r2.petpack`（3,028,894 字节，SHA-256 `ECC2AFCD6B66CCE836FC02215A9019811691849377CC8FF3BFC17ECB077726E6`）。全量回归 108 个测试文件、1091 项通过、2 项按设计跳过。
+- 2026-08-18：线上死执行对账结论：全库唯一 run `8783b68b` 由 0.01 元 `paid` 订单触发，99 个作业全部成功，仅 `petpack.validate-package` 死亡（错误码 `petpack_validation_failed`）。成因是当时运行的 controlled-real 过渡 Worker 其交付验证器按设计恒返回不通过，并非生产链路缺陷；该 run 的媒体证据为 staging 等级，在生产规则下不可复用，故不重跑。支付→生成→打包链路已由该订单真实验证通过一次。处置待用户决定（导出证据后清理，或保留并调整告警基线）。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。

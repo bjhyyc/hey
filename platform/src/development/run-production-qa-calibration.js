@@ -402,7 +402,9 @@ async function main() {
       productionMode: true,
       logger: console
     });
-    const validation = await validator.validate({
+    let validation;
+    try {
+      validation = await validator.validate({
       packagePath,
       bytes: built.bytes,
       expectedPackageId: packageId,
@@ -422,8 +424,18 @@ async function main() {
         processorVersion: "character-canvas-480p-alpha-vp9-v2",
         qa: passedActions[actionId].qa
       })),
-      scratchDirectory: packageScratch
-    });
+        scratchDirectory: packageScratch
+      });
+    } catch (error) {
+      console.error('[delivery] FAILED:', error.message);
+      if (error.qa) {
+        console.error('  errors:', JSON.stringify(error.qa.errors));
+        console.error('  interactions:', JSON.stringify(error.qa.interactions));
+        console.error('  originalImport:', JSON.stringify(error.qa.originalImport));
+        console.error('  media.ok:', error.qa.media && error.qa.media.ok, 'archive.ok:', error.qa.archive && error.qa.archive.ok);
+      }
+      throw error;
+    }
     report.delivery = {
       ok: validation.ok,
       packageId,

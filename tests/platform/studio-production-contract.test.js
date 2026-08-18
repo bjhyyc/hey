@@ -130,6 +130,15 @@ describe("recovered Studio production contract", () => {
     expect(plan.args).toContain("yuva420p");
     expect(plan.args).toContain("alpha_mode=1");
     expect(plan.args.join(" ")).not.toContain("color=c=0x00ff00");
+
+    // A provider frame with a different aspect ratio is letterboxed by the
+    // pad.  writes limited-range luma 16, so an unfloored matte
+    // would merge that padding as alpha 16 and paint a visible haze band along
+    // the padded edge. The matte chain has to floor near-black to true zero.
+    const filterComplex = plan.args[plan.args.indexOf("-filter_complex") + 1];
+    const matteChain = filterComplex.split(";").find((chain) => chain.startsWith("[1:v]"));
+    expect(matteChain).toContain("format=gray");
+    expect(matteChain).toMatch(/lut=y='if\(lte\(val,\d+\),0,val\)'/);
   });
 
   it("defaults new work to 480p and rejects a 720p production registry", () => {

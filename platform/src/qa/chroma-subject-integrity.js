@@ -10,6 +10,7 @@ const DEFAULT_THRESHOLDS = Object.freeze({
   minimumLargestComponentRatio: 0.97,
   maximumSignificantComponentCount: 1,
   maximumForegroundGreenSpillRatio: 0.08,
+  maximumBackgroundResidualAlpha: 8,
   alphaForegroundThreshold: 32,
   alphaSolidThreshold: 128,
   greenSpillExcess: 45,
@@ -114,6 +115,7 @@ function analyzeChromaSubjectFrame(bytes, { width, height, thresholds: threshold
   let solidForegroundPixels = 0;
   let greenSpillPixels = 0;
   let borderPixels = 0;
+  let maximumBorderAlpha = 0;
   let transparentBorderPixels = 0;
   let minX = normalizedWidth;
   let minY = normalizedHeight;
@@ -132,6 +134,7 @@ function analyzeChromaSubjectFrame(bytes, { width, height, thresholds: threshold
       if (border) {
         borderPixels += 1;
         if (alpha < thresholds.alphaForegroundThreshold) transparentBorderPixels += 1;
+        if (alpha > maximumBorderAlpha) maximumBorderAlpha = alpha;
       }
       if (alpha < thresholds.alphaForegroundThreshold) continue;
       mask[pixelIndex] = 1;
@@ -179,6 +182,7 @@ function analyzeChromaSubjectFrame(bytes, { width, height, thresholds: threshold
     significantComponentCount: components.significantComponentCount,
     componentCount: components.componentCount,
     foregroundGreenSpillRatio: greenSpillPixels / Math.max(1, solidForegroundPixels),
+    maximumBorderAlpha,
     boundingBox
   });
 }
@@ -215,6 +219,13 @@ function evaluateChromaSubjectIntegrity(metrics, thresholdOverrides) {
   if (metrics.largestComponentRatio < thresholds.minimumLargestComponentRatio) errors.push("subject_fragmented");
   if (metrics.significantComponentCount > thresholds.maximumSignificantComponentCount) errors.push("subject_multiple_components");
   if (metrics.foregroundGreenSpillRatio > thresholds.maximumForegroundGreenSpillRatio) errors.push("subject_green_spill_detected");
+  // A letterbox band filled with limited-range black merges as a faint but
+  // visible alpha haze (16/255). It stays under the foreground threshold, so it
+  // must be judged separately: background pixels have to be truly transparent.
+  if (Number.isFinite(Number(metrics.maximumBorderAlpha)) &&
+      Number(metrics.maximumBorderAlpha) > thresholds.maximumBackgroundResidualAlpha) {
+    errors.push("subject_border_residual_alpha");
+  }
   return Object.freeze({ ok: errors.length === 0, errors: Object.freeze(errors), thresholds });
 }
 
