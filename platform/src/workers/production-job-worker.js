@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 
 const { assertActionId } = require("../domain/action-catalog");
+const { PRODUCTION_STATES } = require("../domain/production-state-machine");
 const { isPostgresInfrastructureError } = require("../persistence/postgres-database");
 const { CHARACTER_CANVAS_V1, createDevelopmentQaPolicy, requireQaPolicy } = require("../qa/character-canvas-v1");
 const { validateProductionEvidenceBindings } = require("../qa/production-evidence-provenance");
@@ -147,6 +148,7 @@ class ProductionJobWorker {
     pollDelaySeconds = 15,
     pollQueryAttempts = 3,
     maxProviderPolls = 120,
+    maxActionQaRetries = 2,
     mediaWorker,
     mediaWorkspace,
     workflow,
@@ -195,6 +197,10 @@ class ProductionJobWorker {
     this.mediaWorker = mediaWorker;
     this.mediaWorkspace = mediaWorkspace;
     this.workflow = workflow;
+    if (!Number.isInteger(maxActionQaRetries) || maxActionQaRetries < 0) {
+      throw new Error("maxActionQaRetries must be a non-negative integer");
+    }
+    this.maxActionQaRetries = maxActionQaRetries;
     this.qaPolicyProvider = qaPolicyProvider;
     this.productionMode = Boolean(productionMode);
     this.processingLeaseSeconds = processingLeaseSeconds;
@@ -687,6 +693,38 @@ class ProductionJobWorker {
         ));
       } catch (error) {
         if (error && error.qa && error.qa.ok === false) {
+          // A rejected action is content, not a broken job: regenerate it while
+          // the budget lasts, and fail the run visibly once it is spent. Neither
+          // used to happen, so the run stalled in video_generating forever.
+          const retriesUsed = Number(claim.retryCount || 0);
+          if (retriesUsed < this.maxActionQaRetries) {
+            const regenerateJob = createActionJob({
+              name: JOB_NAMES.GENERATE_VIDEO,
+              claim,
+              inputRevision: `${claim.actionId}:qa-retry-${retriesUsed + 1}`,
+              attempts: input.maxAttempts
+            });
+            try {
+              await heartbeat.renew();
+              const requeued = await this.repository.requeueVideoActionAfterQaFailure({
+                jobId: input.jobId,
+                leaseToken: claim.leaseToken,
+                sourceAssetId: claim.sourceAssetId,
+                qaReport: error.qa,
+                policyVersion: policy.version,
+                processorVersion: this.mediaProcessorVersion,
+                job: regenerateJob
+              });
+              this.logger.warn?.("petpack.worker.action_qa_retry_scheduled", {
+                runId: input.runId,
+                actionId: input.actionId,
+                qaRetry: requeued.retryCount
+              });
+              return { status: "qa_retry_scheduled", runId: input.runId, actionId: input.actionId };
+            } catch (persistenceError) {
+              return await this._releaseProcessingForRetry(input, claim, persistenceError);
+            }
+          }
           try {
             await heartbeat.renew();
             await this.repository.failVideoProcessingQa({
@@ -701,6 +739,23 @@ class ProductionJobWorker {
           } catch (persistenceError) {
             return await this._releaseProcessingForRetry(input, claim, persistenceError);
           }
+          try {
+            await this.workflow.videoActionQaFailed({
+              run: { id: input.runId, state: PRODUCTION_STATES.VIDEO_GENERATING },
+              actionId: input.actionId
+            });
+          } catch (workflowError) {
+            this.logger.error?.("petpack.worker.action_qa_failure_not_recorded", {
+              runId: input.runId,
+              actionId: input.actionId,
+              errorName: workflowError && workflowError.name ? workflowError.name : "Error"
+            });
+          }
+          this.logger.error?.("petpack.worker.action_qa_retries_exhausted", {
+            runId: input.runId,
+            actionId: input.actionId,
+            qaRetries: retriesUsed
+          });
           return { status: "qa_failed", runId: input.runId, actionId: input.actionId };
         }
         return await this._releaseProcessingForRetry(input, claim, error);

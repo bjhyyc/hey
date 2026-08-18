@@ -120,6 +120,7 @@ class ProductionWorkflow {
     modelRegistry,
     maxCharacterMasterQaRetries = 2,
     maxSleepMasterRetries = 2,
+    maxVideoActionQaRetries = 2,
     logger = console
   } = {}) {
     this.runStore = requireRunStore(runStore);
@@ -132,9 +133,13 @@ class ProductionWorkflow {
     if (!Number.isInteger(maxCharacterMasterQaRetries) || maxCharacterMasterQaRetries < 0) {
       throw new Error("maxCharacterMasterQaRetries must be a non-negative integer");
     }
+    if (!Number.isInteger(maxVideoActionQaRetries) || maxVideoActionQaRetries < 0) {
+      throw new Error("maxVideoActionQaRetries must be a non-negative integer");
+    }
     this.modelRegistry = modelRegistry;
     this.maxSleepMasterRetries = maxSleepMasterRetries;
     this.maxCharacterMasterQaRetries = maxCharacterMasterQaRetries;
+    this.maxVideoActionQaRetries = maxVideoActionQaRetries;
     this.logger = logger;
   }
 
@@ -355,6 +360,25 @@ class ProductionWorkflow {
     const persistedVideoRun = await this._commit({ previousRun: run, run: videoRun, snapshots, jobs: videoJobs });
     this.logger.info?.("petpack.workflow.video_generation_released", { runId: videoRun.id, actionCount: snapshots.length });
     return persistedVideoRun;
+  }
+
+  /**
+   * A rejected action whose regeneration budget is spent must end the run
+   * visibly. Before this, the worker recorded the rejection and stopped, so the
+   * run sat in video_generating with no failure code and the customer's progress
+   * page showed generation forever.
+   */
+  async videoActionQaFailed({ run, actionId }) {
+    assertActionId(actionId);
+    if (!run || run.state !== PRODUCTION_STATES.VIDEO_GENERATING) {
+      throw new Error("Action QA can fail only while a run is generating video");
+    }
+    const failed = {
+      ...transitionProductionRun(run, "failed"),
+      failureCode: "action_qa_failed"
+    };
+    this.logger.error?.("petpack.workflow.video_action_qa_failed", { runId: run.id, actionId });
+    return this._saveAndQueue(run, failed);
   }
 
   async videoActionQaPassed({ run, actionId, actionRevisionId, providerTaskId }) {

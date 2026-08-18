@@ -742,6 +742,7 @@ class PostgresProductionWorkerRepository {
                 action.provider_output_asset_id,
                 action.media_asset_id,
                 action.qa_report_id,
+                action.retry_count,
                 action.processing_policy_version,
                 action.processor_version,
                 processing_prompt.duration AS requested_duration,
@@ -962,6 +963,10 @@ class PostgresProductionWorkerRepository {
         },
         actionId: row.action_id,
         providerTaskId: row.provider_task_id,
+        // How many times this action has already been regenerated after a QA
+        // rejection, so the worker can spend a bounded budget rather than
+        // leaving the run stalled.
+        retryCount: Number(row.retry_count || 0),
         sourceAssetId: row.provider_output_asset_id,
         sourceObjectKey: assertPrivateObjectKey(row.source_object_key),
         sourceSha256: normalizeSha256(row.source_sha256, "Archived provider source checksum"),
@@ -1180,7 +1185,8 @@ class PostgresProductionWorkerRepository {
         `SELECT execution.id AS execution_id,
                 run.id AS run_id,
                 run.project_id,
-                action.action_id
+                action.action_id,
+                action.retry_count
            FROM production_job_execution execution
            JOIN production_run run ON run.id = execution.run_id
            JOIN generation_action action
@@ -1241,7 +1247,120 @@ class PostgresProductionWorkerRepository {
         [safeJobId, safeLeaseToken, safeErrorCode]
       ));
       if (execution.length !== 1) throw new Error("Failed action QA execution could not be completed");
-      return { status: "dead", runId: binding.run_id, actionId: binding.action_id };
+      return { status: "dead", runId: binding.run_id, actionId: binding.action_id, retryCount: Number(binding.retry_count) };
+    });
+  }
+
+  /**
+   * A rejected action used to end the run's progress silently: the processing
+   * execution died, the action was marked failed, and nothing regenerated it or
+   * failed the run, so the customer's project sat in video_generating forever.
+   *
+   * This mirrors how a rejected character master is handled - the job did its
+   * work and the verdict lives on the domain row, so the execution completes
+   * rather than dying, keeping a routine regeneration out of the dead-letter
+   * alerts. The action is reset to the state a fresh submission expects: the
+   * claim guard skips any action that still carries a provider task, so every
+   * provider-owned field has to be cleared here.
+   */
+  async requeueVideoActionAfterQaFailure({
+    jobId,
+    leaseToken,
+    sourceAssetId,
+    qaReport,
+    policyVersion,
+    processorVersion,
+    job
+  } = {}) {
+    const safeJobId = requiredString(jobId, "Queue job ID");
+    const safeLeaseToken = requiredString(leaseToken, "Execution lease token", 128);
+    const safeSourceAssetId = requiredString(sourceAssetId, "Provider source media asset ID", 128);
+    const safeQa = normalizeQaPayload(qaReport, false);
+    const safePolicyVersion = normalizePolicyVersion(policyVersion);
+    const safeProcessorVersion = requiredString(processorVersion, "Media processor version", 128);
+    if (!job || job.name !== JOB_NAMES.GENERATE_VIDEO || !job.data || !job.data.actionId) {
+      throw new Error("Action regeneration requires a generate-video-action job");
+    }
+    return this.database.transaction(async (transaction) => {
+      const tx = requireQuery(transaction);
+      const binding = oneRow(await tx.query(
+        `SELECT execution.id AS execution_id,
+                run.id AS run_id,
+                run.project_id,
+                run.state AS run_state,
+                action.action_id,
+                action.retry_count
+           FROM production_job_execution execution
+           JOIN production_run run ON run.id = execution.run_id
+           JOIN generation_action action
+             ON action.run_id = run.id
+            AND action.action_id = execution.action_id
+           JOIN media_asset source
+             ON source.id = action.provider_output_asset_id
+            AND source.id = $3::uuid
+            AND source.project_id = run.project_id
+            AND source.run_id = run.id
+            AND source.kind = 'provider_output'
+            AND source.deleted_at IS NULL
+          WHERE execution.job_id = $1
+            AND execution.lease_token = $2::uuid
+            AND execution.status = 'leased'
+            AND execution.leased_until > now()
+            AND execution.job_name = 'petpack.process-video-action'
+          FOR UPDATE OF execution, action`,
+        [safeJobId, safeLeaseToken, safeSourceAssetId]
+      ), "Rejected action could not be bound for regeneration");
+      if (binding.run_state !== PRODUCTION_STATES.VIDEO_GENERATING) {
+        throw new Error("An action can be regenerated only while its run is generating video");
+      }
+      if (job.data.runId !== binding.run_id || job.data.actionId !== binding.action_id) {
+        throw new Error("Action regeneration job does not belong to the rejected action");
+      }
+      const qaReportId = this.idFactory();
+      await tx.query(
+        `INSERT INTO qa_report
+          (id, project_id, run_id, action_id, subject_kind, status, policy_version, report,
+           source_media_asset_id, processor_version)
+         VALUES ($1, $2, $3, $4, 'video', 'failed', $5, $6::jsonb, $7::uuid, $8)`,
+        [
+          qaReportId, binding.project_id, binding.run_id, binding.action_id,
+          safePolicyVersion, JSON.stringify(safeQa), safeSourceAssetId, safeProcessorVersion
+        ]
+      );
+      const reset = rows(await tx.query(
+        `UPDATE generation_action
+            SET state = 'queued',
+                retry_count = retry_count + 1,
+                provider_task_id = NULL,
+                provider_request_id = NULL,
+                provider_poll_count = 0,
+                provider_output_asset_id = NULL,
+                media_asset_id = NULL,
+                qa_report_id = NULL,
+                processing_policy_version = NULL,
+                processor_version = NULL,
+                updated_at = now()
+          WHERE run_id = $1 AND action_id = $2 AND state = 'succeeded'
+        RETURNING retry_count`,
+        [binding.run_id, binding.action_id]
+      ));
+      if (reset.length !== 1) throw new Error("Rejected action could not be reset for regeneration");
+      const execution = rows(await tx.query(
+        `UPDATE production_job_execution
+            SET status = 'succeeded', lease_token = NULL, lease_owner = NULL,
+                leased_until = NULL, completed_at = now(), updated_at = now()
+          WHERE job_id = $1 AND lease_token = $2::uuid AND status = 'leased'
+        RETURNING id`,
+        [safeJobId, safeLeaseToken]
+      ));
+      if (execution.length !== 1) throw new Error("Rejected action execution could not be completed");
+      await this._insertDelayedOutbox(tx, job, 0);
+      return {
+        status: "regenerating",
+        runId: binding.run_id,
+        actionId: binding.action_id,
+        retryCount: Number(reset[0].retry_count)
+      };
     });
   }
 
