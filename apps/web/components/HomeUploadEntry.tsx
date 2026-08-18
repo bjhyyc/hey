@@ -172,7 +172,7 @@ export function HomeUploadEntry() {
   }
 
   return (
-    <section className="home-minimal-shell" aria-labelledby="home-greeting">
+    <section className="home-minimal-shell" aria-labelledby="home-greeting" id="start">
       <div className="home-center">
         <h1 id="home-greeting" lang="en">Hey, I really miss you.</h1>
         <p className="home-promise"><span>把思念带回桌面</span></p>

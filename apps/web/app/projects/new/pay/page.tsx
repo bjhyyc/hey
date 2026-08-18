@@ -4,7 +4,7 @@ import { PageShell } from "@/components/PageShell";
 
 export default function PaymentPage() {
   return <PageShell compact>
-    <PageIntro title="付款">填写宠物名字，使用支付宝完成付款。</PageIntro>
+    <PageIntro eyebrow="付款" title="创建订单">确认宠物信息，使用支付宝完成付款。</PageIntro>
     <NewProjectForm />
   </PageShell>;
 }

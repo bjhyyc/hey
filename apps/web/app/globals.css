@@ -486,6 +486,17 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .project-card { padding: 19px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; }
 .project-card span:first-child { display: grid; gap: 5px; }
 .project-card small { color: var(--muted); }
+.project-card-side { display: grid; justify-items: end; gap: 4px; }
+.project-card-hint { color: var(--muted); font-size: .68rem; }
+.project-card:hover .project-card-hint { color: var(--emerald); }
+.pay-species-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pay-species-row .pay-species-label { color: var(--ink); font-size: .82rem; }
+.pay-species-row small { color: var(--muted); font-size: .7rem; }
+.species-switch.pay-species-switch { margin: 0; }
+.plan-draft-summary { margin: 0 0 4px; color: var(--ink); font-size: .84rem; font-weight: 560; }
+.plan-cta .workflow-notice.plan-draft-notice { margin: 0 0 6px; }
+.plan-cta .secondary-link { color: var(--muted); font-size: .76rem; }
+.plan-cta .secondary-link:hover { color: var(--ink); }
 .status-pill { padding: 6px 10px; color: var(--emerald); background: var(--emerald-soft); border-radius: 999px; font-size: .7rem; }
 .status-error { color: #a23d35; background: #f9e8e5; }
 .empty-state { margin: 0; padding: 36px; color: var(--muted); text-align: center; background: rgba(255,255,255,.45); border: 1px dashed var(--line); border-radius: 18px; }

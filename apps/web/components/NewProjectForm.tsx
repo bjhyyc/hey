@@ -29,10 +29,15 @@ export function NewProjectForm() {
   // generated against the dog prompt set.
   const [species, setSpecies] = useState<PetSpecies>("dog");
 
+  const [draftPhotoCount, setDraftPhotoCount] = useState<number | null>(null);
+
   useEffect(() => {
     loadHomePhotoDraft()
-      .then((draft) => draft && setSpecies(draft.species))
-      .catch(() => undefined);
+      .then((draft) => {
+        if (draft) setSpecies(draft.species);
+        setDraftPhotoCount(draft ? draft.photos.filter(Boolean).length : 0);
+      })
+      .catch(() => setDraftPhotoCount(0));
   }, []);
   const showWxpay = process.env.NEXT_PUBLIC_KAIPAY_WXPAY_ENABLED === "true";
   const planCode = process.env.NEXT_PUBLIC_PETPACK_PLAN_CODE || "petpack-seven-action-v1";
@@ -136,13 +141,28 @@ export function NewProjectForm() {
   }
 
   return <section aria-labelledby="payment-title" className="payment-picker">
-    <div><h2 id="payment-title">选择支付方式</h2></div>
+    <div><h2 id="payment-title">确认信息并付款</h2></div>
+    <div className="workflow-notice">
+      <p><strong>一次付费包含全部制作</strong>：形象生成与确认、睡姿、七个动作视频、抠图校正和打包下载。</p>
+      <p>两张形象母图各有 2 次免费重新生成机会；付款后上传照片，全程通常 10–20 分钟。付款遇到问题请勿重复下单。</p>
+    </div>
     <label className="payment-name-field">宠物名字<input
       maxLength={120}
       onChange={(event) => setDisplayName(event.target.value)}
       placeholder="例如：团团"
       value={displayName}
     /></label>
+    <div className="pay-species-row">
+      <span className="pay-species-label">宠物是</span>
+      <div aria-label="宠物种类" className="species-switch pay-species-switch" role="radiogroup">
+        <button aria-checked={species === "cat"} className={species === "cat" ? "active" : undefined} onClick={() => setSpecies("cat")} role="radio" type="button">猫</button>
+        <button aria-checked={species === "dog"} className={species === "dog" ? "active" : undefined} onClick={() => setSpecies("dog")} role="radio" type="button">狗</button>
+      </div>
+      <small>提示词会按种类定制，选错会影响生成效果</small>
+    </div>
+    {draftPhotoCount !== null && (draftPhotoCount > 0
+      ? <p className="form-message">已选好 {draftPhotoCount} 张照片，付款后自动上传。</p>
+      : <p className="form-message">还没有选照片——更推荐<a className="check-list-client-link" href="/#start">先回首页挑好照片</a>再付款，也可付款后再上传。</p>)}
     <div aria-label="支付方式" className={`payment-methods${showWxpay ? " has-wechat" : ""}`} role="radiogroup">
       <label className={`payment-method${paymentChannel === "ALIPAY" ? " is-selected" : ""}`}>
         <input checked={paymentChannel === "ALIPAY"} disabled={busy} name="payment-method" onChange={() => setPaymentChannel("ALIPAY")} type="radio" value="ALIPAY" />
@@ -153,7 +173,7 @@ export function NewProjectForm() {
         <span><strong>微信支付</strong><small>微信扫码支付</small></span>
       </label> : null}
     </div>
-    <button className="button button-primary" disabled={busy} onClick={() => void submit()} type="button">
+    <button className="primary-button form-submit" disabled={busy} onClick={() => void submit()} type="button">
       {busy ? "正在创建…" : "创建订单并前往付款"}
     </button>
     <p className="form-message" aria-live="polite">{message}</p>

@@ -11,7 +11,7 @@ export function SiteHeader({ home = false }: { home?: boolean }) {
         {home ? (
           <nav className="header-actions" aria-label="账户操作">
             <AccountControl />
-            <Link className="header-purchase" href="/projects/new">
+            <Link className="header-purchase" href="/#start">
               购买
             </Link>
           </nav>
@@ -19,14 +19,14 @@ export function SiteHeader({ home = false }: { home?: boolean }) {
           <div className="secondary-header-right">
             <nav className="primary-nav" aria-label="主导航">
               <Link href="/projects">我的项目</Link>
-              <Link href="/projects/new">开始制作</Link>
+              <Link href="/#start">开始制作</Link>
               <Link className="primary-nav-client" href="/download-client" target="_blank">
                 下载客户端
               </Link>
             </nav>
             <nav className="header-actions" aria-label="账户操作">
               <AccountControl />
-              <Link className="header-purchase" href="/projects/new">
+              <Link className="header-purchase" href="/#start">
                 购买
               </Link>
             </nav>
