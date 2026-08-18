@@ -36,14 +36,14 @@ export const PHOTO_SLOT_DEFINITIONS: readonly PhotoSlotDefinition[] = [
     id: "three-quarter-primary",
     label: "45° 1",
     title: "第 1 张 45° 全身照",
-    hint: "约 45°，不用完全侧身",
+    hint: "约 45°，尽量把花色拍全",
     required: true,
   },
   {
     id: "three-quarter-secondary",
     label: "45° 2",
     title: "第 2 张 45° 全身照",
-    hint: "可选，另一侧有助于还原花色",
+    hint: "可选，花色不对称的宠物建议补另一侧",
     required: false,
   },
 ] as const;

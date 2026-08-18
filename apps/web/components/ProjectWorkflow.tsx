@@ -58,6 +58,10 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
   if (mode === "character") {
     const { front, side, canConfirm } = view.characterCandidates;
     return <section className="workflow-card">
+      <div className="workflow-notice">
+        <p><strong>母图决定成品质量</strong>，而母图取决于你上传的照片。七个动作和睡姿都会照着这两张母图生成，请认真确认。</p>
+        <p>45° 照片尽量把花色拍全，<strong>花色左右不对称的宠物</strong>（三花、玳瑁、花斑）尤其重要，否则背对镜头的那一侧只能靠猜。</p>
+      </div>
       <div className="candidate-grid">
         <Candidate candidate={front} label="正面" busy={busy} onRegenerate={() => void (async () => {
           setBusy(true); try { await studioBrowserApi.regenerateCharacter(projectId, "front"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }

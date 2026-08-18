@@ -49,6 +49,10 @@ export function PhotoUploadWorkflow({ projectId }: { projectId: string }) {
   }
 
   return <section className="workflow-card">
+    <div className="workflow-notice">
+      <p><strong>照片质量在很大程度上决定成品质量</strong>，请认真挑选：光线清楚、宠物全身完整、没有其他人或宠物入镜。</p>
+      <p>45° 照片尽量把花色拍全，<strong>花色左右不对称的宠物</strong>（三花、玳瑁、花斑）尤其重要，否则背对镜头的那一侧只能靠猜。</p>
+    </div>
     <PhotoSlots value={photos} onChange={setPhotos} onMessage={setMessage} disabled={busy} />
     <button className="primary-button form-submit" disabled={busy} onClick={() => void upload()} type="button">
       {busy ? "正在上传…" : "确认照片"}
