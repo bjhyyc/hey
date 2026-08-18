@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import stateMachineModule from "../../platform/src/domain/production-state-machine.js";
 import workflowModule from "../../platform/src/workflow/production-workflow.js";
+import storeModule from "../../platform/src/persistence/postgres-transactional-workflow-store.js";
 
 const { PRODUCTION_STATES } = stateMachineModule;
 const { ProductionWorkflow } = workflowModule;
+const { PostgresTransactionalWorkflowStore } = storeModule;
 
 const modelRegistry = Object.freeze({
   version: "seedream-seedance-480p-v1",
@@ -125,5 +127,38 @@ describe("rejected action QA payload", () => {
     ]) {
       expect(update).toContain(column);
     }
+  });
+});
+
+// Failing the run needs the claimed run's optimistic-lock version. The first
+// build passed a synthesised {id, state} object, so the transition threw and
+// the run stayed in video_generating with the retries already spent - the exact
+// stall the recovery exists to prevent.
+describe("run failure uses the claimed run", () => {
+  const source = readFileSync(
+    new URL("../../platform/src/workers/production-job-worker.js", import.meta.url),
+    "utf8"
+  );
+
+  it("passes the claimed run into videoActionQaFailed", () => {
+    const call = source.slice(source.indexOf("videoActionQaFailed("));
+    const args = call.slice(0, call.indexOf("});") + 3);
+    expect(args).toContain("run: claim.run");
+  });
+
+  it("never synthesises a run object for the transition", () => {
+    expect(source).not.toMatch(/run:\s*\{\s*id:\s*input\.runId/);
+  });
+
+  it("cannot commit a transition for a run with no lock version", async () => {
+    const store = new PostgresTransactionalWorkflowStore({
+      database: { transaction: async (run) => run({ query: async () => ({ rows: [] }) }) },
+      logger: { info() {}, warn() {}, error() {} }
+    });
+
+    await expect(store.commitTransition({
+      previousRun: { id: "run-1", state: PRODUCTION_STATES.VIDEO_GENERATING },
+      run: { id: "run-1", state: PRODUCTION_STATES.FAILED, failureCode: "action_qa_failed" }
+    })).rejects.toThrow(/version/i);
   });
 });

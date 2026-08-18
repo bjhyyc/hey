@@ -1,7 +1,6 @@
 const crypto = require("node:crypto");
 
 const { assertActionId } = require("../domain/action-catalog");
-const { PRODUCTION_STATES } = require("../domain/production-state-machine");
 const { isPostgresInfrastructureError } = require("../persistence/postgres-database");
 const { CHARACTER_CANVAS_V1, createDevelopmentQaPolicy, requireQaPolicy } = require("../qa/character-canvas-v1");
 const { validateProductionEvidenceBindings } = require("../qa/production-evidence-provenance");
@@ -749,10 +748,9 @@ class ProductionJobWorker {
             return await this._releaseProcessingForRetry(input, claim, persistenceError);
           }
           try {
-            await this.workflow.videoActionQaFailed({
-              run: { id: input.runId, state: PRODUCTION_STATES.VIDEO_GENERATING },
-              actionId: input.actionId
-            });
+            // The claim already carries the locked run with its optimistic-lock
+            // version; a synthesised one cannot commit the transition.
+            await this.workflow.videoActionQaFailed({ run: claim.run, actionId: input.actionId });
           } catch (workflowError) {
             this.logger.error?.("petpack.worker.action_qa_failure_not_recorded", {
               runId: input.runId,
