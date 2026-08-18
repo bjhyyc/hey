@@ -161,6 +161,8 @@
 - 2026-08-18：用修复后的管线对同一批已生成媒体重新处理（零额外供应商费用）：母图 3/3、动作 7/7 通过生产 QA 门，交付验证 ok=true，pinned 干净树上游导入与真实 Electron 七项交互全部通过。成品 `final-delivery/Hey-Pet-border-collie-v2prompt-20260818-r2.petpack`（3,028,894 字节，SHA-256 `ECC2AFCD6B66CCE836FC02215A9019811691849377CC8FF3BFC17ECB077726E6`）。全量回归 108 个测试文件、1091 项通过、2 项按设计跳过。
 - 2026-08-18：线上死执行对账结论：全库唯一 run `8783b68b` 由 0.01 元 `paid` 订单触发，99 个作业全部成功，仅 `petpack.validate-package` 死亡（错误码 `petpack_validation_failed`）。成因是当时运行的 controlled-real 过渡 Worker 其交付验证器按设计恒返回不通过，并非生产链路缺陷；该 run 的媒体证据为 staging 等级，在生产规则下不可复用，故不重跑。支付→生成→打包链路已由该订单真实验证通过一次。处置待用户决定（导出证据后清理，或保留并调整告警基线）。
 
+- 2026-08-18：按用户选择的方案 A 完成死执行对账。先导出证据存档（`docs/operations/dead-execution-reconciliation-20260818.md` 与同 run 全部 100 条执行记录清单），再在事务内按精确 ID 删除唯一一条 dead 记录（`6f2421b5`，`petpack.validate-package`，错误码 `petpack_validation_failed`），删除条件同时校验 status 与 error_code；执行前后计数为 dead 1→0，同 run 保留 99 条成功执行，`production_run`（state=failed）与 `customer_order`（status=paid，1 分）历史完整未动。删除后 `check-operations-snapshot` 首次返回 `ok:true`、`alerts: []`、退出码 0：Outbox 全零、执行 99 成功/0 死亡/0 待对账、BullMQ 0 等待/0 失败，公网 `/readyz`=200。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
