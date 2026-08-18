@@ -154,6 +154,8 @@
 
 - 2026-08-18：P0 完成里程碑代码提交为 `a3579d1`。增量 bundle：`C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-p0-complete-a3579d1.bundle`，372,864 字节，前置提交 `ff01e22ee47ca5a9a0641e33e8d8682cec04e50a`，`git bundle verify` 通过，SHA-256 为 `04625A07A867B79F6BB071C64DC37734B3EB2E9D2628B5D2F246E300101F439C`。
 
+- 2026-08-18：r5 生产 Worker 镜像完成重建并替换线上 r4（批后校准随镜上线）。`petpack-studio-worker:production-qa-20260818-r5`（ID `sha256:15863a8c9d4a6a78e84f4e0a4232b06b8af9c99f6ebf9ddd7c0abf1f0d6ceae7`，373MB 索引 156 包）本地构建（缓存工件经本地 HTTP `--build-arg` 覆盖，SHA 校验不变），锁死容器内输出新组件 manifest SHA `e24e5998323784543c8570e5bb995852001366340776c9337b713f8b6cc4eed4`；Docker Scout CVE 复扫 critical/high/medium/low 全 0。gzip tar（SHA `A7033DDB…` 两端一致）传输后服务器加载 ID 逐字节一致；发布目录 `/opt/petpack/releases/production-worker-r2-20260818/`（compose + r5 tag + 新 manifest SHA），`config --quiet` 通过后切换，healthy（mode/evidenceMode production、concurrency 7），Outbox 全零、BullMQ 0 waiting/0 failed、公网 `/readyz`=200。r4 镜像与 r1 发布目录保留作回滚。至此线上 Worker 与本地 P0 完成版校准完全同源。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
