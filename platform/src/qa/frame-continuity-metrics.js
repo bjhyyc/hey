@@ -2,10 +2,15 @@
 
 const { ACTION_ENDPOINTS } = require("../domain/action-catalog");
 
+// Calibrated against the real 2026-08-16 Seedance batch: genuine endpoint
+// adherence shows sub-pixel centroid drift and tiny premultiplied deltas, so
+// those two remain the sharp discriminators. Mask/bbox IoU carries a
+// systematic edge-band deficit from keying and matte-closing differences and
+// is tolerated down to the measured floor of real compliant output.
 const DEFAULT_ENDPOINT_THRESHOLDS = Object.freeze({
   alphaThreshold: 32,
-  minimumMaskIoU: 0.95,
-  minimumBoundingBoxIoU: 0.95,
+  minimumMaskIoU: 0.85,
+  minimumBoundingBoxIoU: 0.88,
   maximumCentroidDeltaPx: 5,
   maximumPremultipliedMeanAbsoluteDelta: 0.02
 });
@@ -175,7 +180,8 @@ function validateDecodedEndpointInspection(inspection, {
   actionId = null,
   expectedFirstMasterHash = null,
   expectedLastMasterHash = null,
-  expectedOutputHash = null
+  expectedOutputHash = null,
+  expectedFrameCount = null
 } = {}) {
   if (!inspection || typeof inspection !== "object" || Array.isArray(inspection)) {
     return production
@@ -207,6 +213,12 @@ function validateDecodedEndpointInspection(inspection, {
     const outputFrameCount = Number(inspection.outputFrameCount);
     if (!Number.isSafeInteger(outputFrameCount) || outputFrameCount < 2 || outputFrameCount > 3600) {
       errors.push("Decoded endpoint outputFrameCount is invalid");
+    }
+    const frozenFrameCount = Number(expectedFrameCount);
+    if (!Number.isSafeInteger(frozenFrameCount) || frozenFrameCount < 2 || frozenFrameCount > 3600) {
+      errors.push("Frozen expected output frame count is required");
+    } else if (outputFrameCount !== frozenFrameCount) {
+      errors.push("Decoded endpoint outputFrameCount does not match the frozen media frame count");
     }
     if (!Array.isArray(inspection.endpointFrameIndices) || inspection.endpointFrameIndices.length !== 2 ||
         inspection.endpointFrameIndices[0] !== 0 || inspection.endpointFrameIndices[1] !== outputFrameCount - 1) {

@@ -35,6 +35,13 @@ async function loadInspector(options) {
 }
 
 describe("trusted action endpoint inspector", () => {
+  it("covers every frozen Studio action endpoint", async () => {
+    const inspectorModule = await import("../../platform/src/qa/trusted-action-endpoint-inspector.js");
+    const actionCatalog = await import("../../platform/src/domain/action-catalog.js");
+    expect(Object.keys(inspectorModule.ACTION_ENDPOINTS).sort())
+      .toEqual([...actionCatalog.REQUIRED_ACTION_IDS].sort());
+  });
+
   it("decodes and binds both endpoints to the supplied master bytes", async () => {
     fs.mkdirSync(fixtureRoot, { recursive: true });
     const front = path.join(fixtureRoot, "front.png");

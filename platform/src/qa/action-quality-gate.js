@@ -42,6 +42,53 @@ function getFrameCenterX(frame) {
   return (Number(bounds.left) + Number(bounds.right)) / 2;
 }
 
+function resolveActionMotionPolicy(policy, actionId, { production = false } = {}) {
+  const envelope = policy?.actionMotionEnvelopes?.[actionId];
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    return {
+      ok: !production,
+      errors: production ? ["Production action motion envelope is required"] : [],
+      policy,
+      chromaThresholds: undefined,
+      evidence: null
+    };
+  }
+  const specifications = {
+    maxGroundDeltaPx: [0, 100],
+    maxCanvasScaleDelta: [0, 1],
+    maxRelativeScaleJitter: [0, 1],
+    minAdjacentMaskIoU: [0, 1],
+    maxRowSpanHoleRatio: [0, 1]
+  };
+  const normalized = {};
+  const errors = [];
+  for (const [key, [minimum, maximum]] of Object.entries(specifications)) {
+    const value = Number(envelope[key]);
+    if (!Number.isFinite(value) || value < minimum || value > maximum) {
+      errors.push(`Action motion envelope ${key} is invalid`);
+    } else {
+      normalized[key] = value;
+    }
+  }
+  return {
+    ok: errors.length === 0,
+    errors,
+    policy: errors.length === 0 ? {
+      ...policy,
+      maxGroundBaselineDeltaPx: normalized.maxGroundDeltaPx,
+      maxGroundJitterPx: normalized.maxGroundDeltaPx,
+      maxRelativeTorsoDelta: normalized.maxCanvasScaleDelta,
+      maxRelativeHeadDelta: normalized.maxCanvasScaleDelta,
+      maxRelativeShoulderDelta: normalized.maxCanvasScaleDelta,
+      maxRelativeFrameScaleJitter: normalized.maxRelativeScaleJitter
+    } : policy,
+    chromaThresholds: errors.length === 0
+      ? { maximumRowSpanHoleRatio: normalized.maxRowSpanHoleRatio }
+      : undefined,
+    evidence: errors.length === 0 ? { ...normalized } : null
+  };
+}
+
 function calculateContinuity(sampledFrames, policy) {
   if (!Array.isArray(sampledFrames) || sampledFrames.length === 0) {
     return { ok: false, errors: ["At least one sampled frame metric is required"] };
@@ -131,6 +178,8 @@ function validateVideoAction({
   assertActionId(actionId);
   const resolvedPolicy = requireQaPolicy(policy, { production });
   const errors = [];
+  const motion = resolveActionMotionPolicy(resolvedPolicy, actionId, { production });
+  appendErrors(errors, "motionPolicy", motion);
   const media = validateActionMediaProbe(mediaProbe, {
     allowedVideoCodecs: ["vp9"],
     allowedFormatNames: ["webm", "matroska"],
@@ -150,21 +199,23 @@ function validateVideoAction({
     actionId,
     expectedFirstMasterHash,
     expectedLastMasterHash,
-    expectedOutputHash: provenance?.outputSha256
+    expectedOutputHash: provenance?.outputSha256,
+    expectedFrameCount: Array.isArray(sampledFrames) ? sampledFrames.length : null
   });
   appendErrors(errors, "decodedEndpoints", decodedEndpoints);
 
   const frames = Array.isArray(sampledFrames) ? sampledFrames : [];
   const chromaIntegrity = validateChromaSubjectInspection(contentInspection?.chromaIntegrity, {
     production,
-    expectedFrameCount: frames.length
+    expectedFrameCount: frames.length,
+    thresholds: motion.chromaThresholds
   });
   appendErrors(errors, "chromaIntegrity", chromaIntegrity);
   const productionEvidence = validateProductionEvidenceReport({ actionId, provenance }, { production });
   appendErrors(errors, "productionEvidence", productionEvidence);
   const frameResults = frames.map((frame) => validateCanvasFrame(frame, {
     canvas: CHARACTER_CANVAS_V1,
-    policy: resolvedPolicy,
+    policy: motion.policy,
     production,
     expectedIdentityScore: true,
     identityThreshold: resolvedPolicy.minSevereVideoIdentityScore,
@@ -173,7 +224,7 @@ function validateVideoAction({
   if (frameResults.length === 0) errors.push("canvas: sampled frame metrics are required");
   frameResults.forEach((result, index) => appendErrors(errors, `canvas frame ${index}`, result));
 
-  const continuity = calculateContinuity(frames, resolvedPolicy);
+  const continuity = calculateContinuity(frames, motion.policy);
   appendErrors(errors, "continuity", continuity);
   const content = validateContentInspection(contentInspection, actionId);
   appendErrors(errors, "content", content);
@@ -232,6 +283,7 @@ function validateVideoAction({
         decoded: decodedEndpoints.evidence
       },
       continuity: {
+        motionEnvelope: motion.evidence,
         sampledFrameCount: frames.length,
         firstFrame: frames.length > 0 ? frameEvidence(frames[0]) : null,
         lastFrame: frames.length > 0 ? frameEvidence(frames[frames.length - 1]) : null
@@ -244,6 +296,7 @@ module.exports = {
   ACTION_QA_CONTRACT_VERSION,
   REQUIRED_CONTENT_CHECKS,
   calculateContinuity,
+  resolveActionMotionPolicy,
   validateContentInspection,
   validateVideoAction
 };

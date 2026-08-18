@@ -29,7 +29,10 @@ const { runProcess } = require("../../platform/src/media/media-worker");
 const { createVideoNormalizationPlan } = require("../../platform/src/media/ffmpeg-plan");
 const { checksumPinnedUpstreamTree, isProductionAssuredValidator } = require("../../platform/src/petpack/delivery-validator");
 const { validateMasterImage } = require("../../platform/src/qa/master-image-quality-gate");
-const { validateVideoAction } = require("../../platform/src/qa/action-quality-gate");
+const {
+  resolveActionMotionPolicy,
+  validateVideoAction
+} = require("../../platform/src/qa/action-quality-gate");
 const {
   ACTION_ENDPOINTS: INSPECTOR_ACTION_ENDPOINTS,
   createTrustedActionEndpointInspector
@@ -44,7 +47,7 @@ function sha256File(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-function paintBlob(bytes, width, { centerX, bottom, blobWidth, blobHeight }) {
+function paintBlob(bytes, width, { centerX, bottom, blobWidth, blobHeight, internalGreenHole = false }) {
   const bodyColor = [150, 100, 60];
   const headColor = [110, 74, 46];
   const chestColor = [235, 230, 220];
@@ -77,6 +80,16 @@ function paintBlob(bytes, width, { centerX, bottom, blobWidth, blobHeight }) {
   for (let y = Math.round(headCenterY); y <= Math.round(bodyCenterY); y += 1) {
     for (let x = Math.round(centerX - headRadius * 0.6); x <= Math.round(centerX + headRadius * 0.6); x += 1) {
       set(x, y, bodyColor);
+    }
+  }
+  if (internalGreenHole) {
+    const holeCenterY = bodyCenterY + bodyRadiusY * 0.15;
+    for (let y = Math.round(holeCenterY - bodyRadiusY * 0.18); y <= Math.round(holeCenterY + bodyRadiusY * 0.18); y += 1) {
+      for (let x = Math.round(centerX - bodyRadiusX * 0.14); x <= Math.round(centerX + bodyRadiusX * 0.14); x += 1) {
+        const distance = ((x - centerX) / (bodyRadiusX * 0.14)) ** 2 +
+          ((y - holeCenterY) / (bodyRadiusY * 0.18)) ** 2;
+        if (distance <= 1) set(x, y, GREEN);
+      }
     }
   }
 }
@@ -149,6 +162,22 @@ describe("production worker components", () => {
     expect(Object.isFrozen(provider)).toBe(true);
   });
 
+  it("requires a calibrated motion envelope for every production action", () => {
+    for (const actionId of REQUIRED_ACTION_IDS) {
+      const resolved = resolveActionMotionPolicy(PRODUCTION_QA_POLICY, actionId, { production: true });
+      expect(resolved.ok, `${actionId}: ${resolved.errors.join("; ")}`).toBe(true);
+      expect(resolved.evidence).toMatchObject({
+        minAdjacentMaskIoU: expect.any(Number),
+        maxRelativeScaleJitter: expect.any(Number)
+      });
+    }
+    const missing = structuredClone(PRODUCTION_QA_POLICY);
+    delete missing.actionMotionEnvelopes["sleep-transition"];
+    const rejected = resolveActionMotionPolicy(missing, "sleep-transition", { production: true });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.errors.join(" ")).toMatch(/motion envelope is required/i);
+  });
+
   it("normalizes and inspects a provider master with measured production evidence that passes the master gate", async () => {
     const directory = path.join(fixtureRoot, "master");
     fs.mkdirSync(directory, { recursive: true });
@@ -156,7 +185,8 @@ describe("production worker components", () => {
       centerX: 900,
       bottom: 700,
       blobWidth: 500,
-      blobHeight: 400
+      blobHeight: 400,
+      internalGreenHole: true
     });
     const referencePaths = [0, 1, 2].map((index) => writePng(
       path.join(directory, `photo-${index}.png`),
@@ -186,6 +216,8 @@ describe("production worker components", () => {
       calibrationDigest: CALIBRATION_DIGEST
     });
     expect(inspection.frame.identityScore).toBeGreaterThan(0);
+    expect(inspection.frame.torsoHeightPx).toBeCloseTo(200, -1);
+    expect(inspection.contentInspection.chromaIntegrityErrors).not.toContain("subject_internal_holes_detected");
     expect(inspection.contentInspection.chromaIntegrity.worstFrame.foregroundRatio).toBeGreaterThan(0.01);
 
     const qa = validateMasterImage({

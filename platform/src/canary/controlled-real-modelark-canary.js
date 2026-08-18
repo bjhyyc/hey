@@ -24,7 +24,10 @@ const {
 const CONTRACT_VERSION = "controlled-real-modelark-canary/v1";
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..");
 const CONTROLLED_ROOT = path.join(PROJECT_ROOT, ".tmp", "controlled-real-canary");
-const PROMPT_FILE = path.join(PROJECT_ROOT, "docs", "prompts", "正式发布候选·三母图七动作·480p-v1.txt");
+// v2 replaces only the sleep-transition positive prompt with the recovered
+// original override (docs/prompts/sleep-transition-original-override-v1.txt);
+// the other nine sections parse byte-identically to v1.
+const PROMPT_FILE = path.join(PROJECT_ROOT, "docs", "prompts", "正式发布候选·三母图七动作·480p-v2.txt");
 const MAX_JPEG_BYTES = 20 * 1024 * 1024;
 const MAX_NORMALIZED_MASTER_BYTES = 48 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);

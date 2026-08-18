@@ -32,7 +32,7 @@ const {
   analyzeChromaSubjectFrame,
   evaluateChromaSubjectIntegrity
 } = require("../qa/chroma-subject-integrity");
-const { analyzeLoopMotion } = require("../qa/loop-motion-metrics");
+const { analyzeForegroundAreaCycle, analyzeLoopMotion } = require("../qa/loop-motion-metrics");
 const { getVideoStream } = require("../qa/media-inspector");
 const { PRODUCTION_EVIDENCE_PROVENANCE_CONTRACT_VERSION } = require("../qa/production-evidence-provenance");
 const { SLEEP_LOOP_BOUNDARY_CONTRACT_VERSION } = require("../qa/sleep-loop-boundary-v1");
@@ -79,15 +79,24 @@ function deepFreeze(value) {
  * SHA-256 until it is re-reviewed and re-pinned.
  */
 const PRODUCTION_CALIBRATION = deepFreeze({
-  calibrationVersion: "hey-production-calibration/1.0.0",
+  calibrationVersion: "hey-production-calibration/1.2.0",
   chroma: {
     key: INPUT_CHROMA,
     rgb: [...INPUT_CHROMA_RGB],
     similarity: INPUT_CHROMA_SIMILARITY,
     blend: INPUT_CHROMA_BLEND,
+    // Real provider backgrounds are model-painted green: the hue matches the
+    // requested key but luma drifts, so every keying and measurement decode
+    // uses ffmpeg's YUV chromakey. The RGB colorkey misses model-painted
+    // green almost entirely (verified against the 2026-08-16 real batch).
+    keyer: "chromakey",
     // Sum of per-channel absolute distances below which a raw pixel counts as
-    // clean keyable green.
-    maxGreenDistance: 150
+    // clean keyable green (used only for photo-reference background
+    // separation, never for provider chroma decisions).
+    maxGreenDistance: 150,
+    // Fraction of reference pixels the chromakey must remove for a reference
+    // to be treated as an approved green-screen master.
+    minKeyedReferenceBackgroundRatio: 0.2
   },
   appearance: {
     alphaThreshold: 32,
@@ -96,6 +105,10 @@ const PRODUCTION_CALIBRATION = deepFreeze({
     minRegionCoverage: 0.08,
     minMarkingCellCoverage: 0.05,
     regionBands: { head: 0.38, legs: 0.28, tail: 0.2 },
+    // Fur keying leaves small disconnected wisps even after morphological
+    // closing; a stray component below this pixel count is keying noise, a
+    // genuine second subject at 480p is thousands of pixels.
+    chromaThresholds: { significantComponentPixels: 400 },
     photoReferenceCenterMargin: 0.15,
     photoReferenceWindowMargin: 0.05,
     photoReferenceBackgroundDistance: 100,
@@ -106,25 +119,36 @@ const PRODUCTION_CALIBRATION = deepFreeze({
     identityDriftFloor: 0.18,
     coatConsistencyFloor: 0.22
   },
+  matteRepair: {
+    // The chroma key intentionally removes every key-coloured pixel. Provider
+    // renders can carry reflected green inside the pet (eyes, chest and fur),
+    // so a binary flood from the canvas corner distinguishes true connected
+    // background from enclosed subject holes before a small morphological
+    // close reconnects soft fur edges.
+    alphaThreshold: 32,
+    connectedBackgroundValue: 128,
+    closeIterations: 2
+  },
   geometry: {
-    // The normalization target: subjects are rescaled so that
-    // sqrt(foreground-pixel-area) lands on this value before green-canvas
-    // composition, which centers every generated pet at a consistent scale.
-    targetSubjectSqrtAreaPx: 230,
+    // Normalization and QA deliberately share the same scale basis. Green-key
+    // alpha area changes with fur detail and small keying holes, while the
+    // visible bounding-box projection remains stable. The per-kind torso ratio
+    // converts that projection to the canonical torso metric used by the gate.
+    scaleBasis: "sqrt-bbox-area",
     scaleBounds: { min: 0.2, max: 5 },
     kinds: {
-      front: { torsoRatio: 0.87, headRatio: 0.34, shoulderRatio: 0.56 },
-      side: { torsoRatio: 0.87, headRatio: 0.33, shoulderRatio: 0.5 },
-      sleep: { torsoRatio: 0.87, headRatio: 0.52, shoulderRatio: 0.46 }
+      front: { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      side: { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      sleep: { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 }
     },
     actions: {
-      idle: { torsoRatio: 0.87, headRatio: 0.34, shoulderRatio: 0.56 },
-      sneeze: { torsoRatio: 0.87, headRatio: 0.34, shoulderRatio: 0.56 },
-      roll: { torsoRatio: 0.87, headRatio: 0.34, shoulderRatio: 0.5 },
-      "sleep-transition": { torsoRatio: 0.87, headRatio: 0.42, shoulderRatio: 0.5 },
-      "sleep-loop": { torsoRatio: 0.87, headRatio: 0.52, shoulderRatio: 0.46 },
-      stretch: { torsoRatio: 0.87, headRatio: 0.42, shoulderRatio: 0.5 },
-      "hover-attention": { torsoRatio: 0.87, headRatio: 0.34, shoulderRatio: 0.56 }
+      idle: { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      sneeze: { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      roll: { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      "sleep-transition": { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      "sleep-loop": { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      stretch: { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 },
+      "hover-attention": { torsoRatio: 1, headRatio: 0.55, shoulderRatio: 0.835 }
     }
   },
   content: {
@@ -132,12 +156,16 @@ const PRODUCTION_CALIBRATION = deepFreeze({
     minBackgroundUniformRatio: 0.985,
     minSourceBorderGreenRatio: 0.95,
     maxForegroundGreenSpillRatio: 0.08,
-    maxRowSpanHoleRatio: 0.12,
-    maxGroundJitterPx: 14,
     maxCenterDriftPx: 96,
-    maxRelativeScaleJitter: 0.15,
-    minAdjacentMaskIoU: 0.72,
-    minEdgeStableAdjacentMaskIoU: 0.8,
+    actionMotionEnvelopes: {
+      idle: { maxGroundDeltaPx: 6, maxCanvasScaleDelta: 0.2, maxRelativeScaleJitter: 0.2, minAdjacentMaskIoU: 0.8, maxRowSpanHoleRatio: 0.12 },
+      sneeze: { maxGroundDeltaPx: 8, maxCanvasScaleDelta: 0.25, maxRelativeScaleJitter: 0.2, minAdjacentMaskIoU: 0.6, maxRowSpanHoleRatio: 0.12 },
+      roll: { maxGroundDeltaPx: 32, maxCanvasScaleDelta: 0.4, maxRelativeScaleJitter: 0.35, minAdjacentMaskIoU: 0.6, maxRowSpanHoleRatio: 0.25 },
+      "sleep-transition": { maxGroundDeltaPx: 20, maxCanvasScaleDelta: 0.4, maxRelativeScaleJitter: 0.4, minAdjacentMaskIoU: 0.65, maxRowSpanHoleRatio: 0.2 },
+      "sleep-loop": { maxGroundDeltaPx: 6, maxCanvasScaleDelta: 0.15, maxRelativeScaleJitter: 0.05, minAdjacentMaskIoU: 0.98, maxRowSpanHoleRatio: 0.2 },
+      stretch: { maxGroundDeltaPx: 24, maxCanvasScaleDelta: 0.4, maxRelativeScaleJitter: 0.4, minAdjacentMaskIoU: 0.7, maxRowSpanHoleRatio: 0.25 },
+      "hover-attention": { maxGroundDeltaPx: 8, maxCanvasScaleDelta: 0.25, maxRelativeScaleJitter: 0.25, minAdjacentMaskIoU: 0.85, maxRowSpanHoleRatio: 0.12 }
+    },
     sourceSampleFrames: 4,
     sleepLoop: {
       analysisWidth: 214,
@@ -146,6 +174,12 @@ const PRODUCTION_CALIBRATION = deepFreeze({
       restWindowFrames: 12,
       activeMotionFactor: 2,
       minActiveSegmentFrames: 4,
+      areaAlphaThreshold: 32,
+      areaSmoothingWindowFrames: 7,
+      minimumBreathAreaAmplitudeRatio: 0.015,
+      breathActiveFraction: 0.35,
+      minBreathActiveSegmentFrames: 12,
+      maximumRestAreaDeltaRatio: 0.015,
       maxSeamPixelDelta: 0.015,
       maxBoundaryMotion: 0.02
     }
@@ -154,6 +188,23 @@ const PRODUCTION_CALIBRATION = deepFreeze({
 const CALIBRATION_DIGEST = crypto.createHash("sha256")
   .update(canonicalJson(PRODUCTION_CALIBRATION), "utf8")
   .digest("hex");
+
+function repairedMatteFilterChain() {
+  const repair = PRODUCTION_CALIBRATION.matteRepair;
+  const close = [
+    ...Array(repair.closeIterations).fill("dilation"),
+    ...Array(repair.closeIterations).fill("erosion")
+  ];
+  return [
+    "alphaextract",
+    "format=gray",
+    `lut=y='if(lt(val,${repair.alphaThreshold}),0,255)'`,
+    `floodfill=x=0:y=0:s0=0:d0=${repair.connectedBackgroundValue}`,
+    `lut=y='if(eq(val,0),255,if(eq(val,${repair.connectedBackgroundValue}),0,255))'`,
+    ...close,
+    "format=gray"
+  ].join(",");
+}
 
 const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   name: "hey-petpack-production-qa",
@@ -172,7 +223,8 @@ const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   minMarkingTopologyScore: 0.25,
   maxLoopSeamPixelDelta: 0.015,
   maxLoopBoundaryMotion: 0.02,
-  minLoopRestFrameCount: 12
+  minLoopRestFrameCount: 12,
+  actionMotionEnvelopes: PRODUCTION_CALIBRATION.content.actionMotionEnvelopes
 });
 const QA_POLICY_DIGEST = crypto.createHash("sha256")
   .update(canonicalJson({ policy: PRODUCTION_QA_POLICY_BODY, calibration: CALIBRATION_DIGEST }), "utf8")
@@ -307,17 +359,22 @@ async function probeImageDimensions(probeAsset, localPath, label) {
   return { width, height };
 }
 
-async function decodeKeyedRgba({ ffmpegPath, filePath, width, height, keyer = "colorkey" }) {
+async function decodeKeyedRgba({ ffmpegPath, filePath, width, height, scaleTo = null }) {
+  const filters = [];
+  if (scaleTo) filters.push(`scale=${scaleTo.width}:${scaleTo.height}:flags=area`);
+  filters.push("format=rgba", `chromakey=${INPUT_CHROMA}:${INPUT_CHROMA_SIMILARITY}:${INPUT_CHROMA_BLEND}`, "format=rgba");
+  const outWidth = scaleTo ? scaleTo.width : width;
+  const outHeight = scaleTo ? scaleTo.height : height;
   const bytes = await runCapture({
     executable: ffmpegPath,
     args: [
       "-nostdin", "-hide_banner", "-loglevel", "error", "-i", filePath,
-      "-vf", `format=rgba,${keyer}=${INPUT_CHROMA}:${INPUT_CHROMA_SIMILARITY}:${INPUT_CHROMA_BLEND}`,
+      "-vf", filters.join(","),
       "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"
     ],
-    maximumBytes: width * height * 4 + 4096
+    maximumBytes: outWidth * outHeight * 4 + 4096
   });
-  if (bytes.length !== width * height * 4) {
+  if (bytes.length !== outWidth * outHeight * 4) {
     throw new Error("Keyed RGBA decode returned an unexpected frame size");
   }
   return bytes;
@@ -345,35 +402,28 @@ async function decodeRawRgba({ ffmpegPath, filePath, width, height, scaleTo = nu
 
 /**
  * Builds a subject measurement for one identity reference. Green-screen
- * references (approved masters) are measured through their exact chroma mask.
- * Source photos have arbitrary backgrounds and no matte, so they are measured
- * over a fixed central window; that difference is calibrated data, not a
- * hidden assumption, and each reference records which mode measured it.
+ * references (approved masters) are detected and masked through the same YUV
+ * chromakey decode used everywhere else. Source photos have arbitrary
+ * backgrounds and no matte, so they are measured through deterministic
+ * border-color background separation inside a generous central window; each
+ * reference records which mode measured it.
  */
-function measureReferenceFrame(bytes, { width, height }) {
+function measureReferenceFrame({ rawBytes, keyedBytes, width, height }) {
   const appearance = PRODUCTION_CALIBRATION.appearance;
+  const chroma = PRODUCTION_CALIBRATION.chroma;
   const pixels = width * height;
-  let greenish = 0;
+  let keyedAway = 0;
   for (let index = 0; index < pixels; index += 1) {
-    const offset = index * 4;
-    if (greenDistance(bytes[offset], bytes[offset + 1], bytes[offset + 2]) <= PRODUCTION_CALIBRATION.chroma.maxGreenDistance) {
-      greenish += 1;
-    }
+    if (keyedBytes[index * 4 + 3] < appearance.alphaThreshold) keyedAway += 1;
   }
-  const greenScreen = greenish / pixels >= appearance.minGreenReferenceBackgroundRatio;
-  const masked = Buffer.from(bytes);
-  if (greenScreen) {
-    for (let index = 0; index < pixels; index += 1) {
-      const offset = index * 4;
-      masked[offset + 3] = greenDistance(bytes[offset], bytes[offset + 1], bytes[offset + 2]) <= PRODUCTION_CALIBRATION.chroma.maxGreenDistance
-        ? 0
-        : 255;
-    }
+  if (keyedAway / pixels >= chroma.minKeyedReferenceBackgroundRatio) {
     return {
       mode: "chroma-masked-master",
-      measurement: measureSubjectFrame(masked, { width, height, options: appearance })
+      measurement: measureSubjectFrame(keyedBytes, { width, height, options: appearance })
     };
   }
+  const bytes = rawBytes;
+  const masked = Buffer.from(bytes);
 
   // Source photos have no matte. The deterministic photo measurement models
   // the background as the mean border color and keeps pixels that differ from
@@ -504,44 +554,93 @@ function createProductionMasterImageProcessor({ ffmpegPath, probeAsset }) {
       const box = inputMeasurement.boundingBox;
       const boxWidth = box.right - box.left + 1;
       const boxHeight = box.bottom - box.top + 1;
-      const rawScale = geometry.targetSubjectSqrtAreaPx / Math.sqrt(inputMeasurement.foregroundPixels);
-      const scale = Math.min(geometry.scaleBounds.max, Math.max(geometry.scaleBounds.min, rawScale));
-      const scaledWidth = Math.max(1, Math.round(boxWidth * scale));
-      const scaledHeight = Math.max(1, Math.round(boxHeight * scale));
-      const overlayX = Math.round(CANVAS.width / 2 - scaledWidth / 2);
-      const overlayY = Math.round(CANVAS.groundBaselineY - scaledHeight);
-      const filter = [
-        `[0:v]format=rgba,chromakey=${INPUT_CHROMA}:${INPUT_CHROMA_SIMILARITY}:${INPUT_CHROMA_BLEND},` +
-          `crop=${boxWidth}:${boxHeight}:${box.left}:${box.top},` +
-          `scale=${scaledWidth}:${scaledHeight}:flags=lanczos[pet]`,
-        `color=c=${INPUT_CHROMA}:s=${CANVAS.width}x${CANVAS.height}:r=1,format=rgb24[background]`,
-        `[background][pet]overlay=${overlayX}:${overlayY}:shortest=1:format=auto,format=rgb24[outv]`
-      ].join(";");
-      await runProcess({
-        executable: ffmpegPath,
-        args: [
-          "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", inputPath,
-          "-filter_complex", filter, "-map", "[outv]", "-frames:v", "1", "-compression_level", "9", outputPath
-        ]
-      });
+      // The subject must stand on the ground baseline without leaving the
+      // safe frame; the fit bounds below clamp the identity-preserving scale.
+      const maxSubjectHeight = CANVAS.groundBaselineY - CANVAS.safeFrame.top - 2;
+      const maxSubjectWidth = CANVAS.safeFrame.right - CANVAS.safeFrame.left - 2;
+      const clampScale = (value) => Math.min(
+        geometry.scaleBounds.max,
+        Math.max(geometry.scaleBounds.min, value),
+        maxSubjectHeight / boxHeight,
+        maxSubjectWidth / boxWidth
+      );
+      const renderNormalized = async (scale) => {
+        const scaledWidth = Math.max(1, Math.round(boxWidth * scale));
+        const scaledHeight = Math.max(1, Math.round(boxHeight * scale));
+        const overlayX = Math.round(CANVAS.width / 2 - scaledWidth / 2);
+        const overlayY = Math.round(CANVAS.groundBaselineY - scaledHeight);
+        // Chromakey the model-painted green, remove residual spill, rescale,
+        // then morphologically close the alpha so fine fur does not fragment
+        // the subject into keying specks and pinholes.
+        const filter = [
+          `[0:v]format=rgba,chromakey=${INPUT_CHROMA}:${INPUT_CHROMA_SIMILARITY}:${INPUT_CHROMA_BLEND},` +
+            "despill=type=green,format=rgba,split[petcolorfull][petalphafull]",
+          // Repair while the original canvas border is still present. A tight
+          // crop can put an ear or tail at (0,0), which makes a corner flood
+          // unable to identify the connected background and would fill the
+          // entire crop rectangle instead of only enclosed subject holes.
+          `[petalphafull]${repairedMatteFilterChain()}[mattefull]`,
+          `[petcolorfull]crop=${boxWidth}:${boxHeight}:${box.left}:${box.top},` +
+            `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,format=rgba[petcolor]`,
+          `[mattefull]crop=${boxWidth}:${boxHeight}:${box.left}:${box.top},` +
+            `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,format=gray[petmatte]`,
+          "[petcolor][petmatte]alphamerge[pet]",
+          `color=c=${INPUT_CHROMA}:s=${CANVAS.width}x${CANVAS.height}:r=1,format=rgb24[background]`,
+          `[background][pet]overlay=${overlayX}:${overlayY}:shortest=1:format=auto,format=rgb24[outv]`
+        ].join(";");
+        await runProcess({
+          executable: ffmpegPath,
+          args: [
+            "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", inputPath,
+            "-filter_complex", filter, "-map", "[outv]", "-frames:v", "1", "-compression_level", "9", outputPath
+          ]
+        });
+        const png = await inspectPngFile(outputPath);
+        if (png.width !== CANVAS.width || png.height !== CANVAS.height) {
+          throw new Error("Normalized production master has an unexpected canvas size");
+        }
+        const keyed = await decodeKeyedRgba({
+          ffmpegPath,
+          filePath: outputPath,
+          width: CANVAS.width,
+          height: CANVAS.height
+        });
+        return {
+          png,
+          keyed,
+          measurement: measureSubjectFrame(keyed, { width: CANVAS.width, height: CANVAS.height, options: appearance })
+        };
+      };
 
-      const outputPng = await inspectPngFile(outputPath);
-      if (outputPng.width !== CANVAS.width || outputPng.height !== CANVAS.height) {
-        throw new Error("Normalized production master has an unexpected canvas size");
+      // Two-pass normalization: compositing, spill removal and re-keying eat
+      // soft fur edges, so a single geometric scale undershoots the canonical
+      // torso target. The second pass corrects the scale from the measured
+      // first-pass output; both passes stay inside the safe-frame fit clamp.
+      const inputCanonicalTorso = estimateCanonicalGeometry(inputMeasurement, geometry.kinds[kind]).torsoHeightPx;
+      let scale = clampScale(CANVAS.targetTorsoHeightPx / inputCanonicalTorso);
+      let rendered = await renderNormalized(scale);
+      const measuredTorso = rendered.measurement.boundingBox && rendered.measurement.foregroundPixels > 0
+        ? estimateCanonicalGeometry(rendered.measurement, geometry.kinds[kind]).torsoHeightPx
+        : 0;
+      if (measuredTorso > 0) {
+        const correction = CANVAS.targetTorsoHeightPx / measuredTorso;
+        if (Math.abs(correction - 1) > 0.02) {
+          const correctedScale = clampScale(scale * correction);
+          if (Math.abs(correctedScale - scale) / scale > 0.005) {
+            scale = correctedScale;
+            rendered = await renderNormalized(scale);
+          }
+        }
       }
-      const outputKeyed = await decodeKeyedRgba({
-        ffmpegPath,
-        filePath: outputPath,
-        width: CANVAS.width,
-        height: CANVAS.height
-      });
-      const chromaMetrics = analyzeChromaSubjectFrame(outputKeyed, { width: CANVAS.width, height: CANVAS.height });
-      const chromaDecision = evaluateChromaSubjectIntegrity(chromaMetrics);
-      const outputMeasurement = measureSubjectFrame(outputKeyed, {
+      const outputPng = rendered.png;
+      const outputKeyed = rendered.keyed;
+      const outputMeasurement = rendered.measurement;
+      const chromaMetrics = analyzeChromaSubjectFrame(outputKeyed, {
         width: CANVAS.width,
         height: CANVAS.height,
-        options: appearance
+        thresholds: appearance.chromaThresholds
       });
+      const chromaDecision = evaluateChromaSubjectIntegrity(chromaMetrics, appearance.chromaThresholds);
 
       let backgroundUniformRatio = 0;
       if (outputMeasurement.boundingBox) {
@@ -568,8 +667,16 @@ function createProductionMasterImageProcessor({ ffmpegPath, probeAsset }) {
           width: Math.max(16, Math.round(dimensions.width * referenceScale)),
           height: Math.max(16, Math.round(dimensions.height * referenceScale))
         };
-        const rawReference = await decodeRawRgba({ ffmpegPath, filePath: referencePath, ...dimensions, scaleTo });
-        referenceMeasurements.push(measureReferenceFrame(rawReference, scaleTo));
+        const [rawReference, keyedReference] = await Promise.all([
+          decodeRawRgba({ ffmpegPath, filePath: referencePath, ...dimensions, scaleTo }),
+          decodeKeyedRgba({ ffmpegPath, filePath: referencePath, ...dimensions, scaleTo })
+        ]);
+        referenceMeasurements.push(measureReferenceFrame({
+          rawBytes: rawReference,
+          keyedBytes: keyedReference,
+          width: scaleTo.width,
+          height: scaleTo.height
+        }));
       }
       let appearanceEvidence = null;
       let frame;
@@ -745,11 +852,14 @@ function createProductionMattingService({ ffmpegPath }) {
         executable: ffmpegPath,
         args: [
           "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", inputPath,
-          // The provider source is RGB green-screen media; colorkey is the RGB
-          // keyer and yields the deterministic alpha plane consumed by the
-          // normalization plan.
-          "-vf", `format=rgba,colorkey=${INPUT_CHROMA}:${INPUT_CHROMA_SIMILARITY}:${INPUT_CHROMA_BLEND},alphaextract,format=gray`,
-          "-an", "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-deadline", "good", "-cpu-used", "4",
+          // Provider green is model-painted (hue-correct, luma-shifted), so
+          // the matte comes from the YUV chromakey. The explicit rgba
+          // conversion after chromakey is required: alphaextract cannot
+          // negotiate chromakey's native output format directly. The
+          // dilation/erosion pair closes fur pinholes so the subject stays
+          // one connected matte component.
+          "-vf", `format=rgba,chromakey=${INPUT_CHROMA}:${INPUT_CHROMA_SIMILARITY}:${INPUT_CHROMA_BLEND},format=rgba,${repairedMatteFilterChain()}`,
+          "-an", "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-lossless", "1", "-deadline", "good", "-cpu-used", "4",
           matteOutputPath
         ]
       });
@@ -767,7 +877,10 @@ function createProductionMattingService({ ffmpegPath }) {
         executable: ffmpegPath,
         args: [
           "-nostdin", "-hide_banner", "-loglevel", "error", "-i", inputPath,
-          "-vf", `fps=2,scale=${sampleWidth}:${sampleHeight}:flags=area,format=rgba`,
+          // Sampled source frames go through the same YUV chromakey; a border
+          // pixel counts as clean green when the key removes it.
+          "-vf", `fps=2,scale=${sampleWidth}:${sampleHeight}:flags=area,format=rgba,` +
+            `chromakey=${INPUT_CHROMA}:${INPUT_CHROMA_SIMILARITY}:${INPUT_CHROMA_BLEND},format=rgba`,
           "-frames:v", String(content.sourceSampleFrames),
           "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"
         ],
@@ -781,8 +894,7 @@ function createProductionMattingService({ ffmpegPath }) {
             for (let x = 0; x < sampleWidth; x += 1) {
               if (x >= 8 && y >= 8 && x < sampleWidth - 8 && y < sampleHeight - 8) continue;
               border += 1;
-              const offset = (y * sampleWidth + x) * 4;
-              if (greenDistance(frame[offset], frame[offset + 1], frame[offset + 2]) <= PRODUCTION_CALIBRATION.chroma.maxGreenDistance) {
+              if (frame[(y * sampleWidth + x) * 4 + 3] < PRODUCTION_CALIBRATION.appearance.alphaThreshold) {
                 borderGreen += 1;
               }
             }
@@ -846,6 +958,12 @@ function createProductionMattingService({ ffmpegPath }) {
       ];
 
       const actionRatios = PRODUCTION_CALIBRATION.geometry.actions[actionId];
+      const actionMotion = content.actionMotionEnvelopes[actionId];
+      if (!actionRatios || !actionMotion) throw new Error("Production action calibration is unavailable");
+      const actionChromaThresholds = {
+        ...appearance.chromaThresholds,
+        maximumRowSpanHoleRatio: actionMotion.maxRowSpanHoleRatio
+      };
       const sampledFrames = [];
       const integrityErrorFrames = [];
       let worstChroma = null;
@@ -886,8 +1004,12 @@ function createProductionMattingService({ ffmpegPath }) {
         ],
         frameBytes: CANVAS_FRAME_BYTES,
         onFrame: (frameBytesBuffer, frameIndex) => {
-          const chromaMetrics = analyzeChromaSubjectFrame(frameBytesBuffer, { width: CANVAS.width, height: CANVAS.height });
-          const decision = evaluateChromaSubjectIntegrity(chromaMetrics);
+          const chromaMetrics = analyzeChromaSubjectFrame(frameBytesBuffer, {
+            width: CANVAS.width,
+            height: CANVAS.height,
+            thresholds: actionChromaThresholds
+          });
+          const decision = evaluateChromaSubjectIntegrity(chromaMetrics, actionChromaThresholds);
           if (!decision.ok) integrityErrorFrames.push({ frameIndex, errors: [...decision.errors] });
           const badness = chromaBadness(chromaMetrics);
           if (badness > worstChromaBadness) {
@@ -897,7 +1019,7 @@ function createProductionMattingService({ ffmpegPath }) {
           if (!(chromaMetrics.significantComponentCount === 1 && chromaMetrics.largestComponentRatio >= 0.97)) allSingleSubject = false;
           if (chromaMetrics.transparentBorderRatio < content.minTransparentBorderRatio) allBorderClear = false;
           if (chromaMetrics.foregroundGreenSpillRatio > content.maxForegroundGreenSpillRatio) allSpillClear = false;
-          if (chromaMetrics.rowSpanHoleRatio > content.maxRowSpanHoleRatio) allHolesClear = false;
+          if (chromaMetrics.rowSpanHoleRatio > actionMotion.maxRowSpanHoleRatio) allHolesClear = false;
 
           const measurement = measureSubjectFrame(frameBytesBuffer, {
             width: CANVAS.width,
@@ -1012,7 +1134,19 @@ function createProductionMattingService({ ffmpegPath }) {
           restWindowFrames: loop.restWindowFrames,
           includeMotionSeries: true
         });
-        const completedBreathCycles = countActiveMotionSegments(motion.motionSeries, loop);
+        const breath = analyzeForegroundAreaCycle(loopBytes, {
+          width: loop.analysisWidth,
+          height: loop.analysisHeight,
+          frameCount: decodedFrameCount,
+          restWindowFrames: loop.restWindowFrames,
+          alphaThreshold: loop.areaAlphaThreshold,
+          smoothingWindowFrames: loop.areaSmoothingWindowFrames,
+          minimumAmplitudeRatio: loop.minimumBreathAreaAmplitudeRatio,
+          activeFraction: loop.breathActiveFraction,
+          minimumActiveSegmentFrames: loop.minBreathActiveSegmentFrames,
+          maximumRestAreaDeltaRatio: loop.maximumRestAreaDeltaRatio
+        });
+        const completedBreathCycles = breath.completedBreathCycles;
         loopSeamAcceptable = motion.seamPixelDelta <= loop.maxSeamPixelDelta &&
           motion.seamMotionDelta <= loop.maxBoundaryMotion &&
           motion.terminalMotion <= loop.maxBoundaryMotion;
@@ -1020,8 +1154,11 @@ function createProductionMattingService({ ffmpegPath }) {
           contractVersion: SLEEP_LOOP_BOUNDARY_CONTRACT_VERSION,
           startsAtEndExhaleRest: motion.firstRestFrameCount >= loop.restWindowFrames,
           endsAtEndExhaleRest: motion.lastRestFrameCount >= loop.restWindowFrames,
-          completeBreathCycle: completedBreathCycles >= 1 && motion.lastRestFrameCount >= loop.restWindowFrames,
-          nextInhaleStarted: motion.terminalMotion > loop.restMotionThreshold,
+          completeBreathCycle: completedBreathCycles === 1 &&
+            motion.firstRestFrameCount >= loop.restWindowFrames &&
+            motion.lastRestFrameCount >= loop.restWindowFrames &&
+            !breath.nextInhaleStarted,
+          nextInhaleStarted: breath.nextInhaleStarted,
           completedBreathCycles,
           sampledFrameCount: decodedFrameCount,
           firstRestFrameCount: motion.firstRestFrameCount,
@@ -1033,6 +1170,10 @@ function createProductionMattingService({ ffmpegPath }) {
           meanAdjacentFrameMotion: motion.meanAdjacentFrameMotion,
           openingRestMeanMotion: motion.openingRestMeanMotion,
           closingRestMeanMotion: motion.closingRestMeanMotion,
+          breathAreaAmplitudeRatio: breath.amplitudeRatio,
+          openingRestMeanArea: breath.openingRestMeanArea,
+          closingRestMeanArea: breath.closingRestMeanArea,
+          breathPeakFrameIndex: breath.peakFrameIndex,
           measuredFromDecodedOutput: true,
           evidenceClass: EVIDENCE_CLASS
         };
@@ -1040,7 +1181,7 @@ function createProductionMattingService({ ffmpegPath }) {
 
       const identityConsistent = identityMinScore >= appearance.identityDriftFloor;
       const coatConsistent = coatColorMinScore >= appearance.coatConsistencyFloor;
-      const cameraFixed = maxGroundJitter <= content.maxGroundJitterPx && maxCenterDrift <= content.maxCenterDriftPx;
+      const cameraFixed = maxGroundJitter <= actionMotion.maxGroundDeltaPx && maxCenterDrift <= content.maxCenterDriftPx;
       const contentInspection = {
         cameraFixed,
         noText: allSingleSubject,
@@ -1051,10 +1192,10 @@ function createProductionMattingService({ ffmpegPath }) {
         speciesConsistent: coatConsistent,
         primaryCoatColorConsistent: coatConsistent,
         noSevereIdentityDrift: identityConsistent,
-        noDeformation: minAdjacentMaskIoU >= content.minAdjacentMaskIoU &&
-          maxScaleJitter <= content.maxRelativeScaleJitter,
+        noDeformation: minAdjacentMaskIoU >= actionMotion.minAdjacentMaskIoU &&
+          maxScaleJitter <= actionMotion.maxRelativeScaleJitter,
         matteComplete: allHolesClear,
-        matteEdgesStable: minAdjacentMaskIoU >= content.minEdgeStableAdjacentMaskIoU,
+        matteEdgesStable: minAdjacentMaskIoU >= actionMotion.minAdjacentMaskIoU,
         greenBackgroundUniform: sourceEvidence.greenBackgroundUniform,
         noGreenSpill: allSpillClear,
         ...(actionId === "sleep-loop" ? { loopSeamAcceptable } : {}),

@@ -133,13 +133,14 @@ function createActionQa(actionId, {
   firstMasterSha256,
   lastMasterSha256
 }) {
+  const sampledFrameCount = 144;
   const decoded = createDecodedEndpointEvidence({
     actionId,
     firstMasterSha256,
     lastMasterSha256,
     outputSha256
   });
-  const chroma = createChromaEvidence(1);
+  const chroma = createChromaEvidence(sampledFrameCount);
   const frame = createFrameEvidence();
   const contentInspection = {
     cameraFixed: true,
@@ -173,7 +174,7 @@ function createActionQa(actionId, {
     continuity: { ok: true, errors: [] },
     appearance: { ok: true, errors: [] },
     loopBoundary: actionId === "sleep-loop" ? { ok: true, errors: [] } : { ok: true, errors: [] },
-    frameResults: [{ ok: true, errors: [] }],
+    frameResults: Array.from({ length: sampledFrameCount }, () => ({ ok: true, errors: [] })),
     provenance,
     evidence: {
       contentInspection,
@@ -183,7 +184,7 @@ function createActionQa(actionId, {
         contractVersion: APPEARANCE_LOCK_CONTRACT_VERSION,
         referenceBinding: "approved-action-masters",
         fullFrameCoverage: true,
-        sampledFrameCount: 1
+        sampledFrameCount
       },
       endpoints: {
         firstMasterHash: firstMasterSha256,
@@ -191,7 +192,7 @@ function createActionQa(actionId, {
         decoded
       },
       continuity: {
-        sampledFrameCount: 1,
+        sampledFrameCount,
         firstFrame: frame,
         lastFrame: frame
       },
@@ -203,7 +204,7 @@ function createActionQa(actionId, {
           completeBreathCycle: true,
           nextInhaleStarted: false,
           completedBreathCycles: 1,
-          sampledFrameCount: 1
+          sampledFrameCount
         }
       } : {})
     }
@@ -358,6 +359,7 @@ describe("production PetPack media evidence aggregate gate", () => {
     ["wrong first-master binding", (report) => {
       report.evidence.endpoints.decoded.firstMasterSha256 = sha256("wrong-first-master");
     }],
+    ["wrong output frame count", (report) => { report.evidence.endpoints.decoded.outputFrameCount = 143; }],
     ["wrong terminal frame index", (report) => { report.evidence.endpoints.decoded.endpointFrameIndices[1] = 142; }],
     ["unconfirmed terminal frame", (report) => { report.evidence.endpoints.decoded.terminalFrameMatches = false; }],
     ["failing metrics", (report) => { report.evidence.endpoints.decoded.firstFrame.maskIoU = 0; }],

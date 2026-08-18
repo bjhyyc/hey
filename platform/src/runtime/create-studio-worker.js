@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
@@ -177,7 +178,45 @@ async function assertStudioWorkerSchemaReady(database) {
 async function assertWorkerTempRoot(tempRoot) {
   const stat = await fsp.lstat(tempRoot);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Worker temporary root must be a real directory");
-  return fsp.realpath(tempRoot);
+  const resolvedRoot = await fsp.realpath(tempRoot);
+  const probePath = path.join(
+    resolvedRoot,
+    `.petpack-worker-write-probe-${process.pid}-${crypto.randomUUID()}`
+  );
+  let handle = null;
+  let created = false;
+  let operationError = null;
+  let cleanupError = null;
+  try {
+    handle = await fsp.open(probePath, "wx", 0o600);
+    created = true;
+    await handle.writeFile("ready\n", "utf8");
+    await handle.sync();
+  } catch (error) {
+    operationError = error;
+  } finally {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
+    if (created) {
+      try {
+        await fsp.unlink(probePath);
+      } catch (error) {
+        cleanupError ||= error;
+      }
+    }
+  }
+  if (operationError) {
+    throw new Error("Worker temporary root must be writable", { cause: operationError });
+  }
+  if (cleanupError) {
+    throw new Error("Worker temporary root write probe could not be removed", { cause: cleanupError });
+  }
+  return resolvedRoot;
 }
 
 async function loadWorkerComponentsModule({ environment = process.env, context = {}, production = false, evidenceMode } = {}) {

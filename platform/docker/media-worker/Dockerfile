@@ -136,6 +136,22 @@ RUN apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https
     xvfb \
   && rm -rf /var/lib/apt/lists/*
 
+# Build tooling is intentionally absent from the production runtime. The
+# pinned application dependencies are copied from the build stage, while npm,
+# npx, Corepack and Yarn are not used by the Worker. Removing their exact base
+# image paths also prevents inherited npm-CLI CVEs from expanding the runtime
+# attack surface.
+RUN rm -rf \
+      /usr/local/lib/node_modules/npm \
+      /usr/local/lib/node_modules/corepack \
+      /opt/yarn-v1.22.22 \
+  && rm -f \
+      /usr/local/bin/npm \
+      /usr/local/bin/npx \
+      /usr/local/bin/yarn \
+      /usr/local/bin/yarnpkg \
+      /usr/local/bin/corepack
+
 WORKDIR /app/platform
 
 COPY --from=build --chown=10001:10001 /app /app

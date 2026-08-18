@@ -139,19 +139,20 @@ function assertProductionMediaSnapshotEvidence({ masterEvidence, actions } = {})
     if (report?.evidence?.endpoints?.lastMasterHash !== expectedLastMasterHash) {
       errors.push(`${path}.evidence.endpoints.lastMasterHash is not bound to the selected master`);
     }
+    const sampledFrameCount = Number(report?.evidence?.continuity?.sampledFrameCount);
     const decoded = validateDecodedEndpointInspection(decodedEvidence, {
       production: true,
       actionId,
       expectedFirstMasterHash,
       expectedLastMasterHash,
-      expectedOutputHash: record?.sha256
+      expectedOutputHash: record?.sha256,
+      expectedFrameCount: sampledFrameCount
     });
     appendDecisionErrors(errors, `${path}.evidence.endpoints.decoded`, decoded);
     if (!isDeepStrictEqual(report?.decodedEndpoints?.evidence, decodedEvidence)) {
       errors.push(`${path}.decodedEndpoints evidence does not match immutable endpoint evidence`);
     }
 
-    const sampledFrameCount = Number(report?.evidence?.continuity?.sampledFrameCount);
     if (!Number.isSafeInteger(sampledFrameCount) || sampledFrameCount < 1 ||
         !Array.isArray(report?.frameResults) || report.frameResults.length !== sampledFrameCount) {
       errors.push(`${path} has no exact sampled frame count for chroma evidence`);

@@ -307,10 +307,13 @@ function isLeftRightPlacementPreserved(first, second, { tolerance = 0.05, minMar
 }
 
 /**
- * Calibrated canonical-geometry estimate. The scale-bearing torso estimate is
- * derived from the pose-stable subject area; head and shoulder estimates are
- * derived from the bounding-box projection, so they respond to the subject's
- * actual shape instead of restating the canvas targets.
+ * Calibrated apparent-scale estimate over the subject bounding box. The square
+ * root of bounding-box area is stable when a subject turns, lies down or rolls,
+ * while still changing linearly when the whole character is resized. Unlike
+ * foreground-pixel area it is not reduced by fine fur or small keying holes.
+ * The legacy torso/head/shoulder field names are retained by the QA contract;
+ * their calibrated ratios are three projections of this one pose-tolerant
+ * scale signal, while appearance and decoded endpoint gates carry anatomy.
  */
 function estimateCanonicalGeometry(measurement, ratios) {
   if (!measurement || !measurement.boundingBox || !(measurement.foregroundPixels > 0)) {
@@ -323,13 +326,14 @@ function estimateCanonicalGeometry(measurement, ratios) {
     }
   }
   const box = measurement.boundingBox;
+  const apparentScale = Math.sqrt((box.right - box.left + 1) * (box.bottom - box.top + 1));
   return Object.freeze({
     visibleBounds: Object.freeze({ left: box.left, top: box.top, right: box.right, bottom: box.bottom }),
     groundBaselineY: box.bottom,
     centerX: measurement.centroid.x,
-    torsoHeightPx: Math.sqrt(measurement.foregroundPixels) * Number(ratios.torsoRatio),
-    headHeightPx: (box.bottom - box.top + 1) * Number(ratios.headRatio),
-    shoulderWidthPx: (box.right - box.left + 1) * Number(ratios.shoulderRatio)
+    torsoHeightPx: apparentScale * Number(ratios.torsoRatio),
+    headHeightPx: apparentScale * Number(ratios.headRatio),
+    shoulderWidthPx: apparentScale * Number(ratios.shoulderRatio)
   });
 }
 

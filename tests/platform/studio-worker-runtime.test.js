@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
@@ -8,6 +10,7 @@ const {
   CONTROLLED_REAL_EVIDENCE_MODE,
   StudioWorkerRuntime,
   assertStudioWorkerSchemaReady,
+  assertWorkerTempRoot,
   createStudioWorkerRuntime,
   loadStudioWorkerRuntimeConfig,
   loadWorkerComponentsModule,
@@ -122,6 +125,16 @@ function fakeComponents() {
 }
 
 describe("Studio Worker runtime", () => {
+  it("proves the configured temporary root is writable without leaving a probe behind", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "petpack-worker-root-"));
+    try {
+      await expect(assertWorkerTempRoot(tempRoot)).resolves.toBe(await fs.realpath(tempRoot));
+      await expect(fs.readdir(tempRoot)).resolves.toEqual([]);
+    } finally {
+      await fs.rmdir(tempRoot);
+    }
+  });
+
   it("loads bounded development settings and requires explicit production paths", () => {
     expect(loadStudioWorkerRuntimeConfig({ PETPACK_WORKER_TEMP_ROOT: path.resolve(".") })).toMatchObject({
       mode: "development",

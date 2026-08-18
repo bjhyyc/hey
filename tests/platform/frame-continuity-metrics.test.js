@@ -82,7 +82,8 @@ describe("decoded endpoint frame continuity", () => {
       actionId: "sleep-transition",
       expectedFirstMasterHash: "1".repeat(64),
       expectedLastMasterHash: "2".repeat(64),
-      expectedOutputHash: "3".repeat(64)
+      expectedOutputHash: "3".repeat(64),
+      expectedFrameCount: 144
     })).toMatchObject({ ok: false });
 
     const trustedEvidence = {
@@ -107,7 +108,8 @@ describe("decoded endpoint frame continuity", () => {
       actionId: "sleep-transition",
       expectedFirstMasterHash: "1".repeat(64),
       expectedLastMasterHash: "2".repeat(64),
-      expectedOutputHash: "3".repeat(64)
+      expectedOutputHash: "3".repeat(64),
+      expectedFrameCount: 144
     })).toMatchObject({
       ok: true,
       errors: [],

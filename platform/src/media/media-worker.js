@@ -159,18 +159,6 @@ class MediaWorker {
       error.code = "trusted_endpoint_inspector_missing";
       throw error;
     }
-    const trustedEndpointInspection = this.endpointInspector
-      ? await this.endpointInspector({
-        actionId,
-        outputPath,
-        firstMasterPath,
-        lastMasterPath,
-        expectedFirstMasterHash,
-        expectedLastMasterHash,
-        frameCount: inspection.sampledFrames.length,
-        scratchDirectory
-      })
-      : null;
     const mediaProbe = probeResult && probeResult.probe ? probeResult.probe : probeResult;
     const outputVideo = getVideoStream(mediaProbe);
     const outputDuration = Number(outputVideo?.duration ?? mediaProbe?.format?.duration);
@@ -182,6 +170,18 @@ class MediaWorker {
     if (!Number.isSafeInteger(expectedFrameCount) || expectedFrameCount < 1 || inspection.sampledFrames.length !== expectedFrameCount) {
       throw new Error("Final action inspection must cover every normalized video frame");
     }
+    const trustedEndpointInspection = this.endpointInspector
+      ? await this.endpointInspector({
+        actionId,
+        outputPath,
+        firstMasterPath,
+        lastMasterPath,
+        expectedFirstMasterHash,
+        expectedLastMasterHash,
+        frameCount: expectedFrameCount,
+        scratchDirectory
+      })
+      : null;
     const qa = validateVideoAction({
       actionId,
       mediaProbe,

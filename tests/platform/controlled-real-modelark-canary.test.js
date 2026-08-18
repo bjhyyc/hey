@@ -9,12 +9,14 @@ const require = createRequire(import.meta.url);
 const {
   CONTROLLED_ROOT,
   PROJECT_ROOT,
+  PROMPT_FILE,
   STAGE_IDS,
   ControlledCanaryError,
   isStrictDescendant,
   registerNormalizedMasterArtifact,
   runControlledCanary
 } = require("../../platform/src/canary/controlled-real-modelark-canary");
+const { parsePetPackPromptFileFromPath } = require("../../platform/src/prompts/prompt-file");
 const { createFixturePng } = require("../../platform/src/development/zero-cost-worker-components");
 const {
   assertNoSecretFileConfiguration,
@@ -136,6 +138,25 @@ function fakeSuccessfulClient(outputRoot, postCalls, getCalls = []) {
 }
 
 describe("controlled real ModelArk canary", () => {
+  it("pins the seven-action prompt bundle to front/sleep references without the legacy long alias", () => {
+    const prompts = parsePetPackPromptFileFromPath(PROMPT_FILE);
+    expect(prompts.images.map((item) => item.kind)).toEqual(["front", "side", "sleep"]);
+    expect(prompts.videos.map((item) => item.actionId)).toEqual([
+      "idle",
+      "sleep-transition",
+      "sleep-loop",
+      "stretch",
+      "sneeze",
+      "roll",
+      "hover-attention"
+    ]);
+    expect(prompts.videos.some((item) => item.prompt.includes("@long"))).toBe(false);
+    const transition = prompts.videos.find((item) => item.actionId === "sleep-transition");
+    expect(transition.prompt).toContain("@front");
+    expect(transition.prompt).toContain("@sleep");
+    expect(transition.prompt).toContain("0.0s — 首帧从 @front开始");
+    expect(transition.prompt).toContain("尾帧为@sleep");
+  });
   it("creates only a fail-closed plan with the reviewed CNY calculation and no client", async () => {
     const fixture = await makeFixture();
     const result = await runControlledCanary(fixture.options, {
