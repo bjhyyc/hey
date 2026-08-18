@@ -83,7 +83,7 @@ describe("master appearance left/right placement across views", () => {
 
     expect(result.warnings).toHaveLength(5);
     for (const warning of result.warnings) {
-      expect(warning).toContain("not decidable against a cross-view reference");
+      expect(warning).toContain("not decidable against this reference");
     }
     expect(result.warnings.some((entry) => entry.includes("asymmetryPreserved"))).toBe(true);
   });
@@ -110,5 +110,65 @@ describe("master appearance left/right placement across views", () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors).toContain("Master appearance speciesAndBreedConsistent must be true");
+  });
+});
+
+describe("master appearance gating by reference trust", () => {
+  it("does not fail a master on scores measured against an unmatted photo", () => {
+    const result = validateMasterAppearanceInspection(
+      crossViewRejection({
+        referenceBinding: "source-photos",
+        gatingReferenceMode: "photo-background-separated",
+        faceIdentityScore: 0.42,
+        coatColorScore: 0.19,
+        speciesAndBreedConsistent: false,
+        unresolvedConflictCount: 2
+      }),
+      { kind: "front", sourceReferenceCount: 4, policy }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.some((entry) => entry.includes("coatColorScore"))).toBe(true);
+    expect(result.warnings.some((entry) => entry.includes("speciesAndBreedConsistent"))).toBe(true);
+    expect(result.warnings.some((entry) => entry.includes("unresolved source-reference conflicts"))).toBe(true);
+  });
+
+  it("still fails a master whose matted reference says it is a different animal", () => {
+    const result = validateMasterAppearanceInspection(
+      crossViewRejection({
+        gatingReferenceMode: "chroma-masked-master",
+        coatColorScore: 0.08,
+        speciesAndBreedConsistent: false
+      }),
+      { kind: "side", sourceReferenceCount: 4, policy }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Master appearance speciesAndBreedConsistent must be true");
+    expect(result.errors).toContain("Master appearance.coatColorScore is below the configured threshold");
+  });
+
+  it("keeps failing malformed evidence regardless of which reference won", () => {
+    const result = validateMasterAppearanceInspection(
+      crossViewRejection({
+        gatingReferenceMode: "photo-center-window",
+        coatColorScore: "not-a-score"
+      }),
+      { kind: "front", sourceReferenceCount: 4, policy }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Master appearance.coatColorScore must be a score between 0 and 1");
+  });
+
+  it("treats evidence without a recorded gating reference as trusted", () => {
+    const result = validateMasterAppearanceInspection(
+      crossViewRejection({ referenceBinding: "source-photos", coatColorScore: 0.05 }),
+      { kind: "front", sourceReferenceCount: 4, policy }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Master appearance.coatColorScore is below the configured threshold");
   });
 });

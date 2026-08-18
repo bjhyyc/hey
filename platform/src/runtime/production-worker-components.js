@@ -216,7 +216,12 @@ function repairedMatteFilterChain() {
 
 const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   name: "hey-petpack-production-qa",
-  version: "hey-production-qa/1.1.0",
+  // 1.2.0 changed what the appearance thresholds gate rather than their values:
+  // scores measured against an unmatted source photo are recorded instead of
+  // enforced, because that separation inverts on a pale pet against a pale
+  // floor. Reports from 1.1.0 and 1.2.0 are not comparable on appearance
+  // outcomes, so the version moves with the semantics.
+  version: "hey-production-qa/1.2.0",
   // Composition margins recalibrated to the user-approved large framing:
   // the subject may approach the canvas edges; genuine clipping remains
   // guarded by the chroma transparent-border gate.
@@ -421,6 +426,8 @@ async function decodeRawRgba({ ffmpegPath, filePath, width, height, scaleTo = nu
  * border-color background separation inside a generous central window; each
  * reference records which mode measured it.
  */
+const CHROMA_MASKED_REFERENCE_MODE = "chroma-masked-master";
+
 function measureReferenceFrame({ rawBytes, keyedBytes, width, height }) {
   const appearance = PRODUCTION_CALIBRATION.appearance;
   const chroma = PRODUCTION_CALIBRATION.chroma;
@@ -431,7 +438,7 @@ function measureReferenceFrame({ rawBytes, keyedBytes, width, height }) {
   }
   if (keyedAway / pixels >= chroma.minKeyedReferenceBackgroundRatio) {
     return {
-      mode: "chroma-masked-master",
+      mode: CHROMA_MASKED_REFERENCE_MODE,
       measurement: measureSubjectFrame(keyedBytes, { width, height, options: appearance })
     };
   }
@@ -500,8 +507,14 @@ function measureReferenceFrame({ rawBytes, keyedBytes, width, height }) {
   };
 }
 
+// An approved master carries a real matte, so its measurement is the animal and
+// nothing else. A source photo is separated by the border-colour heuristic
+// below, which cannot be trusted on ordinary phone photos. Prefer a matted
+// reference for the scores the gate acts on, and report which kind won so the
+// gate knows whether its thresholds mean anything.
 function bestAppearanceAcrossReferences(candidateMeasurement, referenceMeasurements) {
   let best = null;
+  let bestMatted = null;
   const perReference = [];
   for (const reference of referenceMeasurements) {
     const scores = compareSubjectAppearance(candidateMeasurement, reference.measurement);
@@ -509,9 +522,13 @@ function bestAppearanceAcrossReferences(candidateMeasurement, referenceMeasureme
     if (!best || scores.identityScore > best.scores.identityScore) {
       best = { scores, reference };
     }
+    if (reference.mode === CHROMA_MASKED_REFERENCE_MODE &&
+        (!bestMatted || scores.identityScore > bestMatted.scores.identityScore)) {
+      bestMatted = { scores, reference };
+    }
   }
   if (!best) throw new Error("At least one identity reference measurement is required");
-  return { best, perReference };
+  return { best: bestMatted || best, unmattedBest: best, perReference };
 }
 
 function masterReferenceBinding(kind) {
@@ -695,7 +712,12 @@ function createProductionMasterImageProcessor({ ffmpegPath, probeAsset }) {
       let frame;
       if (outputMeasurement.boundingBox && outputMeasurement.foregroundPixels > 0) {
         const { best, perReference } = bestAppearanceAcrossReferences(outputMeasurement, referenceMeasurements);
-        const unresolvedConflictCount = perReference
+        // Only conflicts among references the gate can act on are counted; an
+        // unmatted photo scoring low says nothing about the master.
+        const conflictCandidates = perReference.some((entry) => entry.mode === CHROMA_MASKED_REFERENCE_MODE)
+          ? perReference.filter((entry) => entry.mode === CHROMA_MASKED_REFERENCE_MODE)
+          : perReference;
+        const unresolvedConflictCount = conflictCandidates
           .filter((entry) => entry.identityScore < appearance.referenceConflictFloor).length;
         const canonical = estimateCanonicalGeometry(outputMeasurement, geometry.kinds[kind]);
         frame = {
@@ -738,6 +760,7 @@ function createProductionMasterImageProcessor({ ffmpegPath, probeAsset }) {
           coatColorScore: best.scores.coatColorScore,
           markingTopologyScore: best.scores.markingTopologyScore,
           referenceModes: perReference.map((entry) => entry.mode),
+          gatingReferenceMode: best.reference.mode,
           regions,
           measuredFromDecodedOutput: true,
           evidenceClass: EVIDENCE_CLASS
@@ -1060,8 +1083,8 @@ function createProductionMattingService({ ffmpegPath }) {
             return;
           }
           const { best } = bestAppearanceAcrossReferences(measurement, [
-            { mode: "chroma-masked-master", measurement: masterMeasurements[0] },
-            { mode: "chroma-masked-master", measurement: masterMeasurements[1] }
+            { mode: CHROMA_MASKED_REFERENCE_MODE, measurement: masterMeasurements[0] },
+            { mode: CHROMA_MASKED_REFERENCE_MODE, measurement: masterMeasurements[1] }
           ]);
           const canonical = estimateCanonicalGeometry(measurement, actionRatios);
           sampledFrames.push({

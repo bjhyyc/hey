@@ -20,6 +20,21 @@ const REQUIRED_VIDEO_REGIONS = Object.freeze(["head", "torso"]);
  * and species gates still apply to every kind.
  */
 const LEFT_RIGHT_ENFORCED_MASTER_KINDS = Object.freeze(["front"]);
+/**
+ * Appearance scores are only as good as the reference they were measured
+ * against. A chroma-masked reference is an approved master: its alpha channel
+ * states exactly which pixels are the animal, so coat colour, marking topology
+ * and face identity compare like with like. A source photo has no matte, and
+ * the deterministic separation behind it models the background as the mean
+ * border colour - which inverts on the ordinary case of a pale pet on a pale
+ * floor, marking half the room as the subject and the animal as background.
+ * Scores drawn from that reference measure furniture, so they are recorded but
+ * never gate. Everything measured from the decoded output alone - canvas
+ * geometry, chroma integrity, content inspection, provenance - is unaffected,
+ * as are master-to-master comparisons, which is where identity gating still
+ * lives until a real segmentation pass replaces the proxy.
+ */
+const CHROMA_MASKED_REFERENCE_MODE = "chroma-masked-master";
 
 function cloneEvidence(value) {
   return value && typeof value === "object" ? JSON.parse(JSON.stringify(value)) : null;
@@ -55,18 +70,21 @@ function appearanceThresholds(policy) {
   };
 }
 
-function checkScores({ face, color, markings }, thresholds, prefix, errors, { requireFace = false } = {}) {
+// A malformed score is always an error: the evidence itself is broken. A score
+// that merely sits below its threshold is only an error when the reference it
+// was measured against can be trusted, so it goes to the caller's sink.
+function checkScores({ face, color, markings }, thresholds, prefix, errors, { requireFace = false, thresholdSink = errors } = {}) {
   const faceScore = requireFace ? score(face, `${prefix}.faceIdentityScore`, errors) : null;
   const colorScore = score(color, `${prefix}.coatColorScore`, errors);
   const markingScore = score(markings, `${prefix}.markingTopologyScore`, errors);
   if (requireFace && Number.isFinite(faceScore) && faceScore < thresholds.face) {
-    errors.push(`${prefix}.faceIdentityScore is below the configured threshold`);
+    thresholdSink.push(`${prefix}.faceIdentityScore is below the configured threshold`);
   }
   if (Number.isFinite(colorScore) && colorScore < thresholds.color) {
-    errors.push(`${prefix}.coatColorScore is below the configured threshold`);
+    thresholdSink.push(`${prefix}.coatColorScore is below the configured threshold`);
   }
   if (Number.isFinite(markingScore) && markingScore < thresholds.markings) {
-    errors.push(`${prefix}.markingTopologyScore is below the configured threshold`);
+    thresholdSink.push(`${prefix}.markingTopologyScore is below the configured threshold`);
   }
 }
 
@@ -78,15 +96,27 @@ function checkScores({ face, color, markings }, thresholds, prefix, errors, { re
 function validateMasterAppearanceInspection(inspection, { kind, sourceReferenceCount, policy } = {}) {
   const errors = [];
   const warnings = [];
-  const leftRightEnforced = LEFT_RIGHT_ENFORCED_MASTER_KINDS.includes(kind);
-  const requireLeftRight = (value, label) => {
-    if (value === true) return;
-    if (leftRightEnforced) errors.push(`${label} must be true`);
-    else warnings.push(`${label} is not decidable against a cross-view reference`);
-  };
   if (!inspection || typeof inspection !== "object" || Array.isArray(inspection)) {
     return { ok: false, errors: ["Master appearance inspection is required"], warnings, evidence: null };
   }
+  // Evidence produced before the gating reference was recorded is treated as
+  // trusted, so existing components and their contracts keep their behaviour.
+  const referenceIsTrusted = inspection.gatingReferenceMode === undefined
+    || inspection.gatingReferenceMode === CHROMA_MASKED_REFERENCE_MODE;
+  const thresholdSink = referenceIsTrusted ? errors : warnings;
+  const requireMeasured = (value, label, unmeasurableReason) => {
+    if (value === true) return;
+    if (referenceIsTrusted) errors.push(`${label} must be true`);
+    else warnings.push(`${label} ${unmeasurableReason}`);
+  };
+  const requireLeftRight = (value, label) => {
+    if (value === true) return;
+    if (referenceIsTrusted && LEFT_RIGHT_ENFORCED_MASTER_KINDS.includes(kind)) {
+      errors.push(`${label} must be true`);
+      return;
+    }
+    warnings.push(`${label} is not decidable against this reference`);
+  };
   if (inspection.contractVersion !== APPEARANCE_LOCK_CONTRACT_VERSION) {
     errors.push(`Master appearance contractVersion must be ${APPEARANCE_LOCK_CONTRACT_VERSION}`);
   }
@@ -105,9 +135,13 @@ function validateMasterAppearanceInspection(inspection, { kind, sourceReferenceC
   requireTrue(inspection.occlusionAware, "Master appearance occlusionAware", errors);
   requireTrue(inspection.leftRightAware, "Master appearance leftRightAware", errors);
   requireLeftRight(inspection.asymmetryPreserved, "Master appearance asymmetryPreserved");
-  requireTrue(inspection.speciesAndBreedConsistent, "Master appearance speciesAndBreedConsistent", errors);
+  requireMeasured(
+    inspection.speciesAndBreedConsistent,
+    "Master appearance speciesAndBreedConsistent",
+    "could not be measured against an untrusted reference"
+  );
   if (integer(inspection.unresolvedConflictCount, "Master appearance unresolvedConflictCount", errors) !== 0) {
-    errors.push("Master appearance has unresolved source-reference conflicts");
+    thresholdSink.push("Master appearance has unresolved source-reference conflicts");
   }
 
   const thresholds = appearanceThresholds(policy);
@@ -120,7 +154,7 @@ function validateMasterAppearanceInspection(inspection, { kind, sourceReferenceC
     face: inspection.faceIdentityScore,
     color: inspection.coatColorScore,
     markings: inspection.markingTopologyScore
-  }, thresholds, "Master appearance", errors, { requireFace: true });
+  }, thresholds, "Master appearance", errors, { requireFace: true, thresholdSink });
 
   const regions = inspection.regions;
   if (!regions || typeof regions !== "object" || Array.isArray(regions)) {
@@ -144,7 +178,7 @@ function validateMasterAppearanceInspection(inspection, { kind, sourceReferenceC
           face: evidence.faceIdentityScore,
           color: evidence.coatColorScore,
           markings: evidence.markingTopologyScore
-        }, thresholds, `Master appearance region ${region}`, errors, { requireFace: region === "head" });
+        }, thresholds, `Master appearance region ${region}`, errors, { requireFace: region === "head", thresholdSink });
         requireLeftRight(evidence.leftRightPlacementPreserved, `Master appearance region ${region}.leftRightPlacementPreserved`);
       }
     }
