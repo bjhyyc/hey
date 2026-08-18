@@ -10,7 +10,7 @@ export function SiteHeader({ home = false }: { home?: boolean }) {
         </Link>
         {home ? (
           <nav className="header-actions" aria-label="账户操作">
-            <AccountControl />
+            <AccountControl showProjectsWhenAuthenticated />
             <Link className="header-purchase" href="/#start">
               购买
             </Link>

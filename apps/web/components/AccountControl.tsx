@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { studioBrowserApi } from "@/lib/studio-browser-api";
 
-export function AccountControl() {
+export function AccountControl({ showProjectsWhenAuthenticated = false }: { showProjectsWhenAuthenticated?: boolean } = {}) {
   const [authenticated, setAuthenticated] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -20,7 +20,11 @@ export function AccountControl() {
     return <Link className="text-link header-login header-account-placeholder" href="/login">登录</Link>;
   }
   return (
-    <button
+    <>
+      {showProjectsWhenAuthenticated ? (
+        <Link className="text-link header-login" href="/projects">我的项目</Link>
+      ) : null}
+      <button
       className="text-link header-login header-logout account-logout"
       disabled={busy}
       onClick={async () => {
@@ -35,6 +39,7 @@ export function AccountControl() {
       type="button"
     >
       {busy ? "退出中…" : "退出"}
-    </button>
+      </button>
+    </>
   );
 }
