@@ -162,3 +162,23 @@ describe("run failure uses the claimed run", () => {
     })).rejects.toThrow(/version/i);
   });
 });
+
+// The usage ledger is keyed by (action, delivery number) across every execution
+// the action ever had, and rows are written before the provider call. A fresh
+// execution that starts counting at zero collides once per historical row; the
+// fourth regeneration of the first real order died without reaching the
+// provider because rows 1-3 were spent and the delivery budget was three.
+describe("execution attempt seeding", () => {
+  const source = readFileSync(
+    new URL("../../platform/src/persistence/postgres-production-worker-repository.js", import.meta.url),
+    "utf8"
+  );
+
+  it("starts a fresh video execution after the highest spent ledger number", () => {
+    const method = source.slice(source.indexOf("async claimVideoSubmission"));
+    const insert = method.slice(0, method.indexOf("ON CONFLICT (job_id) DO NOTHING"));
+    expect(insert).toContain("max(usage.worker_attempt)");
+    expect(insert).toContain("provider_usage_attempt");
+    expect(insert).not.toMatch(/'pending', 0,/);
+  });
+});

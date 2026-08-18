@@ -234,10 +234,23 @@ class PostgresProductionWorkerRepository {
     const claim = normalizeClaimInput(input);
     return this.database.transaction(async (transaction) => {
       const tx = requireQuery(transaction);
+      // The usage ledger is keyed by (action, delivery number) across every
+      // execution the action has ever had, and a ledger row is written before
+      // the provider call - so numbers can be spent without a video existing.
+      // A fresh execution must start counting after the highest number already
+      // spent, or each historical row costs one delivery in collisions before
+      // a free number is reached; with a full budget of spent numbers the job
+      // dies without ever calling the provider.
       await tx.query(
         `INSERT INTO production_job_execution
           (id, job_id, job_name, run_id, action_id, status, attempts, max_attempts)
-         VALUES ($1, $2, $3, $4, $5, 'pending', 0, $6)
+         VALUES ($1, $2, $3, $4, $5, 'pending',
+                 COALESCE((SELECT max(usage.worker_attempt)
+                             FROM provider_usage_attempt usage
+                             JOIN generation_action action
+                               ON action.id = usage.generation_action_id
+                            WHERE action.run_id = $4 AND action.action_id = $5), 0),
+                 $6)
          ON CONFLICT (job_id) DO NOTHING`,
         [this.idFactory(), claim.jobId, JOB_NAMES.GENERATE_VIDEO, claim.runId, claim.actionId, claim.maxAttempts]
       );
