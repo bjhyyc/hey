@@ -1324,7 +1324,7 @@ class PostgresProductionWorkerRepository {
          VALUES ($1, $2, $3, $4, 'video', 'failed', $5, $6::jsonb, $7::uuid, $8)`,
         [
           qaReportId, binding.project_id, binding.run_id, binding.action_id,
-          safePolicyVersion, JSON.stringify(safeQa), safeSourceAssetId, safeProcessorVersion
+          safePolicyVersion, safeQa.serialized, safeSourceAssetId, safeProcessorVersion
         ]
       );
       const reset = rows(await tx.query(

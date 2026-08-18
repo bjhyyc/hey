@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it, vi } from "vitest";
 
 import stateMachineModule from "../../platform/src/domain/production-state-machine.js";
@@ -85,5 +87,43 @@ describe("video action QA failure", () => {
       modelRegistry,
       maxVideoActionQaRetries: -1
     })).toThrow(/maxVideoActionQaRetries/);
+  });
+});
+
+// The regeneration path first shipped writing the QA payload wrapper instead of
+// its serialized report, so every scheduling attempt threw inside the
+// repository and fell through to the generic retry - which then reported a
+// media-processing failure that never happened.
+describe("rejected action QA payload", () => {
+  it("persists the serialized report rather than the normalizer's wrapper", async () => {
+    const source = readFileSync(
+      new URL("../../platform/src/persistence/postgres-production-worker-repository.js", import.meta.url),
+      "utf8"
+    );
+    const method = source.slice(source.indexOf("async requeueVideoActionAfterQaFailure"));
+    const insert = method.slice(0, method.indexOf("UPDATE generation_action"));
+
+    expect(insert).toContain("safeQa.serialized");
+    expect(insert).not.toContain("JSON.stringify(safeQa)");
+  });
+
+  it("clears every provider-owned field the claim guard checks", async () => {
+    const source = readFileSync(
+      new URL("../../platform/src/persistence/postgres-production-worker-repository.js", import.meta.url),
+      "utf8"
+    );
+    const method = source.slice(source.indexOf("async requeueVideoActionAfterQaFailure"));
+    const update = method.slice(method.indexOf("UPDATE generation_action"), method.indexOf("RETURNING retry_count"));
+
+    for (const column of [
+      "provider_task_id = NULL",
+      "provider_request_id = NULL",
+      "provider_poll_count = 0",
+      "provider_output_asset_id = NULL",
+      "media_asset_id = NULL",
+      "qa_report_id = NULL"
+    ]) {
+      expect(update).toContain(column);
+    }
   });
 });

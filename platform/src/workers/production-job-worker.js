@@ -722,6 +722,15 @@ class ProductionJobWorker {
               });
               return { status: "qa_retry_scheduled", runId: input.runId, actionId: input.actionId };
             } catch (persistenceError) {
+              // Falling back to the generic retry hides why the regeneration
+              // could not be scheduled, and the generic path then reports a
+              // media-processing failure that never happened. Name it.
+              this.logger.error?.("petpack.worker.action_qa_retry_not_scheduled", {
+                runId: input.runId,
+                actionId: input.actionId,
+                errorName: persistenceError && persistenceError.name ? persistenceError.name : "Error",
+                errorMessage: persistenceError && persistenceError.message ? persistenceError.message : ""
+              });
               return await this._releaseProcessingForRetry(input, claim, persistenceError);
             }
           }
