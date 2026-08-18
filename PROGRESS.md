@@ -137,6 +137,7 @@
 - 2026-08-17：镜像 `petpack-studio-worker:production-delivery-smoke`（ID `sha256:b660c1002e000c3b78aa7ac41a46d4439d16c820937c5284acb8dc200b0cf5d9`，1.44GB）本地构建成功；因本机容器出口到 GitHub/johnvansickle 超时，ffmpeg/Electron 归档改为主机预下载并经本地 HTTP 以 `--build-arg` URL 覆盖喂入，Dockerfile 内 SHA-256 校验不变（ffmpeg `abda8d77…`、Electron `00a2e8e5…` 均与 pin 一致）。客户端树摘要 `8db80088388f8459088c02e56e41d452859052e8c72c04d53b359cc2d159b666`。冒烟一：断网/只读/非 root/cap-drop 容器内 `print-production-worker-manifest.js` 完整构造组件包并输出 manifest SHA `13545492f285dda3976f8695b2dc7cd117cd9e4920fe5a79aeb0375862e3ffc7`（该值仅对本次冒烟镜像有效；最终部署镜像需重算）。冒烟二：以伪造请求驱动 `/app/electron-headless`，Xvfb + Chromium 启动、客户端树校验通过、协议解析后在不存在的包路径处按预期有界失败（exit 1）；确认 `xvfb-run` 作为容器 PID 1 时会因就绪信号投递问题挂起，必须有 init 进程——compose 已有 `init: true`，运维文档已注明。
 - 2026-08-17：全量回归复绿：108 个测试文件通过、2 个按设计跳过；1079 项通过、2 项跳过。期间定位一次本机资源事故：C 盘满导致页面文件无法扩展，Windows 提交上限 33.8GB 被 Docker 双虚拟机 + 浏览器占满（commit-free 仅 0.8GB 而物理内存空闲 11GB），表现为 libvpx "Memory allocation error" 与 spawn UNKNOWN 的随机测试失败；停 Docker Desktop 释放约 4GB 提交后回归通过。用户需清理 C 盘或将页面文件迁至 D 盘（系统设置，需用户自行操作），否则 Docker 与全量测试并行时会复发。
 - 2026-08-17：STUDIO_WORKERS.md 发布门更新：组件模块已提供、镜像含交付验证层；剩余门为最终镜像 SBOM/许可证/CVE 复扫、镜像内输出并固定 manifest SHA、经确认后的 digest 部署。
+- 2026-08-17：交付验证镜像里程碑代码提交为 `e243df05a17fc0066e08527d5a67b0c2743ea9e4`。增量 bundle：`C:\testdisk\petpack-rebuild-git-backups\petpack-rebuild-worker-delivery-image-e243df0.bundle`，337,328 字节，前置提交 `ff01e22ee47ca5a9a0641e33e8d8682cec04e50a`，`git bundle verify` 通过，SHA-256 为 `270D9B30EA804F1A7E1EDC980CFCB614DDA9E37DD9EF95672BF75E223802E2B5`。
 
 ## In progress
 
