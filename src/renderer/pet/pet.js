@@ -36,7 +36,8 @@ import {
 } from "./pixel-hit-test.js";
 import {
   LIFECYCLE_EVENT_TYPES,
-  shouldSuppressRuntimeEventDuringDrag
+  shouldSuppressRuntimeEventDuringDrag,
+  shouldSuppressRuntimeEventWhileAsleep
 } from "./event-suppression.js";
 import {
   createOneShotEventLatch,
@@ -1551,6 +1552,14 @@ function evaluateRuntimeEvent(eventContext) {
 
   if (shouldSuppressRuntimeEventDuringDrag({ dragStartedAt, event: eventContext })) {
     debugRulesLog("event:suppressed-drag-active", {
+      type: eventContext.type,
+      eventSource: eventContext.eventSource
+    });
+    return false;
+  }
+
+  if (shouldSuppressRuntimeEventWhileAsleep({ sleepActive: isSleepStateActive(), event: eventContext })) {
+    debugRulesLog("event:suppressed-asleep", {
       type: eventContext.type,
       eventSource: eventContext.eventSource
     });
