@@ -36,6 +36,9 @@ describe("private production Studio workers Compose contract", () => {
     expect(compose).toContain("petpack-worker-work:/work");
     expect(compose).toContain("PETPACK_WORKER_COMPONENTS_MODULE: /app/platform/src/runtime/production-worker-components.js");
     expect(compose).toContain("PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256: ${PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256:-}");
+    // The Electron delivery-validation runner needs more shared memory than
+    // Docker's 64m default; the pin below keeps that sizing reviewed.
+    expect(compose).toContain('shm_size: "256m"');
     expect(compose).toContain('command: ["src/runtime/start-outbox-dispatcher.js"]');
     expect(compose).not.toContain('command: ["node",');
   });

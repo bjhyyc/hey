@@ -18,7 +18,7 @@ production-assured Worker 组件包（`platform/src/runtime/production-worker-co
 - [x] 生产 manifest 固定组件版本、合同版本、校准摘要和引擎摘要（`productionComponentManifest` canonical SHA-256 必须等于 `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256`；校准摘要 = 冻结校准数据的 canonical SHA-256，交付验证器摘要绑定上游树/Electron/runner 校验和；`print-production-worker-manifest.js` 供运维在镜像内输出待固定 SHA）。
 - [ ] 下一次真实生成按完整七动作批次执行；只替换 `sleep-transition` 提示词，不单独重复生成。
 - [ ] 真实七动作媒体通过逐帧 QA、首尾帧绑定、sleep-loop 接缝、打包和原版客户端导入。
-- [ ] 将线上 controlled-real Worker 替换为 production-assured Worker 镜像，并用最终 image digest 部署。（组件模块已就绪；镜像还需打入 pinned 干净上游客户端树、pinned Electron 运行时与 xvfb，并在 Compose/预检中补齐 `PETPACK_PRODUCTION_UPSTREAM_CLIENT_*` 与 `PETPACK_PRODUCTION_ELECTRON_*` 环境项。）
+- [ ] 将线上 controlled-real Worker 替换为 production-assured Worker 镜像，并用最终 image digest 部署。（镜像层已完成并本地验证：Worker 镜像现打入 pinned 客户端树、SHA 固定的 Electron 31.7.7 与 xvfb 无头启动器，构建期生成 `/app/pins` 并经 `*_FILE` 注入；锁死容器内 `print-production-worker-manifest.js` 成功输出 manifest SHA，Electron 无头探针通过（需 `init: true`，compose 已有）。剩余：最终镜像 SBOM/许可证/CVE 复扫 → 在该镜像内输出并固定 `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256` → 经用户确认后按 digest 部署替换。）
 
 ## P1：生产闭环
 

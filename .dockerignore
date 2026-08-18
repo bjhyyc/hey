@@ -2,6 +2,8 @@
 
 !.dockerignore
 !LICENSE
+!package.json
+!package-lock.json
 
 !platform
 !platform/package.json
@@ -10,6 +12,8 @@
 platform/docker/**
 !platform/docker/media-worker
 !platform/docker/media-worker/assemble-runtime.sh
+!platform/docker/media-worker/electron-headless.sh
+!platform/docker/media-worker/write-production-pins.js
 !platform/docker/media-worker/work-root
 !platform/docker/media-worker/work-root/.keep
 !platform/src
@@ -17,12 +21,13 @@ platform/docker/**
 platform/src/development
 platform/src/development/**
 
+# The pinned clean client tree (package.json + package-lock.json + full src)
+# ships inside the production Worker image for delivery validation.
 !src
+!src/**
 !src/shared
 !src/shared/**
-!src/main
-src/main/**
-!src/main/services
-src/main/services/**
-!src/main/services/logger.js
-!src/main/services/petpack.js
+
+!scripts
+scripts/**
+!scripts/verify-upstream-petpack-import.js

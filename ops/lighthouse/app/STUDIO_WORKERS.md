@@ -4,11 +4,29 @@
 
 ## Current release gate
 
-Do not start the `studio-production` profile yet. The image and runtime isolation are implemented, but the production-assured source-photo, master-image, matting/QA and delivery-validator component module is still missing. The production image must provide exactly `/app/platform/src/runtime/production-worker-components.js`; both Compose and the Worker reject any other module path, and the Worker also fails closed if that module is absent or not marked production-assured.
+Do not start the `studio-production` profile yet. The production-assured component module now exists and the Worker image bundles its full delivery-validation layer, but the final deployment image still needs an SBOM/license/CVE rescan and the pinned manifest SHA-256 recorded from that exact image before a digest deployment replaces the controlled-real Worker.
 
-Before any reviewed deployment, run `verify-studio-production.sh`. It is read-only: it checks the external secret files, immutable image digests, production/480p settings, component-module path, and `docker compose ... config --quiet`; it never runs `up`, `down`, `pull`, `rm`, or `prune`.
+The production image provides exactly `/app/platform/src/runtime/production-worker-components.js`; both Compose and the Worker reject any other module path, and the Worker fails closed if that module is absent, not marked production-assured, or its component manifest does not match `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256`.
 
-The media image records the exact copied FFmpeg runtime files, source archive digest and license under `/app`. The Debian FFmpeg path is rejected at build time when it contains `libjxl0.7`. A pinned `ffmpeg-7.0.2-amd64-static` candidate has passed local VP9/green-screen normalization and Docker Scout scanning, but final publication still requires the release pipeline to reproduce the archive checksum, emit an SBOM, and review the GPL/codec license set.
+The Worker image additionally carries the delivery-validation layer:
+
+- A pinned clean client tree at `/app/upstream-client` (`package.json`, `package-lock.json`, full `src`, plus its production `node_modules`); its tree SHA-256 is computed at build time by the interaction runner's own checksum routine.
+- A pinned Electron `v31.7.7` linux-x64 runtime at `/app/electron` (zip SHA-256 verified against the published upstream checksum during the build) and the reviewed `xvfb` launcher wrapper at `/app/electron-headless`, which the interaction verifier pins by file checksum.
+- Build-time pin files under `/app/pins` (client-tree/wrapper/runner checksums, frozen runner arguments and child environment); the runtime loads them through the `*_FILE` environment indirection.
+- The Electron interaction runner requires a container init process for `xvfb-run`'s readiness signal — the Compose service already sets `init: true` — and `shm_size: "256m"` for Chromium's shared memory.
+
+To obtain the manifest SHA-256 that must be pinned as `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256`, run the read-only helper inside the exact candidate image:
+
+```sh
+docker run --rm --init --network=none --read-only --tmpfs /tmp \
+  --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true \
+  -e PETPACK_PLATFORM_MODE=production \
+  "$PETPACK_WORKER_IMAGE" src/runtime/print-production-worker-manifest.js
+```
+
+Before any reviewed deployment, run `verify-studio-production.sh`. It is read-only: it checks the external secret files, immutable image digests, production/480p settings, component-module path, the pinned component-manifest SHA-256, and `docker compose ... config --quiet`; it never runs `up`, `down`, `pull`, `rm`, or `prune`.
+
+The media image records the exact copied FFmpeg runtime files, source archive digest and license under `/app`. The Debian FFmpeg path is rejected at build time when it contains `libjxl0.7`. The pinned `ffmpeg-7.0.2-amd64-static` runtime has passed local VP9/green-screen normalization, but final publication still requires the release pipeline to reproduce the archive checksums, emit an SBOM, and review the GPL/codec license set for the enlarged image.
 
 ## Safety properties
 

@@ -237,6 +237,10 @@ services:
     pids_limit: 256
     mem_limit: 3g
     cpus: "3.00"
+    # Chromium inside the pinned Electron delivery-validation runner maps
+    # renderer shared memory under /dev/shm; the Docker default 64m is too
+    # small for the interaction verification windows.
+    shm_size: "256m"
     stop_grace_period: 2m
     healthcheck:
       test: ["CMD", "node", "src/runtime/check-runtime-heartbeat.js"]
