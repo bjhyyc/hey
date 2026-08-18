@@ -11,6 +11,10 @@ const { REQUIRED_ACTION_IDS, toStudioActionKey } = require("../domain/action-cat
 const { validateActionMediaProbe } = require("../qa/media-inspector");
 const { ACTION_FILE_NAMES, verifyPetpackArchive } = require("./build");
 const {
+  ELECTRON_INTERACTION_PROTOCOL_VERSION,
+  createPinnedElectronInteractionVerifier
+} = require("./electron-interaction-verifier");
+const {
   PETPACK_VALIDATION_POLICY_VERSION,
   normalizePackageInputActions,
   requiredString
@@ -92,9 +96,12 @@ function findManifestClip(manifest, actionId) {
 
 function requireVerifier(verifier, label) {
   if (!verifier || typeof verifier.verify !== "function") throw new Error(`${label} must implement verify`);
-  verifier.mode = requiredString(verifier.mode, `${label} mode`, 64);
-  verifier.identity = requiredString(verifier.identity, `${label} identity`, 256);
-  verifier.version = requiredString(verifier.version, `${label} version`, 128);
+  const mode = requiredString(verifier.mode, `${label} mode`, 64);
+  const identity = requiredString(verifier.identity, `${label} identity`, 256);
+  const version = requiredString(verifier.version, `${label} version`, 128);
+  if (verifier.mode !== mode || verifier.identity !== identity || verifier.version !== version) {
+    throw new Error(`${label} metadata must already be normalized`);
+  }
   return verifier;
 }
 
@@ -148,28 +155,33 @@ class PetpackValidationError extends Error {
  * user-data directory. Pinning the importer file digest prevents a deployment
  * from silently replacing the validation target with the customized client.
  */
-function createUpstreamImportVerifier({
-  upstreamRoot,
-  expectedSourceTreeSha256,
-  identity = "duzexu/desktop-pet@f4b735b",
-  nodePath = process.execPath,
-  spawnImpl = spawn,
-  timeoutMs = 120 * 1000
-} = {}) {
+function createUpstreamImportVerifier(options = {}) {
+  if (Object.prototype.hasOwnProperty.call(options, "spawnImpl") ||
+      Object.prototype.hasOwnProperty.call(options, "nodePath")) {
+    throw new Error("Attested upstream import verifier does not accept replacement execution hooks");
+  }
+  const {
+    upstreamRoot,
+    expectedSourceTreeSha256,
+    identity = "duzexu/desktop-pet@f4b735b",
+    timeoutMs = 120 * 1000
+  } = options;
+  const nodePath = process.execPath;
+  const spawnImpl = spawn;
   const root = path.resolve(requiredString(upstreamRoot, "Clean upstream Desktop Pet root", 2048));
   const importerPath = path.join(root, "src", "main", "services", "petpack.js");
   const expectedDigest = requiredString(expectedSourceTreeSha256, "Pinned upstream source-tree checksum", 64).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(expectedDigest)) throw new Error("Pinned upstream source-tree checksum must be SHA-256");
   const actualDigest = checksumPinnedUpstreamTree(root);
   if (actualDigest !== expectedDigest) throw new Error("Clean upstream source tree does not match its pinned checksum");
-  if (typeof spawnImpl !== "function") throw new Error("Upstream import verifier requires a process launcher");
+  const verifierIdentity = requiredString(identity, "Clean upstream Desktop Pet verifier identity", 256);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 10 * 60 * 1000) {
     throw new Error("Upstream import verifier timeout must be between 1 second and 10 minutes");
   }
   const scriptPath = path.resolve(__dirname, "../../../scripts/verify-upstream-petpack-import.js");
   const verifier = {
     mode: "isolated-upstream-import",
-    identity,
+    identity: verifierIdentity,
     version: actualDigest,
     async verify({ packagePath, expectedPackageId, packageSha256 }) {
       const target = path.resolve(requiredString(packagePath, "PetPack validation path", 2048));
@@ -242,6 +254,7 @@ function createUpstreamImportVerifier({
       };
     }
   };
+  Object.freeze(verifier);
   ATTESTED_UPSTREAM_VERIFIERS.add(verifier);
   return verifier;
 }
@@ -251,7 +264,7 @@ function createUpstreamImportVerifier({
  * marked contract-only and therefore cannot satisfy production validation.
  */
 function createContractInteractionVerifier() {
-  return {
+  return Object.freeze({
     mode: "contract-only",
     identity: "petpack-studio-static-interaction-contract",
     version: PETPACK_VALIDATOR_VERSION,
@@ -265,7 +278,28 @@ function createContractInteractionVerifier() {
         checks: Object.fromEntries(REQUIRED_INTERACTION_CHECKS.map((check) => [check, validation.ok]))
       };
     }
-  };
+  });
+}
+
+/**
+ * Creates the only Electron interaction verifier eligible for production
+ * delivery. The production component bundle must supply deployment-approved
+ * executable and runner checksums; this factory binds and rechecks them but is
+ * not itself the checksum registry. The runner receives one bounded JSON
+ * request on stdin and must return one artifact-bound JSON result on stdout.
+ */
+function createElectronInteractionVerifier(options = {}) {
+  if (Object.prototype.hasOwnProperty.call(options, "spawnImpl")) {
+    throw new Error("Attested Electron interaction verifier does not accept a replacement process launcher");
+  }
+  const verifier = createPinnedElectronInteractionVerifier({
+    ...options,
+    requiredActionIds: REQUIRED_ACTION_IDS,
+    requiredInteractionChecks: REQUIRED_INTERACTION_CHECKS,
+    spawnImpl: spawn
+  });
+  ATTESTED_ELECTRON_VERIFIERS.add(verifier);
+  return verifier;
 }
 
 class PetpackDeliveryValidator {
@@ -275,6 +309,7 @@ class PetpackDeliveryValidator {
     interactionVerifier,
     productionMode = process.env.PETPACK_PLATFORM_MODE === "production",
     policyVersion = PETPACK_VALIDATION_POLICY_VERSION,
+    productionMetadata,
     logger = console
   } = {}) {
     if (typeof probeAsset !== "function") throw new Error("PetPack delivery validation requires a trusted file probe");
@@ -301,6 +336,39 @@ class PetpackDeliveryValidator {
     this.validatorVersion = `${PETPACK_VALIDATOR_VERSION}:${versionDigest}`;
     this.validatorIdentity = `${this.originalImportVerifier.identity}|${this.interactionVerifier.identity}`;
     this.logger = logger;
+    this.describe = PetpackDeliveryValidator.prototype.describe.bind(this);
+    this.validate = PetpackDeliveryValidator.prototype.validate.bind(this);
+    if (productionMetadata !== undefined) {
+      // The production component manifest pins {version, contractVersion,
+      // calibrationDigest} per component. The validator version is derived
+      // from the pinned verifier identities above, so callers supply only the
+      // contract identity and calibration digest and cannot claim a version
+      // that differs from the constructed validator.
+      const contractVersion = requiredString(
+        productionMetadata?.contractVersion,
+        "Delivery validator production contract version",
+        128
+      );
+      const calibrationDigest = requiredString(
+        productionMetadata?.calibrationDigest,
+        "Delivery validator production calibration digest",
+        64
+      ).toLowerCase();
+      if (!/^[a-f0-9]{64}$/.test(calibrationDigest)) {
+        throw new Error("Delivery validator production calibration digest must be SHA-256");
+      }
+      Object.defineProperty(this, "productionMetadata", {
+        value: Object.freeze({
+          version: this.validatorVersion,
+          contractVersion,
+          calibrationDigest
+        }),
+        enumerable: true,
+        writable: false,
+        configurable: false
+      });
+    }
+    Object.freeze(this);
     if (this.productionMode) PRODUCTION_ASSURED_VALIDATORS.add(this);
   }
 
@@ -466,11 +534,13 @@ function isProductionAssuredValidator(value) {
 }
 
 module.exports = {
+  ELECTRON_INTERACTION_PROTOCOL_VERSION,
   PETPACK_VALIDATOR_VERSION,
   PetpackDeliveryValidator,
   PetpackValidationError,
   REQUIRED_INTERACTION_CHECKS,
   createContractInteractionVerifier,
+  createElectronInteractionVerifier,
   createUpstreamImportVerifier,
   checksumBuffer,
   checksumFile,

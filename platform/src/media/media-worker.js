@@ -67,6 +67,7 @@ class MediaWorker {
     mattingService,
     probeAsset,
     runPlan = runProcess,
+    endpointInspector = null,
     verifyLocalFile = requireRegularWorkerFile,
     logger = console
   } = {}) {
@@ -75,6 +76,10 @@ class MediaWorker {
     if (typeof runPlan !== "function") throw new Error("A media plan runner is required");
     if (typeof verifyLocalFile !== "function") throw new Error("A worker-local file verifier is required");
     this.runPlan = runPlan;
+    if (endpointInspector !== null && typeof endpointInspector !== "function") {
+      throw new Error("A trusted action endpoint inspector must be a function when provided");
+    }
+    this.endpointInspector = endpointInspector;
     this.verifyLocalFile = verifyLocalFile;
     this.logger = logger;
   }
@@ -149,6 +154,23 @@ class MediaWorker {
         !inspection.contentInspection || !inspection.appearanceInspection) {
       throw new Error("Final action inspection returned incomplete media QA inputs");
     }
+    if (production && !this.endpointInspector) {
+      const error = new Error("Production action processing requires a trusted decoded endpoint inspector");
+      error.code = "trusted_endpoint_inspector_missing";
+      throw error;
+    }
+    const trustedEndpointInspection = this.endpointInspector
+      ? await this.endpointInspector({
+        actionId,
+        outputPath,
+        firstMasterPath,
+        lastMasterPath,
+        expectedFirstMasterHash,
+        expectedLastMasterHash,
+        frameCount: inspection.sampledFrames.length,
+        scratchDirectory
+      })
+      : null;
     const mediaProbe = probeResult && probeResult.probe ? probeResult.probe : probeResult;
     const outputVideo = getVideoStream(mediaProbe);
     const outputDuration = Number(outputVideo?.duration ?? mediaProbe?.format?.duration);
@@ -166,13 +188,20 @@ class MediaWorker {
       sampledFrames: inspection.sampledFrames,
       firstFrame: inspection.firstFrame,
       lastFrame: inspection.lastFrame,
+      endpointInspection: trustedEndpointInspection || inspection.endpointInspection,
       expectedFirstMasterHash,
       expectedLastMasterHash,
       referenceMetrics,
       contentInspection: inspection.contentInspection,
       appearanceInspection: inspection.appearanceInspection,
+      provenance: inspection.provenance,
       loopBoundaryInspection: inspection.loopBoundaryInspection,
-      expectedDuration: inputDuration,
+      // The provider may encode a small container/timestamp tail while still
+      // remaining within the accepted source-duration tolerance. The output is
+      // deliberately trimmed to the frozen requested duration, so the exact
+      // normalized frame-count gate must use that frozen request rather than
+      // the provider container duration.
+      expectedDuration: Number(requestedDuration),
       policy: qaPolicy,
       production
     });

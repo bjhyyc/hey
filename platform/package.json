@@ -11,6 +11,7 @@
     "start:studio-api": "node src/runtime/start-studio-api.js",
     "start:outbox": "node src/runtime/start-outbox-dispatcher.js",
     "start:studio-worker": "node src/runtime/start-studio-worker.js",
+    "canary:modelark": "node src/runtime/run-controlled-real-modelark-canary.js",
     "check:operations": "node src/runtime/check-operations-snapshot.js",
     "verify:kaipay": "node src/runtime/verify-kaipay-runtime.js"
   },

@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # each file under its advisory lock and recording the checksum in PostgreSQL.
 
 migrations_dir="${1:-${BASH_SOURCE[0]%/*}/../../../platform/sql}"
-required_last="015_kaipay_v3_order_identity.sql"
+required_last="016_kaipay_fuyou_order_identity.sql"
 
 fail() {
   printf 'migration-release=%s\n' "$1" >&2
@@ -20,10 +20,10 @@ fi
 migrations_dir="${resolved_dir}"
 
 mapfile -t files < <(find "${migrations_dir}" -maxdepth 1 -type f -name '*.sql' -print | LC_ALL=C sort)
-(( ${#files[@]} >= 15 )) || fail "fewer_than_15_migrations"
+(( ${#files[@]} >= 16 )) || fail "fewer_than_16_migrations"
 
 expected=()
-for number in $(seq 1 15); do
+for number in $(seq 1 16); do
   ordinal="$(printf '%03d' "${number}")"
   expected+=("${ordinal}_")
 done
@@ -40,7 +40,7 @@ for index in "${!expected[@]}"; do
   [[ -f "${file}" && ! -L "${file}" ]] || fail "migration_${matches[0]}_unsafe"
 done
 
-[[ -f "${migrations_dir}/${required_last}" && ! -L "${migrations_dir}/${required_last}" ]] || fail "kaipay_v3_migration_missing"
+[[ -f "${migrations_dir}/${required_last}" && ! -L "${migrations_dir}/${required_last}" ]] || fail "kaipay_fuyou_identity_migration_missing"
 
 printf 'migration-release=ready count=%s latest=%s\n' "${#files[@]}" "${required_last}"
 for file in "${files[@]}"; do

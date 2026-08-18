@@ -7,6 +7,7 @@ const {
   requireQaPolicy
 } = require("../qa/character-canvas-v1");
 const { validateMasterImage } = require("../qa/master-image-quality-gate");
+const { validateProductionEvidenceBindings } = require("../qa/production-evidence-provenance");
 const { formatServerOnlyImageInstruction } = require("../providers/modelark-client");
 const {
   OBJECT_CLASSES,
@@ -257,7 +258,7 @@ class ImageMasterWorker {
         code: "master_processor_version_unavailable"
       });
     }
-    return { processor, version };
+    return { processor, version, productionMetadata: processor.productionMetadata };
   }
 
   async _releaseGenerationForRetry(input, claim, error) {
@@ -517,6 +518,7 @@ class ImageMasterWorker {
             frame: inspection.frame,
             contentInspection: inspection.contentInspection,
             appearanceInspection: inspection.appearanceInspection,
+            provenance: inspection.provenance,
             referenceMetrics: claim.referenceMetrics,
             sourceReferenceCount: referencePaths.length,
             policy,
@@ -536,7 +538,7 @@ class ImageMasterWorker {
       }
       try {
         await heartbeat.renew();
-        const qa = {
+        let qa = {
           ...workspaceResult.operationResult.qa,
           processing: {
             processorContractVersion: MASTER_IMAGE_PROCESSOR_CONTRACT_VERSION,
@@ -546,6 +548,25 @@ class ImageMasterWorker {
             outputSha256: workspaceResult.artifact.sha256
           }
         };
+        const evidenceBinding = validateProductionEvidenceBindings(qa.provenance, {
+          production: this.productionMode,
+          inputSha256: claim.providerOutput.sha256,
+          outputSha256: workspaceResult.artifact.sha256,
+          processorVersion: selectedProcessor.version,
+          calibrationDigest: this.productionMode
+            ? normalizeSha256(
+                selectedProcessor.productionMetadata?.calibrationDigest,
+                "Master processor calibration digest"
+              )
+            : null
+        });
+        if (!evidenceBinding.ok) {
+          qa = {
+            ...qa,
+            ok: false,
+            errors: [...(Array.isArray(qa.errors) ? qa.errors : []), ...evidenceBinding.errors]
+          };
+        }
         const saved = await this.repository.saveMasterResult({
           jobId: input.jobId,
           leaseToken: claim.leaseToken,

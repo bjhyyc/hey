@@ -1866,6 +1866,40 @@ if (window.desktopPet && window.desktopPet.pet) {
   });
 }
 
+// The pinned Electron delivery verifier uses the same media sampler as normal
+// pointer hit-testing to locate a real opaque pixel before sending native input.
+// This diagnostic surface is read-only and does not mutate hit-test state or
+// dispatch runtime events; the input event is still checked again by the normal
+// pointer path.
+Object.defineProperty(window, "__samplePetPixelsForVerification", {
+  configurable: false,
+  enumerable: false,
+  writable: false,
+  value(points) {
+    if (!Array.isArray(points) || points.length > 4096) return [];
+    const geometry = getVisibleMediaGeometry();
+    if (!geometry || !geometry.intrinsic) return [];
+    return points.map((point) => {
+      const clientX = Number(point && point.x);
+      const clientY = Number(point && point.y);
+      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+        return { status: "invalid", alpha: null };
+      }
+      const mapping = mapPointToObjectContain({
+        point: { x: window.screenX + clientX, y: window.screenY + clientY },
+        elementRect: geometry.elementRect,
+        intrinsicSize: geometry.intrinsic
+      });
+      return {
+        status: mapping.status,
+        alpha: mapping.status === "mapped"
+          ? mediaRenderer.sampleAlphaAt({ x: mapping.sourceX, y: mapping.sourceY })
+          : null
+      };
+    });
+  }
+});
+
 // Expose runtime state for panel queries
 window.__getPetRuntimeState = function () {
   if (!runtimeModel || !ruleRuntime) {

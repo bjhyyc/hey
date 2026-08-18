@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { assertActionId } = require("../domain/action-catalog");
 const { isPostgresInfrastructureError } = require("../persistence/postgres-database");
 const { CHARACTER_CANVAS_V1, createDevelopmentQaPolicy, requireQaPolicy } = require("../qa/character-canvas-v1");
+const { validateProductionEvidenceBindings } = require("../qa/production-evidence-provenance");
 const { OBJECT_CLASSES, createProjectObjectKey, normalizeSha256 } = require("../storage/private-object-store");
 const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflow");
 
@@ -15,7 +16,7 @@ const VIDEO_TASK_STATUS = Object.freeze({
 const PENDING_VIDEO_STATUSES = new Set(["queued", "pending", "running", "processing", "in_progress", "submitted"]);
 const SUCCEEDED_VIDEO_STATUSES = new Set(["succeeded", "success", "completed", "done"]);
 const FAILED_VIDEO_STATUSES = new Set(["failed", "error", "cancelled", "canceled", "expired"]);
-const MEDIA_PROCESSOR_VERSION = "character-canvas-v1-green-vp9-v1";
+const MEDIA_PROCESSOR_VERSION = "character-canvas-480p-alpha-vp9-v2";
 
 function requireMethod(value, method, label) {
   if (!value || typeof value[method] !== "function") throw new Error(`${label} must implement ${method}`);
@@ -152,6 +153,8 @@ class ProductionJobWorker {
     qaPolicyProvider,
     productionMode = process.env.PETPACK_PLATFORM_MODE === "production",
     processingLeaseSeconds = 900,
+    mediaProcessorVersion = MEDIA_PROCESSOR_VERSION,
+    mediaProcessorCalibrationDigest = null,
     logger = console
   } = {}) {
     this.repository = requireMethod(repository, "claimVideoSubmission", "Production worker repository");
@@ -195,6 +198,10 @@ class ProductionJobWorker {
     this.qaPolicyProvider = qaPolicyProvider;
     this.productionMode = Boolean(productionMode);
     this.processingLeaseSeconds = processingLeaseSeconds;
+    this.mediaProcessorVersion = requiredString(mediaProcessorVersion, "Media processor version", 128);
+    this.mediaProcessorCalibrationDigest = this.productionMode
+      ? normalizeSha256(mediaProcessorCalibrationDigest, "Media processor calibration digest")
+      : null;
     this.logger = logger;
   }
 
@@ -544,14 +551,14 @@ class ProductionJobWorker {
     if (claim.processingPolicyVersion && validated.version !== claim.processingPolicyVersion) {
       throw new Error("Configured QA policy does not match the action's frozen policy version");
     }
-    if (claim.processorVersion && claim.processorVersion !== MEDIA_PROCESSOR_VERSION) {
+    if (claim.processorVersion && claim.processorVersion !== this.mediaProcessorVersion) {
       throw new Error("Action media was frozen to a different processor version");
     }
     await this.repository.bindVideoProcessingPolicy({
       jobId: input.jobId,
       leaseToken: claim.leaseToken,
       policyVersion: validated.version,
-      processorVersion: MEDIA_PROCESSOR_VERSION
+      processorVersion: this.mediaProcessorVersion
     });
     return validated;
   }
@@ -688,7 +695,7 @@ class ProductionJobWorker {
               sourceAssetId: claim.sourceAssetId,
               qaReport: error.qa,
               policyVersion: policy.version,
-              processorVersion: MEDIA_PROCESSOR_VERSION,
+              processorVersion: this.mediaProcessorVersion,
               errorCode: "action_qa_failed"
             });
           } catch (persistenceError) {
@@ -710,6 +717,38 @@ class ProductionJobWorker {
             code: "processed_action_integrity_mismatch"
           });
         }
+        const evidenceBinding = validateProductionEvidenceBindings(
+          workspaceResult.operationResult.qa?.provenance,
+          {
+            production: this.productionMode,
+            inputSha256: claim.sourceSha256,
+            outputSha256: workspaceResult.artifact.sha256,
+            processorVersion: this.mediaProcessorVersion,
+            calibrationDigest: this.mediaProcessorCalibrationDigest
+          }
+        );
+        if (!evidenceBinding.ok) {
+          const qaReport = {
+            ...workspaceResult.operationResult.qa,
+            ok: false,
+            errors: [
+              ...(Array.isArray(workspaceResult.operationResult.qa?.errors)
+                ? workspaceResult.operationResult.qa.errors
+                : []),
+              ...evidenceBinding.errors
+            ]
+          };
+          await this.repository.failVideoProcessingQa({
+            jobId: input.jobId,
+            leaseToken: claim.leaseToken,
+            sourceAssetId: claim.sourceAssetId,
+            qaReport,
+            policyVersion: policy.version,
+            processorVersion: this.mediaProcessorVersion,
+            errorCode: "action_evidence_binding_failed"
+          });
+          return { status: "qa_failed", runId: input.runId, actionId: input.actionId };
+        }
         const saved = await this.repository.saveVideoProcessingResult({
           jobId: input.jobId,
           leaseToken: claim.leaseToken,
@@ -718,7 +757,7 @@ class ProductionJobWorker {
           qaReport: {
             ...workspaceResult.operationResult.qa,
             processing: {
-              processorVersion: MEDIA_PROCESSOR_VERSION,
+              processorVersion: this.mediaProcessorVersion,
               policyVersion: policy.version,
               sourceSha256: claim.sourceSha256,
               outputSha256: workspaceResult.artifact.sha256,
@@ -726,7 +765,7 @@ class ProductionJobWorker {
             }
           },
           policyVersion: policy.version,
-          processorVersion: MEDIA_PROCESSOR_VERSION,
+          processorVersion: this.mediaProcessorVersion,
           finalizeJob: createActionJob({
             name: JOB_NAMES.FINALIZE_VIDEO_ACTION,
             claim,
@@ -748,11 +787,11 @@ class ProductionJobWorker {
 }
 
 module.exports = {
+  MEDIA_PROCESSOR_VERSION,
   ProductionJobWorker,
   RetryableProductionJobError,
   createLeaseBusyError,
   leaseBusyRetryAfterMs,
-  MEDIA_PROCESSOR_VERSION,
   VIDEO_TASK_STATUS,
   classifyVideoTaskStatus,
   createActionJob,

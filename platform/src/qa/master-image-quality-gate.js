@@ -4,6 +4,8 @@ const {
   validateCanvasFrame
 } = require("./character-canvas-v1");
 const { validateMasterAppearanceInspection } = require("./appearance-lock-v1");
+const { validateChromaSubjectInspection } = require("./chroma-subject-integrity");
+const { validateProductionEvidenceReport } = require("./production-evidence-provenance");
 
 const MASTER_IMAGE_QA_CONTRACT_VERSION = "petpack-master-image-qa/v2";
 const REQUIRED_CONTENT_ASSERTIONS = Object.freeze([
@@ -68,6 +70,7 @@ function validateMasterImage({
   frame,
   contentInspection,
   appearanceInspection,
+  provenance,
   referenceMetrics,
   sourceReferenceCount,
   policy,
@@ -95,6 +98,16 @@ function validateMasterImage({
   if (!canvas.ok) errors.push(...canvas.errors);
   const content = validateContentInspection(contentInspection, { kind: normalizedKind });
   if (!content.ok) errors.push(...content.errors);
+  const chromaIntegrity = validateChromaSubjectInspection(contentInspection?.chromaIntegrity, {
+    production,
+    expectedFrameCount: 1
+  });
+  if (!chromaIntegrity.ok) errors.push(...chromaIntegrity.errors);
+  const productionEvidence = validateProductionEvidenceReport({
+    kind: normalizedKind,
+    provenance
+  }, { production });
+  if (!productionEvidence.ok) errors.push(...productionEvidence.errors);
   const appearance = validateMasterAppearanceInspection(appearanceInspection, {
     kind: normalizedKind,
     sourceReferenceCount: Number(sourceReferenceCount),
@@ -129,6 +142,8 @@ function validateMasterImage({
     contentInspection: contentInspection && typeof contentInspection === "object"
       ? JSON.parse(JSON.stringify(contentInspection))
       : null,
+    chromaIntegrity: chromaIntegrity.evidence,
+    provenance: productionEvidence.evidence,
     appearance: appearance.evidence,
     referenceMetrics: immutableReferenceMetrics
   };

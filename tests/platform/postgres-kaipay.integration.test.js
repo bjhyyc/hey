@@ -77,7 +77,8 @@ integration("PostgreSQL Kaipay persistence integration", () => {
           valid: true,
           platformOrderId: ids.order,
           providerOrderId,
-          providerCode: "alipay",
+          providerCode: "fuyou",
+          payMethod: "alipay",
           eventId: `event-${ids.order}`,
           credentialVersion: TEST_CREDENTIAL_VERSION,
           status: "PAID"
@@ -89,9 +90,10 @@ integration("PostgreSQL Kaipay persistence integration", () => {
       createCheckout: vi.fn(async () => ({
         providerOrderId,
         credentialVersion: TEST_CREDENTIAL_VERSION,
-        providerCode: "alipay",
-        scene: "web",
-        nextAction: { type: "redirect", url: "https://pay.example/integration" }
+        providerCode: "fuyou",
+        payMethod: "alipay",
+        scene: "native",
+        nextAction: { type: "qr_code", qrCode: "https://pay.example/integration" }
       })),
       queryOrder: vi.fn(async () => ({
         platformOrderId: ids.order,
@@ -100,8 +102,9 @@ integration("PostgreSQL Kaipay persistence integration", () => {
         currency: "CNY",
         paymentMethod: "KAIPAY",
         paymentChannel: "ALIPAY",
-        providerCode: "alipay",
-        scene: "web",
+        providerCode: "fuyou",
+        payMethod: "alipay",
+        scene: "native",
         status: "PAID"
       })),
       refund: vi.fn()
@@ -115,7 +118,11 @@ integration("PostgreSQL Kaipay persistence integration", () => {
         returnBaseUrl: "https://heyirmy.com/projects/payment-return",
         adapterVersion: KAIPAY_V3_ADAPTER_VERSION,
         defaultChannel: "ALIPAY",
-        alipayScene: "web",
+        alipayProvider: "fuyou",
+        alipayPayMethod: "alipay",
+        alipayScene: "native",
+        wechatProvider: "fuyou",
+        wechatPayMethod: "wechat",
         wechatScene: "native",
         selectedMerchantCode: "",
         requestTimeoutMs: "15000",
@@ -153,7 +160,7 @@ integration("PostgreSQL Kaipay persistence integration", () => {
 
     const attempts = await pool.query(
       `SELECT provider, payment_method, amount_fen, adapter_version,
-              credential_version, payment_channel, provider_code, payment_scene
+              credential_version, payment_channel, pay_method, provider_code, payment_scene
          FROM payment_attempt WHERE order_id = $1`,
       [ids.order]
     );
@@ -164,8 +171,9 @@ integration("PostgreSQL Kaipay persistence integration", () => {
       adapter_version: KAIPAY_V3_ADAPTER_VERSION,
       credential_version: TEST_CREDENTIAL_VERSION,
       payment_channel: "ALIPAY",
-      provider_code: "alipay",
-      payment_scene: "web"
+      pay_method: "alipay",
+      provider_code: "fuyou",
+      payment_scene: "native"
     }]);
     const encrypted = await pool.query(
       `SELECT raw_notification_ciphertext, raw_notification_digest

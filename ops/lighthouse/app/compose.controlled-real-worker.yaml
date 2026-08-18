@@ -1,0 +1,23 @@
+services:
+  studio-worker:
+    environment:
+      # Keep PostgreSQL/COS/Redis in production security mode while explicitly
+      # downgrading only the visual evidence classification for this one paid
+      # staging run. The runtime rejects every other run ID.
+      PETPACK_PLATFORM_MODE: production
+      PETPACK_WORKER_EVIDENCE_MODE: controlled-real-staging
+      PETPACK_WORKER_COMPONENTS_MODULE: /app/platform/src/runtime/controlled-real-worker-components.js
+      PETPACK_CONTROLLED_REAL_MODELARK_ENABLED: "true"
+      PETPACK_CONTROLLED_REAL_RUN_ID: ${PETPACK_CONTROLLED_REAL_RUN_ID:?Set the single controlled-real run UUID}
+      PETPACK_QUEUE_WORKER_CONCURRENCY: "7"
+      PETPACK_HEAVY_JOB_CONCURRENCY: "1"
+      MODELARK_IMAGE_MAX_CONCURRENT: "1"
+      MODELARK_VIDEO_MAX_CONCURRENT: "7"
+      MODELARK_IMAGE_MAX_RETRIES: "1"
+      MODELARK_VIDEO_MAX_RETRIES: "1"
+    volumes:
+      - petpack-controlled-real-worker-work:/work
+
+volumes:
+  petpack-controlled-real-worker-work:
+    name: petpack-controlled-real-worker-work

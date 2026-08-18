@@ -1,5 +1,7 @@
 const crypto = require("node:crypto");
+const { isDeepStrictEqual } = require("node:util");
 
+const { ACTION_ENDPOINTS, REQUIRED_ACTION_IDS } = require("../domain/action-catalog");
 const { buildPetpack } = require("../petpack/build");
 const {
   PETPACK_BUILDER_VERSION,
@@ -12,8 +14,178 @@ const {
 } = require("../petpack/package-contract");
 const { PetpackValidationError, isProductionAssuredValidator } = require("../petpack/delivery-validator");
 const { isPostgresInfrastructureError } = require("../persistence/postgres-database");
+const { ACTION_QA_CONTRACT_VERSION } = require("../qa/action-quality-gate");
+const { validateChromaSubjectInspection } = require("../qa/chroma-subject-integrity");
+const { validateDecodedEndpointInspection } = require("../qa/frame-continuity-metrics");
+const { MASTER_IMAGE_QA_CONTRACT_VERSION } = require("../qa/master-image-quality-gate");
+const {
+  REQUIRED_MASTER_KINDS,
+  ProductionEvidenceProvenanceError,
+  assertProductionEvidenceProvenance
+} = require("../qa/production-evidence-provenance");
 const { OBJECT_CLASSES, createProjectObjectKey } = require("../storage/private-object-store");
 const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflow");
+
+const PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION =
+  "petpack-production-media-snapshot-evidence/v1";
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function appendDecisionErrors(errors, path, decision) {
+  if (!decision || decision.ok === true) return;
+  for (const error of decision.errors || ["failed"]) errors.push(`${path}: ${error}`);
+}
+
+function assertPassingQaReport(report, { path, contractVersion }, errors) {
+  if (!isRecord(report) || report.ok !== true || !Array.isArray(report.errors) || report.errors.length !== 0) {
+    errors.push(`${path} must be a passing QA report with no errors`);
+  }
+  if (report?.contractVersion !== contractVersion) {
+    errors.push(`${path}.contractVersion must be ${contractVersion}`);
+  }
+}
+
+function assertRelationalProvenanceBinding({
+  provenance,
+  record,
+  inputField = "sourceSha256",
+  outputField,
+  path
+}, errors) {
+  if (provenance.inputSha256 !== record?.[inputField]) {
+    errors.push(`${path}.provenance.inputSha256 is not bound to the current source asset`);
+  }
+  if (provenance.outputSha256 !== record?.[outputField]) {
+    errors.push(`${path}.provenance.outputSha256 is not bound to the current output asset`);
+  }
+  if (provenance.processorVersion !== record?.processorVersion) {
+    errors.push(`${path}.provenance.processorVersion is not bound to the persisted processor`);
+  }
+}
+
+/**
+ * Production-only aggregate gate for the exact media evidence that will be
+ * frozen into a PetPack input snapshot. The provenance contract establishes
+ * evidence class and hashes; the relational comparisons bind those hashes to
+ * the currently selected database assets and processor rows.
+ */
+function assertProductionMediaSnapshotEvidence({ masterEvidence, actions } = {}) {
+  const masters = isRecord(masterEvidence) ? masterEvidence : {};
+  const actionList = Array.isArray(actions) ? actions : [];
+  const actionRecords = new Map();
+  const collectionErrors = [];
+  for (const action of actionList) {
+    const actionId = action?.actionId;
+    if (typeof actionId !== "string") continue;
+    if (actionRecords.has(actionId)) collectionErrors.push(`actions.${actionId} is duplicated`);
+    else actionRecords.set(actionId, action);
+  }
+
+  const masterReports = Object.fromEntries(
+    Object.entries(masters).map(([kind, record]) => [kind, record?.qa])
+  );
+  const actionReports = Object.fromEntries(
+    [...actionRecords].map(([actionId, record]) => [actionId, record?.qa])
+  );
+  // This call is deliberately the first semantic gate: missing, controlled,
+  // development, and unknown provenance must all use the shared fail-closed
+  // production evidence contract.
+  const provenance = assertProductionEvidenceProvenance({ masterReports, actionReports });
+  const errors = [...collectionErrors];
+
+  for (const kind of REQUIRED_MASTER_KINDS) {
+    const record = masters[kind];
+    const report = record?.qa;
+    const path = `masterReports.${kind}`;
+    assertPassingQaReport(report, {
+      path,
+      contractVersion: MASTER_IMAGE_QA_CONTRACT_VERSION
+    }, errors);
+    const chroma = validateChromaSubjectInspection(report?.chromaIntegrity, {
+      production: true,
+      expectedFrameCount: 1
+    });
+    appendDecisionErrors(errors, `${path}.chromaIntegrity`, chroma);
+    assertRelationalProvenanceBinding({
+      provenance: provenance.masterReports[kind],
+      record,
+      inputField: "inputSha256",
+      outputField: "outputSha256",
+      path
+    }, errors);
+  }
+
+  for (const actionId of REQUIRED_ACTION_IDS) {
+    const record = actionRecords.get(actionId);
+    const report = record?.qa;
+    const path = `actionReports.${actionId}`;
+    assertPassingQaReport(report, {
+      path,
+      contractVersion: ACTION_QA_CONTRACT_VERSION
+    }, errors);
+
+    if (report?.decodedEndpoints?.ok !== true) {
+      errors.push(`${path}.decodedEndpoints must be passing`);
+    }
+    const decodedEvidence = report?.evidence?.endpoints?.decoded;
+    const expectedEndpoints = ACTION_ENDPOINTS[actionId];
+    const expectedFirstMasterHash = masters[expectedEndpoints.firstMaster]?.outputSha256;
+    const expectedLastMasterHash = masters[expectedEndpoints.lastMaster]?.outputSha256;
+    if (report?.evidence?.endpoints?.firstMasterHash !== expectedFirstMasterHash) {
+      errors.push(`${path}.evidence.endpoints.firstMasterHash is not bound to the selected master`);
+    }
+    if (report?.evidence?.endpoints?.lastMasterHash !== expectedLastMasterHash) {
+      errors.push(`${path}.evidence.endpoints.lastMasterHash is not bound to the selected master`);
+    }
+    const decoded = validateDecodedEndpointInspection(decodedEvidence, {
+      production: true,
+      actionId,
+      expectedFirstMasterHash,
+      expectedLastMasterHash,
+      expectedOutputHash: record?.sha256
+    });
+    appendDecisionErrors(errors, `${path}.evidence.endpoints.decoded`, decoded);
+    if (!isDeepStrictEqual(report?.decodedEndpoints?.evidence, decodedEvidence)) {
+      errors.push(`${path}.decodedEndpoints evidence does not match immutable endpoint evidence`);
+    }
+
+    const sampledFrameCount = Number(report?.evidence?.continuity?.sampledFrameCount);
+    if (!Number.isSafeInteger(sampledFrameCount) || sampledFrameCount < 1 ||
+        !Array.isArray(report?.frameResults) || report.frameResults.length !== sampledFrameCount) {
+      errors.push(`${path} has no exact sampled frame count for chroma evidence`);
+    }
+    if (report?.chromaIntegrity?.ok !== true) {
+      errors.push(`${path}.chromaIntegrity must be passing`);
+    }
+    const chromaEvidence = report?.evidence?.chromaIntegrity;
+    const chroma = validateChromaSubjectInspection(chromaEvidence, {
+      production: true,
+      expectedFrameCount: sampledFrameCount
+    });
+    appendDecisionErrors(errors, `${path}.evidence.chromaIntegrity`, chroma);
+    if (!isDeepStrictEqual(report?.chromaIntegrity?.evidence, chromaEvidence)) {
+      errors.push(`${path}.chromaIntegrity evidence does not match immutable chroma evidence`);
+    }
+
+    assertRelationalProvenanceBinding({
+      provenance: provenance.actionReports[actionId],
+      record,
+      outputField: "sha256",
+      path
+    }, errors);
+  }
+
+  if (errors.length > 0) throw new ProductionEvidenceProvenanceError(errors);
+  return Object.freeze({
+    contractVersion: PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION,
+    masterEvidence: Object.freeze(Object.fromEntries(
+      REQUIRED_MASTER_KINDS.map((kind) => [kind, masters[kind]])
+    )),
+    actions: Object.freeze(REQUIRED_ACTION_IDS.map((actionId) => actionRecords.get(actionId)))
+  });
+}
 
 function requireMethod(value, method, label) {
   if (!value || typeof value[method] !== "function") throw new Error(`${label} must implement ${method}`);
@@ -108,6 +280,7 @@ class PetpackPipelineWorker {
     workerId = crypto.randomUUID(),
     leaseSeconds = 180,
     maxConcurrentHeavyJobs = 1,
+    packageMatteMode = "green-screen",
     productionMode = process.env.PETPACK_PLATFORM_MODE === "production",
     deliveryRetentionDays = null,
     logger = console
@@ -130,6 +303,9 @@ class PetpackPipelineWorker {
       throw new Error("PetPack pipeline lease seconds must be between 30 and 3600");
     }
     this.productionMode = Boolean(productionMode);
+    if (this.productionMode) {
+      requireMethod(repository, "failMediaSnapshotEvidence", "Production PetPack worker repository");
+    }
     if (deliveryRetentionDays !== null && (!Number.isInteger(deliveryRetentionDays) || deliveryRetentionDays < 1 || deliveryRetentionDays > 3650)) {
       throw new Error("Delivery retention days must be between 1 and 3650");
     }
@@ -163,6 +339,10 @@ class PetpackPipelineWorker {
     this.workerId = requiredString(workerId, "PetPack worker ID", 256);
     this.leaseSeconds = leaseSeconds;
     this.heavyJobAdmission = new HeavyJobAdmission(maxConcurrentHeavyJobs);
+    if (!["green-screen", "alpha"].includes(packageMatteMode)) {
+      throw new Error("PetPack package matte mode must be green-screen or alpha");
+    }
+    this.packageMatteMode = packageMatteMode;
     this.deliveryRetentionDays = deliveryRetentionDays;
     this.logger = logger;
   }
@@ -244,6 +424,30 @@ class PetpackPipelineWorker {
     throw retryablePetpackFailure(code, error, releaseError);
   }
 
+  async _failProductionMediaEvidence(input, claim, error) {
+    const code = safeErrorCode(error, "production_evidence_provenance_invalid");
+    try {
+      await this.repository.failMediaSnapshotEvidence({
+        jobId: input.jobId,
+        leaseToken: claim.leaseToken,
+        errorCode: code
+      });
+    } catch (persistenceError) {
+      return this._releaseForRetry(
+        input,
+        claim,
+        persistenceError,
+        "production_media_evidence_failure_commit_failed"
+      );
+    }
+    this.logger.warn?.("petpack.worker.production_media_evidence_rejected", {
+      runId: input.runId,
+      errorCode: code,
+      errorCount: Array.isArray(error?.errors) ? error.errors.length : 0
+    });
+    return { status: "evidence_rejected", runId: input.runId, errorCode: code };
+  }
+
   _nonClaimedResult(claim, runId) {
     if (claim.outcome === "busy") {
       const reported = Number(claim.retryAfterMs);
@@ -257,9 +461,18 @@ class PetpackPipelineWorker {
 
   async _processMediaGate(job) {
     const input = parseRunJob(job, JOB_NAMES.PROCESS_MEDIA);
-    const claim = await this.repository.claimMediaSnapshot(this._claimInput(input));
+    const claim = await this.repository.claimMediaSnapshot(this._claimInput({
+      ...input,
+      requireProductionEvidence: this.productionMode
+    }));
     if (claim.outcome !== "claimed") return this._nonClaimedResult(claim, input.runId);
     try {
+      const productionEvidence = this.productionMode
+        ? assertProductionMediaSnapshotEvidence({
+            masterEvidence: claim.masterEvidence,
+            actions: claim.actions
+          })
+        : null;
       const snapshot = createPackageInputRevision({
         runId: claim.runId,
         packageName: claim.projectName,
@@ -277,9 +490,16 @@ class PetpackPipelineWorker {
         revisionSha256: snapshot.revisionSha256,
         packageName: snapshot.packageName,
         actions: snapshot.actions,
-        buildJob
+        buildJob,
+        ...(productionEvidence ? { productionEvidence } : {})
       });
     } catch (error) {
+      if ([
+        "production_evidence_provenance_invalid",
+        "production_media_evidence_changed"
+      ].includes(error?.code)) {
+        return this._failProductionMediaEvidence(input, claim, error);
+      }
       return this._releaseForRetry(input, claim, error, "package_media_gate_commit_failed");
     }
     this.logger.info?.("petpack.worker.package_inputs_frozen", { runId: input.runId, actionCount: 7 });
@@ -317,7 +537,7 @@ class PetpackPipelineWorker {
           version: "1.0.0",
           assets: assets.map((asset) => ({
             ...asset,
-            matteMode: "green-screen",
+            matteMode: this.packageMatteMode,
             container: "webm",
             codec: "vp9",
             expectedSha256: asset.sha256
@@ -406,6 +626,12 @@ class PetpackPipelineWorker {
             actions: claim.actions
           })
         ));
+        if (!report || report.ok !== true) {
+          throw new PetpackValidationError("PetPack validator did not produce a passing report", report || {
+            ok: false,
+            errors: ["PetPack validator did not produce a passing report"]
+          });
+        }
       } catch (error) {
         if (error instanceof PetpackValidationError || (error && error.qa && error.code === "petpack_validation_failed")) {
           try {
@@ -471,9 +697,11 @@ class PetpackPipelineWorker {
 }
 
 module.exports = {
+  PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION,
   PetpackPipelineWorker,
   RetryablePetpackJobError,
   HeavyJobAdmission,
+  assertProductionMediaSnapshotEvidence,
   postgresInfrastructureFailure,
   parseRunJob,
   retryablePetpackFailure,

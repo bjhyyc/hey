@@ -114,12 +114,22 @@ describe("recovered Studio production contract", () => {
       width: 1280,
       height: 720
     });
-    expect(createVideoNormalizationPlan({
+    const plan = createVideoNormalizationPlan({
       inputPath: "input.mp4",
       mattePath: "matte.webm",
       outputPath: "output.webm",
       expectedDuration: 4
-    }).mediaProfile).toMatchObject({ width: 854, height: 480, fps: 24, frameCount: 96 });
+    });
+    expect(plan.mediaProfile).toMatchObject({
+      width: 854,
+      height: 480,
+      fps: 24,
+      frameCount: 96,
+      matteMode: "alpha"
+    });
+    expect(plan.args).toContain("yuva420p");
+    expect(plan.args).toContain("alpha_mode=1");
+    expect(plan.args.join(" ")).not.toContain("color=c=0x00ff00");
   });
 
   it("defaults new work to 480p and rejects a 720p production registry", () => {
@@ -252,7 +262,7 @@ describe("recovered Studio production contract", () => {
     });
   });
 
-  it("uses Seedream single-image non-streaming mode for deterministic master generation", () => {
+  it("uses legacy Seedream single-image non-streaming controls for compatible models", () => {
     const payload = createSeedreamPayload({
       modelReference: { endpointId: "seedream" },
       prompt: "preserve this pet identity",
@@ -273,6 +283,28 @@ describe("recovered Studio production contract", () => {
       response_format: "url",
       watermark: false,
       size: "1536x864"
+    });
+  });
+
+  it("omits unsupported legacy stream controls for Seedream 5.0 Pro", () => {
+    const payload = createSeedreamPayload({
+      modelReference: { endpointId: "doubao-seedream-5-0-pro-260628" },
+      prompt: "preserve this pet identity",
+      sourceImages: [{
+        objectKey: "private/source.png",
+        signedReadUrl: "data:image/png;base64,AA=="
+      }],
+      outputSize: "2816x1584",
+      allowDataUrls: true
+    });
+
+    expect(payload).toEqual({
+      model: "doubao-seedream-5-0-pro-260628",
+      prompt: "preserve this pet identity",
+      image: ["data:image/png;base64,AA=="],
+      response_format: "url",
+      watermark: false,
+      size: "2816x1584"
     });
   });
 

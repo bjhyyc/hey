@@ -30,6 +30,8 @@ export type ProjectView = {
   failed: boolean;
 };
 
+export type KaipayPaymentChannel = "ALIPAY" | "WXPAY";
+
 export type KaipayNextAction =
   | { type: "redirect"; url: string }
   | { type: "qr_code"; qrCode?: string; qrCodeImageUrl?: string }
@@ -56,11 +58,11 @@ export const studioBrowserApi = {
       ["projects", projectId, "payment-status"],
       { method: "POST", body: JSON.stringify({}) },
     ),
-  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; paymentChannel: "ALIPAY" | "WXPAY"; idempotencyKey: string }) =>
+  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; paymentChannel: KaipayPaymentChannel; idempotencyKey: string }) =>
     browserStudioRequest<{
       project: { id: string };
       order: { id: string; status: string; amountFen?: number };
-      checkout: { paymentChannel?: "ALIPAY" | "WXPAY"; nextAction?: KaipayNextAction };
+      checkout: { paymentChannel?: KaipayPaymentChannel; nextAction?: KaipayNextAction };
     }>("checkout", { method: "POST", body: JSON.stringify(input) }),
   uploadGrants: (projectId: string, files: Array<{ contentType: string; sha256: string; byteSize: number }>) =>
     browserStudioRequest<Array<{ ordinal: number; uploadUrl: string; expiresInSeconds?: number }>>(

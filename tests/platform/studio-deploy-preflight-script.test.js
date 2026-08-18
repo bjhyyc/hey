@@ -20,6 +20,7 @@ describe("read-only Studio production preflight", () => {
     expect(script).toContain('required_components_module="/app/platform/src/runtime/production-worker-components.js"');
     expect(script).toContain('components_module="${PETPACK_WORKER_COMPONENTS_MODULE:-${required_components_module}}"');
     expect(script).toContain('"${components_module}" == "${required_components_module}"');
+    expect(script).toContain('"${PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256:-}" =~ ^[a-f0-9]{64}$');
     expect(script).not.toContain('production_components_module_must_be_absolute');
   });
 

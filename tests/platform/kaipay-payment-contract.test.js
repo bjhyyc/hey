@@ -44,6 +44,7 @@ function order(overrides = {}) {
     paymentCredentialVersion: TEST_CREDENTIAL_VERSION,
     paymentChannel: "ALIPAY",
     paymentProviderCode: "alipay",
+    paymentPayMethod: "alipay",
     paymentScene: "web",
     ...overrides
   };
@@ -68,7 +69,11 @@ function productionConfig(overrides = {}) {
     returnBaseUrl: "https://heyirmy.com/projects/payment-return",
     adapterVersion: KAIPAY_V3_ADAPTER_VERSION,
     defaultChannel: "ALIPAY",
+    alipayProvider: "alipay",
+    alipayPayMethod: "alipay",
     alipayScene: "web",
+    wechatProvider: "wechat",
+    wechatPayMethod: "wechat",
     wechatScene: "native",
     selectedMerchantCode: "",
     requestTimeoutMs: "15000",
@@ -97,11 +102,19 @@ describe("Kaipay payment contract", () => {
       KAIPAY_RETURN_BASE_URL: "https://heyirmy.com/projects/payment-return",
       KAIPAY_ADAPTER_VERSION: KAIPAY_V3_ADAPTER_VERSION,
       KAIPAY_DEFAULT_CHANNEL: "ALIPAY",
-      KAIPAY_ALIPAY_SCENE: "web",
+      KAIPAY_ALIPAY_PROVIDER: "fuyou",
+      KAIPAY_ALIPAY_PAY_METHOD: "alipay",
+      KAIPAY_ALIPAY_SCENE: "native",
+      KAIPAY_WECHAT_PROVIDER: "fuyou",
+      KAIPAY_WECHAT_PAY_METHOD: "wechat",
       KAIPAY_WECHAT_SCENE: "native",
       KAIPAY_REQUEST_TIMEOUT_MS: "15000"
     });
     expect(config.mode).toBe("production");
+    expect(config).toEqual(expect.objectContaining({
+      alipayProvider: "fuyou", alipayPayMethod: "alipay", alipayScene: "native",
+      wechatProvider: "fuyou", wechatPayMethod: "wechat", wechatScene: "native"
+    }));
     expect(Object.isFrozen(config)).toBe(true);
     expect(() => loadKaipayConfig({
       PETPACK_PLATFORM_MODE: "production",
@@ -112,6 +125,25 @@ describe("Kaipay payment contract", () => {
       KAIPAY_ADAPTER_VERSION: "v1",
       KAIPAY_ALLOW_SIMULATED_PAYMENTS: "true"
     })).toThrow(/not deployment-ready/);
+    expect(() => loadKaipayConfig({
+      PETPACK_PLATFORM_MODE: "production",
+      KAIPAY_CREDENTIALS_JSON: TEST_CREDENTIALS_JSON,
+      KAIPAY_API_BASE_URL: "https://api.kaipay.cn",
+      KAIPAY_NOTIFY_BASE_URL: "https://api.heyirmy.com/api/payments/kaipay/notify",
+      KAIPAY_RETURN_BASE_URL: "https://heyirmy.com/projects/payment-return",
+      KAIPAY_ADAPTER_VERSION: KAIPAY_V3_ADAPTER_VERSION,
+      KAIPAY_DEFAULT_CHANNEL: "ALIPAY",
+      KAIPAY_ALIPAY_PROVIDER: "fuyou",
+      KAIPAY_ALIPAY_PAY_METHOD: "alipay",
+      KAIPAY_ALIPAY_SCENE: "native",
+      KAIPAY_WECHAT_PROVIDER: "fuyou",
+      KAIPAY_WECHAT_SCENE: "native",
+      KAIPAY_REQUEST_TIMEOUT_MS: "15000"
+    })).toThrow(/KAIPAY_WECHAT_PAY_METHOD is required/);
+    expect(loadKaipayConfig({ PETPACK_PLATFORM_MODE: "development" })).toEqual(expect.objectContaining({
+      alipayProvider: "alipay", alipayPayMethod: "alipay", alipayScene: "web",
+      wechatProvider: "wechat", wechatPayMethod: "wechat", wechatScene: "native"
+    }));
     expect(() => new KaipayPaymentProvider({
       config: { mode: "production", adapterVersion: "v1" }
     })).toThrow(/credentials|configuration/i);
@@ -124,6 +156,7 @@ describe("Kaipay payment contract", () => {
         providerOrderId: "kp-123",
         credentialVersion: TEST_CREDENTIAL_VERSION,
         providerCode: "alipay",
+        payMethod: "alipay",
         scene: "web",
         nextAction: { type: "redirect", url: "https://pay.example/checkout/123" }
       })),
@@ -159,18 +192,66 @@ describe("Kaipay payment contract", () => {
       credentialVersion: TEST_CREDENTIAL_VERSION,
       paymentChannel: "ALIPAY",
       providerCode: "alipay",
+      payMethod: "alipay",
       scene: "web"
     }));
   });
 
+  it("freezes the configured Fuyou route and returns only a native QR action", async () => {
+    const state = stores(order({
+      providerOrderId: null,
+      paymentCredentialVersion: null,
+      paymentChannel: null,
+      paymentProviderCode: null,
+      paymentPayMethod: null,
+      paymentScene: null
+    }));
+    const client = {
+      createCheckout: vi.fn(async () => ({
+        providerOrderId: "kp-fuyou-1",
+        credentialVersion: TEST_CREDENTIAL_VERSION,
+        providerCode: "fuyou",
+        payMethod: "alipay",
+        scene: "native",
+        nextAction: { type: "qr_code", qrCode: "https://qr.example/kp-fuyou-1" }
+      })),
+      queryOrder: vi.fn(),
+      refund: vi.fn()
+    };
+    const provider = new KaipayPaymentProvider({
+      config: productionConfig({
+        alipayProvider: "fuyou", alipayPayMethod: "alipay", alipayScene: "native",
+        wechatProvider: "fuyou", wechatPayMethod: "wechat", wechatScene: "native"
+      }),
+      kaipayClient: client,
+      notificationProtocol: { verify: vi.fn(), acknowledge: vi.fn() },
+      ...state
+    });
+    const result = await provider.createCheckout({
+      platformOrderId: "order-1", idempotencyKey: "idem-fuyou-1", paymentChannel: "ALIPAY"
+    });
+    expect(client.createCheckout).toHaveBeenCalledWith(expect.objectContaining({
+      paymentChannel: "ALIPAY", providerCode: "fuyou", payMethod: "alipay", scene: "native"
+    }));
+    expect(state.eventStore.appendIdempotent).toHaveBeenCalledWith(expect.objectContaining({
+      paymentChannel: "ALIPAY", providerCode: "fuyou", payMethod: "alipay", scene: "native"
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      providerCode: "fuyou", payMethod: "alipay", scene: "native",
+      nextAction: expect.objectContaining({ type: "qr_code" })
+    }));
+  });
+
   it("marks payment paid only after verified notification and authoritative query agree", async () => {
-    const state = stores();
+    const state = stores(order({ paymentPayMethod: null }));
     const protocol = {
       verify: vi.fn(async () => ({
         valid: true,
         platformOrderId: "order-1",
         providerOrderId: "kp-order-1",
         providerCode: "alipay",
+        payMethod: "alipay",
+        scene: "web",
         eventId: "evt-paid-1",
         credentialVersion: TEST_CREDENTIAL_VERSION,
         status: "PAID"
@@ -187,6 +268,7 @@ describe("Kaipay payment contract", () => {
         paymentMethod: "KAIPAY",
         paymentChannel: "ALIPAY",
         providerCode: "alipay",
+        payMethod: "alipay",
         scene: "web",
         status: "PAID"
       })),
@@ -208,7 +290,7 @@ describe("Kaipay payment contract", () => {
   });
 
   it("uses the frozen V3 credential for an authoritative status query when a webhook is missed", async () => {
-    const state = stores();
+    const state = stores(order({ paymentPayMethod: null }));
     const client = {
       createCheckout: vi.fn(),
       queryOrder: vi.fn(async () => ({
@@ -219,6 +301,7 @@ describe("Kaipay payment contract", () => {
         paymentMethod: "KAIPAY",
         paymentChannel: "ALIPAY",
         providerCode: "alipay",
+        payMethod: "alipay",
         scene: "web",
         status: "PAID",
         nextAction: { type: "none" }
@@ -243,6 +326,7 @@ describe("Kaipay payment contract", () => {
       credentialVersion: TEST_CREDENTIAL_VERSION,
       paymentChannel: "ALIPAY",
       providerCode: "alipay",
+      payMethod: "alipay",
       scene: "web"
     }));
     expect(state.eventStore.appendIdempotent).toHaveBeenCalledWith(expect.objectContaining({
@@ -250,6 +334,28 @@ describe("Kaipay payment contract", () => {
       state: "paid",
       credentialVersion: TEST_CREDENTIAL_VERSION
     }));
+  });
+
+  it("never infers a missing payMethod for Fuyou or combines a partial frozen route with config", async () => {
+    const queryOrder = vi.fn();
+    const provider = new KaipayPaymentProvider({
+      config: productionConfig({
+        alipayProvider: "fuyou", alipayPayMethod: "alipay", alipayScene: "native"
+      }),
+      kaipayClient: { createCheckout: vi.fn(), queryOrder, refund: vi.fn() },
+      notificationProtocol: { verify: vi.fn(), acknowledge: vi.fn() },
+      ...stores(order({
+        paymentProviderCode: "fuyou",
+        paymentPayMethod: null,
+        paymentScene: "native"
+      }))
+    });
+    await expect(provider.queryStatus({ platformOrderId: "order-1" })).rejects.toThrow(/pay method is required/);
+    await expect(provider.createCheckout({
+      platformOrderId: "order-1", idempotencyKey: "idem-partial", paymentChannel: "ALIPAY"
+    })).rejects.toThrow(/pay method is required/);
+    expect(queryOrder).not.toHaveBeenCalled();
+    expect(provider.client.createCheckout).not.toHaveBeenCalled();
   });
 
   it("connects the payment-status fallback to the single paid-workflow transaction", async () => {

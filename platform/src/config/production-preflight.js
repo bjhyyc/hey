@@ -40,6 +40,10 @@ const VERSION_SETTINGS = Object.freeze([
   "PETPACK_VALIDATOR_BUNDLE_VERSION"
 ]);
 
+const DIGEST_SETTINGS = Object.freeze([
+  "PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256"
+]);
+
 function setting(environment, name) {
   const value = environment && environment[name];
   return typeof value === "string" ? value.trim() : "";
@@ -128,7 +132,9 @@ function validateProductionEnvironment(environment = process.env) {
   const kaipaySettings = [
     "KAIPAY_CREDENTIALS_JSON", "KAIPAY_ADAPTER_VERSION",
     "KAIPAY_API_BASE_URL", "KAIPAY_NOTIFY_BASE_URL", "KAIPAY_RETURN_BASE_URL",
-    "KAIPAY_DEFAULT_CHANNEL", "KAIPAY_ALIPAY_SCENE", "KAIPAY_WECHAT_SCENE",
+    "KAIPAY_DEFAULT_CHANNEL",
+    "KAIPAY_ALIPAY_PROVIDER", "KAIPAY_ALIPAY_PAY_METHOD", "KAIPAY_ALIPAY_SCENE",
+    "KAIPAY_WECHAT_PROVIDER", "KAIPAY_WECHAT_PAY_METHOD", "KAIPAY_WECHAT_SCENE",
     "KAIPAY_REQUEST_TIMEOUT_MS"
   ].map((name) => ({ name, value: setting(environment, name) }));
   addCheck(checks, missing, "payment.kaipay_config", kaipayReady, "kaipay_config_invalid", kaipaySettings);
@@ -207,6 +213,14 @@ function validateProductionEnvironment(environment = process.env) {
   weakSecrets.forEach((name) => { if (!setting(environment, name)) missing.add(name); });
   checks.push({ id: "security.server_secrets", status: weakSecrets.length ? "fail" : "pass", code: weakSecrets.length ? "server_secret_missing_or_weak" : "ready" });
 
+  const invalidDigests = DIGEST_SETTINGS.filter((name) => !/^[a-f0-9]{64}$/.test(setting(environment, name)));
+  invalidDigests.forEach((name) => { if (!setting(environment, name)) missing.add(name); });
+  checks.push({
+    id: "supply_chain.component_manifest_digest",
+    status: invalidDigests.length ? "fail" : "pass",
+    code: invalidDigests.length ? "component_manifest_digest_missing_or_invalid" : "ready"
+  });
+
   const invalidVersions = VERSION_SETTINGS.filter((name) => !/^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/.test(setting(environment, name)));
   invalidVersions.forEach((name) => { if (!setting(environment, name)) missing.add(name); });
   checks.push({ id: "policy.versioned_production_decisions", status: invalidVersions.length ? "fail" : "pass", code: invalidVersions.length ? "policy_version_missing_or_invalid" : "ready" });
@@ -264,6 +278,7 @@ async function runProductionPreflight({ environment = process.env, probes = {} }
 }
 
 module.exports = {
+  DIGEST_SETTINGS,
   REQUIRED_PROBES,
   SECRET_SETTINGS,
   VERSION_SETTINGS,

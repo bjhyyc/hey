@@ -51,7 +51,10 @@ function fakeCos({
   const headObject = vi.fn(async () => ({
     headers: responseHeaders({ body, contentType: headContentType, byteSize: headByteSize })
   }));
-  const getObject = vi.fn((params, callback) => {
+  const getObject = vi.fn(() => {
+    throw new Error("non-streaming COS getObject must not be used for private workspace reads");
+  });
+  const getObjectStream = vi.fn((params, callback) => {
     const stream = new PassThrough();
     queueMicrotask(() => {
       if (getError) {
@@ -72,11 +75,13 @@ function fakeCos({
       getObjectUrl,
       headObject,
       getObject,
+      getObjectStream,
       putObject: vi.fn(async () => ({}))
     },
     getObjectUrl,
     headObject,
-    getObject
+    getObject,
+    getObjectStream
   };
 }
 
@@ -104,13 +109,14 @@ describe("Tencent COS private server reads", () => {
     expect(Buffer.isBuffer(downloaded.body)).toBe(false);
     await expect(collect(downloaded.body)).resolves.toEqual(expected);
     expect(fake.getObjectUrl).not.toHaveBeenCalled();
-    expect(fake.getObject).toHaveBeenCalledWith(expect.objectContaining({
+    expect(fake.getObjectStream).toHaveBeenCalledWith(expect.objectContaining({
       Bucket: driver.config.bucket,
       Region: driver.config.region,
       Key: "private/project/run/action.mp4",
       ReturnStream: true,
       Headers: { "If-Match": '"fixed-etag"' }
     }), expect.any(Function));
+    expect(fake.getObject).not.toHaveBeenCalled();
   });
 
   it("provides the server-side read contract required by all three private workspaces", () => {
@@ -136,7 +142,7 @@ describe("Tencent COS private server reads", () => {
       code: "private_object_too_large",
       category: "object_too_large"
     });
-    expect(fake.getObject).not.toHaveBeenCalled();
+    expect(fake.getObjectStream).not.toHaveBeenCalled();
     expect(fake.getObjectUrl).not.toHaveBeenCalled();
   });
 
@@ -148,7 +154,7 @@ describe("Tencent COS private server reads", () => {
       code: "invalid_object_metadata",
       category: "invalid_response"
     });
-    expect(fake.getObject).not.toHaveBeenCalled();
+    expect(fake.getObjectStream).not.toHaveBeenCalled();
   });
 
   it("fails the stream when COS returns more or fewer bytes than HEAD recorded", async () => {

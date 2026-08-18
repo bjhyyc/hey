@@ -127,6 +127,11 @@
 - 2026-08-16：用户明确确认后，仅发起一次受控 0.01 元支付宝 Web 创建请求（平台订单 `hey-test-001-3103cdb6c095447`）；Kaipay 返回业务拒绝 `kaipay_business_error`，未返回 provider 订单号，未产生扣款或回调，未自动重试。随后无费用 `GET /pay/api/v3/capabilities` 仍返回 `ok`，确认 V3 凭据、签名和能力探针正常；下单侧需在 Kaipay 控制台继续核对授权域名/电脑网站产品状态，不能把本次失败记为支付成功。
 - 2026-08-16：针对 Kaipay 巡查“无法抓取 `https://api.heyirmy.com`”，确认 API 根路径原先为 404；在 Caddy 增加精确根路径验证响应 `Hey PetPack API`（不改变 `/health`、`/readyz`、业务和回调路由），配置校验通过，edge 重启后公网根路径为 HTTPS 200，`/health` 与 `/readyz` 仍为 200。请在 Kaipay 控制台重新发起该子域名巡查。
 
+- 2026-08-17：production-assured Worker 组件包 `platform/src/runtime/production-worker-components.js` 完成（此前该模块缺失是 P0 首要阻塞）。四组件（母图处理器、抠图/最终检查服务、QA policy provider、交付验证器）全部 frozen 并携带 immutable `productionMetadata`；`productionComponentManifest` 的 canonical SHA-256 与 `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256` 固定校验打通，新增 `print-production-worker-manifest.js` 供运维在镜像内输出待固定摘要。所有 QA 证据从解码字节实测：母图按 sqrt(面积) 归一到冻结画布并重新实测（chroma 主体完整性、背景纯度、几何标定、对参照照片/母图的颜色分布+纹理布局+左右位置相似度）；动作视频逐帧全覆盖实测（worst-frame chroma、逐帧外观最小分、地面抖动/中心漂移/尺度抖动、相邻帧掩膜 IoU、sleep-loop 呼吸循环计数与接缝指标）；照片参照采用边框主色背景分离测量，无任何 fixture 值。QA policy 为签名的 `hey-production-qa/1.0.0`，阈值与测量方法共同标定并纳入校准摘要。
+- 2026-08-17：配套修复：可信首尾帧检查器动作表由 2 个扩展为全部 7 个动作（从冻结 action catalog 派生）；`image-master-worker._resolveProcessor` 补上 `productionMetadata` 透传（此前生产模式必然抛错的隐性缺陷）；`PetpackDeliveryValidator` 支持在冻结前定义 immutable `productionMetadata`（version 强制等于构造出的 validatorVersion，不可外部宣称）；补齐缺失的 `scripts/verify-upstream-petpack-import.js` 隔离子进程（stdout 单 JSON、console 重定向 stderr、临时用户数据目录即用即删）。
+- 2026-08-17：新增测量层 `platform/src/qa/subject-appearance-metrics.js`（量化直方图、8×8 纹理网格、左右直配对-交叉配对检验、区域带覆盖、校准几何估计）。聚焦测试 `tests/platform/production-worker-components.test.js` 8 项全过：含真实 ffmpeg 合成媒体端到端两条链（1536×864 绿底母图→归一→生产母图 QA 门通过；绿幕视频→matte→alpha VP9→逐帧证据+可信端点检查→生产动作 QA 门通过）、蓝色错误参照被 QA 门拒绝、母图哈希篡改被拒、整包 manifest SHA 固定验证与错误 SHA 拒绝、非生产环境拒绝。全量回归 108 个测试文件通过、2 个按设计跳过；1078 项通过、2 项跳过（测试需将 TMP/TEMP 指向 D 盘，C 盘已满会导致两项大文件测试 ENOSPC）。桌宠 Vite、落地页 Vite、网站 Next.js 三项生产构建全部成功。
+- 2026-08-17：剩余部署阻塞明确为镜像层：distroless Worker 镜像需新增 pinned 干净上游客户端树（package.json/package-lock.json/src 全量、树摘要固定）、pinned Electron 运行时与 xvfb（Linux 无头交互验证），Compose/预检补 `PETPACK_PRODUCTION_UPSTREAM_CLIENT_ROOT/_TREE_SHA256` 与 `PETPACK_PRODUCTION_ELECTRON_PATH/_SHA256/_RUNNER_PATH/_RUNNER_SHA256`（均非密钥）。真实七动作批次仍等待用户提供 `MODELARK_SEEDANCE_ENDPOINT_ID` 与费用上限确认。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
@@ -135,8 +140,8 @@
 
 1. Kaipay 授权域名、无费用 V3 capabilities、Studio API `/readyz` 与精确通知入口已通过；已按用户确认只尝试一次最高 0.01 元支付宝测试订单，但下单业务层拒绝且无扣款。下一步需先在 Kaipay 控制台确认授权域名巡检和电脑网站产品已对当前二级商户生效，再由用户明确授权是否重试；未获授权前不再创建订单。微信、退款和真实 ModelArk 生成仍按独立费用上限逐项确认。
 2. 补 Redis/BullMQ 队列积压、死信、Outbox oldest-age 与 Worker readiness 告警；随后选择并扫描正式 PostgreSQL 18 与 Redis 8 的不可变镜像 digest，准备应用端双 CA 切换和维护窗口。
-3. 用不含 `libjxl` 的最小 FFmpeg 构建或已修复等价运行时替换当前媒体依赖，重新执行 SBOM/漏洞扫描和 VP9/alpha 实测；随后完成生产 delivery validator 镜像。
-4. 完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance，建立私有代表样本校准集；本地 fixture 证据不得用于生产放行。
+3. 生产 Worker 镜像补齐交付验证层：打入 pinned 干净上游客户端树、pinned Electron 运行时与 xvfb，Compose/预检补 `PETPACK_PRODUCTION_UPSTREAM_CLIENT_*` 与 `PETPACK_PRODUCTION_ELECTRON_*` 非密钥环境项，在镜像内用 `print-production-worker-manifest.js` 输出并固定 `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256`，重建镜像、重扫 SBOM/漏洞后按最终 digest 部署替换 controlled-real Worker。
+4. ~~完成来源照/母图/视频 processor 的生产 adapter、版本与证据 provenance~~（2026-08-17 完成）；剩余：用首个真实七动作批次建立私有代表样本校准集，复核 `hey-production-calibration/1.0.0` 阈值后按需发布新校准版本；本地 fixture 证据不得用于生产放行。
 5. Kaipay 小额验收后，依次进行有费用上限的 ModelArk、COS、CloudBase 和最终上线验收；最高费用与停止条件写入部署清单，真实 secret 始终只从安全文件加载。
 
 ## Working rules

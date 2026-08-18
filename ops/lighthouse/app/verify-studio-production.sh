@@ -23,6 +23,8 @@ fail() {
 required_components_module="/app/platform/src/runtime/production-worker-components.js"
 components_module="${PETPACK_WORKER_COMPONENTS_MODULE:-${required_components_module}}"
 [[ "${components_module}" == "${required_components_module}" ]] || fail "production_components_module_path_not_allowlisted"
+[[ "${PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || \
+  fail "production_components_manifest_sha256_invalid"
 
 CONFIG_ROOT="${PETPACK_CONFIG_ROOT:-}"
 [[ -n "${CONFIG_ROOT}" && "${CONFIG_ROOT}" == /* ]] || fail "config_root_must_be_absolute"

@@ -11,9 +11,10 @@ const {
   KAIPAY_V3_ADAPTER_VERSION,
   KAIPAY_OFFICIAL_API_ORIGIN,
   normalizeApiBaseUrl,
+  normalizeChannelRoute,
   normalizePaymentChannel,
-  normalizeScene,
-  parseV3Credentials
+  parseV3Credentials,
+  routeForChannel
 } = require("./kaipay-v3");
 
 function optionalString(env, name) {
@@ -62,8 +63,8 @@ function assertKaipayRuntimeConfig(config) {
     requireHttpsUrl(config.returnBaseUrl, "Kaipay return base URL");
     normalizeApiBaseUrl(config.apiBaseUrl, { production: config.mode === "production" });
     normalizePaymentChannel(config.defaultChannel);
-    normalizeScene("ALIPAY", config.alipayScene);
-    normalizeScene("WXPAY", config.wechatScene);
+    routeForChannel(config, "ALIPAY");
+    routeForChannel(config, "WXPAY");
     if (config.selectedMerchantCode && !/^[A-Za-z0-9._-]{1,128}$/.test(config.selectedMerchantCode)) {
       throw new Error("KAIPAY_SELECTED_MERCHANT_CODE is invalid");
     }
@@ -84,6 +85,7 @@ function assertKaipayRuntimeConfig(config) {
  */
 function loadKaipayConfig(env = process.env) {
   const mode = optionalString(env, "PETPACK_PLATFORM_MODE") || "development";
+  const strictRoutes = mode === "production" || mode === "test";
   const config = {
     mode,
     credentialsJson: optionalString(env, "KAIPAY_CREDENTIALS_JSON"),
@@ -92,8 +94,12 @@ function loadKaipayConfig(env = process.env) {
     returnBaseUrl: optionalString(env, "KAIPAY_RETURN_BASE_URL"),
     adapterVersion: optionalString(env, "KAIPAY_ADAPTER_VERSION"),
     defaultChannel: optionalString(env, "KAIPAY_DEFAULT_CHANNEL") || "ALIPAY",
-    alipayScene: optionalString(env, "KAIPAY_ALIPAY_SCENE") || "web",
-    wechatScene: optionalString(env, "KAIPAY_WECHAT_SCENE") || "native",
+    alipayProvider: optionalString(env, "KAIPAY_ALIPAY_PROVIDER") || (strictRoutes ? "" : "alipay"),
+    alipayPayMethod: optionalString(env, "KAIPAY_ALIPAY_PAY_METHOD") || (strictRoutes ? "" : "alipay"),
+    alipayScene: optionalString(env, "KAIPAY_ALIPAY_SCENE") || (strictRoutes ? "" : "web"),
+    wechatProvider: optionalString(env, "KAIPAY_WECHAT_PROVIDER") || (strictRoutes ? "" : "wechat"),
+    wechatPayMethod: optionalString(env, "KAIPAY_WECHAT_PAY_METHOD") || (strictRoutes ? "" : "wechat"),
+    wechatScene: optionalString(env, "KAIPAY_WECHAT_SCENE") || (strictRoutes ? "" : "native"),
     selectedMerchantCode: optionalString(env, "KAIPAY_SELECTED_MERCHANT_CODE"),
     requestTimeoutMs: optionalString(env, "KAIPAY_REQUEST_TIMEOUT_MS") || "15000",
     allowSimulatedPayments: optionalString(env, "KAIPAY_ALLOW_SIMULATED_PAYMENTS") === "true"
@@ -107,11 +113,21 @@ function loadKaipayConfig(env = process.env) {
     if (!config.apiBaseUrl) errors.push("KAIPAY_API_BASE_URL is required");
     if (!config.notifyBaseUrl) errors.push("KAIPAY_NOTIFY_BASE_URL is required");
     if (!config.returnBaseUrl) errors.push("KAIPAY_RETURN_BASE_URL is required");
+    for (const [name, value] of [
+      ["KAIPAY_ALIPAY_PROVIDER", config.alipayProvider],
+      ["KAIPAY_ALIPAY_PAY_METHOD", config.alipayPayMethod],
+      ["KAIPAY_ALIPAY_SCENE", config.alipayScene],
+      ["KAIPAY_WECHAT_PROVIDER", config.wechatProvider],
+      ["KAIPAY_WECHAT_PAY_METHOD", config.wechatPayMethod],
+      ["KAIPAY_WECHAT_SCENE", config.wechatScene]
+    ]) {
+      if (!value) errors.push(`${name} is required`);
+    }
     if (config.adapterVersion !== KAIPAY_V3_ADAPTER_VERSION) errors.push(`KAIPAY_ADAPTER_VERSION must be ${KAIPAY_V3_ADAPTER_VERSION}`);
     try { normalizeApiBaseUrl(config.apiBaseUrl, { production: mode === "production" }); } catch (error) { errors.push(error.message); }
     try { normalizePaymentChannel(config.defaultChannel); } catch (error) { errors.push(error.message); }
-    try { normalizeScene("ALIPAY", config.alipayScene); } catch (error) { errors.push(error.message); }
-    try { normalizeScene("WXPAY", config.wechatScene); } catch (error) { errors.push(error.message); }
+    try { routeForChannel(config, "ALIPAY"); } catch (error) { errors.push(error.message); }
+    try { routeForChannel(config, "WXPAY"); } catch (error) { errors.push(error.message); }
     if (config.selectedMerchantCode && !/^[A-Za-z0-9._-]{1,128}$/.test(config.selectedMerchantCode)) errors.push("KAIPAY_SELECTED_MERCHANT_CODE is invalid");
     if (!/^[1-9][0-9]{3,4}$/.test(config.requestTimeoutMs) || Number(config.requestTimeoutMs) < 1000 || Number(config.requestTimeoutMs) > 60000) {
       errors.push("KAIPAY_REQUEST_TIMEOUT_MS must be between 1000 and 60000");
@@ -128,14 +144,17 @@ function loadKaipayConfig(env = process.env) {
   return Object.freeze(assertKaipayRuntimeConfig(config));
 }
 
-function createCheckoutRequest({ order, returnUrl, notifyUrl, paymentChannel }) {
+function createCheckoutRequest({ order, returnUrl, notifyUrl, paymentChannel, route }) {
   if (!order || typeof order !== "object") throw new Error("Order is required");
+  const normalizedRoute = normalizeChannelRoute(paymentChannel, route);
   return Object.freeze({
     platformOrderId: requireId(order.id, "Platform order ID"),
     amountFen: assertAmountFen(order.amountFen),
     currency: "CNY",
     paymentMethod: assertPaymentMethod(order.paymentMethod),
-    paymentChannel: normalizePaymentChannel(paymentChannel),
+    paymentChannel: normalizedRoute.paymentChannel,
+    providerCode: normalizedRoute.provider,
+    payMethod: normalizedRoute.payMethod,
     subject: typeof order.displayName === "string" && order.displayName.trim()
       ? `${order.displayName.trim()}的桌宠素材包`.slice(0, 256)
       : "PetPack Studio 桌宠素材包",
@@ -143,7 +162,38 @@ function createCheckoutRequest({ order, returnUrl, notifyUrl, paymentChannel }) 
     returnUrl: requireId(returnUrl, "Return URL"),
     notifyUrl: requireId(notifyUrl, "Notification URL"),
     credentialVersion: order.paymentCredentialVersion || undefined,
-    scene: order.paymentScene || undefined
+    scene: normalizedRoute.scene
+  });
+}
+
+function frozenRouteForOrder(order, paymentChannel, configuredRoute) {
+  const values = [order?.paymentChannel, order?.paymentProviderCode, order?.paymentPayMethod, order?.paymentScene];
+  const frozen = values.some((value) => value !== undefined && value !== null && value !== "");
+  if (!frozen) return configuredRoute;
+  const frozenChannel = requireId(order.paymentChannel, "Kaipay payment channel");
+  if (frozenChannel !== paymentChannel) throw new Error("Checkout retry must preserve the original Kaipay channel");
+  const provider = requireId(order.paymentProviderCode, "Kaipay provider code");
+  return normalizeChannelRoute(frozenChannel, {
+    provider,
+    payMethod: frozenPayMethod(order.paymentPayMethod, frozenChannel, provider),
+    scene: requireId(order.paymentScene, "Kaipay payment scene")
+  });
+}
+
+function frozenPayMethod(value, paymentChannel, providerCode) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (paymentChannel === "ALIPAY" && providerCode === "alipay") return "alipay";
+  if (paymentChannel === "WXPAY" && providerCode === "wechat") return "wechat";
+  throw new Error("Kaipay pay method is required for this frozen payment route");
+}
+
+function requireFrozenOrderRoute(order) {
+  const paymentChannel = requireId(order?.paymentChannel, "Kaipay payment channel");
+  const provider = requireId(order?.paymentProviderCode, "Kaipay provider code");
+  return normalizeChannelRoute(paymentChannel, {
+    provider,
+    payMethod: frozenPayMethod(order?.paymentPayMethod, paymentChannel, provider),
+    scene: requireId(order?.paymentScene, "Kaipay payment scene")
   });
 }
 
@@ -230,11 +280,14 @@ class KaipayPaymentProvider {
     if (order.paymentChannel && order.paymentChannel !== requestedChannel) {
       throw new Error("Checkout retry must preserve the original Kaipay channel");
     }
+    const selectedChannel = order.paymentChannel || requestedChannel;
+    const route = frozenRouteForOrder(order, selectedChannel, routeForChannel(this.config, selectedChannel));
     const request = createCheckoutRequest({
       order,
       returnUrl: createServerReturnUrl(this.config.returnBaseUrl, order.id),
       notifyUrl: createServerNotificationUrl(this.config.notifyBaseUrl, order.id),
-      paymentChannel: order.paymentChannel || requestedChannel
+      paymentChannel: selectedChannel,
+      route
     });
     const response = await this.client.createCheckout({
       ...request,
@@ -243,9 +296,16 @@ class KaipayPaymentProvider {
     const providerOrderId = requireId(response && response.providerOrderId, "Kaipay provider order ID");
     const credentialVersion = requireId(response && response.credentialVersion, "Kaipay credential version");
     const providerCode = requireId(response && response.providerCode, "Kaipay provider code");
+    const payMethod = requireId(response && response.payMethod, "Kaipay pay method");
     const scene = requireId(response && response.scene, "Kaipay payment scene");
     const nextAction = response && response.nextAction;
     if (!nextAction || typeof nextAction !== "object") throw new Error("Kaipay nextAction is required");
+    if (providerCode !== request.providerCode || payMethod !== request.payMethod || scene !== request.scene) {
+      throw new Error("Kaipay checkout route identity does not match the request");
+    }
+    if ((scene === "native" && nextAction.type !== "qr_code") || (scene === "web" && nextAction.type !== "redirect")) {
+      throw new Error("Kaipay checkout nextAction does not match the frozen route");
+    }
     await this.eventStore.appendIdempotent({
       idempotencyKey: `checkout:${idempotencyKey}`,
       type: "checkout_created",
@@ -254,6 +314,7 @@ class KaipayPaymentProvider {
       paymentMethod: request.paymentMethod,
       paymentChannel: request.paymentChannel,
       providerCode,
+      payMethod,
       scene,
       credentialVersion,
       amountFen: request.amountFen,
@@ -265,6 +326,7 @@ class KaipayPaymentProvider {
       paymentMethod: request.paymentMethod,
       paymentChannel: request.paymentChannel,
       providerCode,
+      payMethod,
       scene,
       credentialVersion,
       adapterVersion: this.config.adapterVersion
@@ -275,6 +337,9 @@ class KaipayPaymentProvider {
       nextAction,
       paymentMethod: request.paymentMethod,
       paymentChannel: request.paymentChannel,
+      providerCode,
+      payMethod,
+      scene,
       state: PAYMENT_STATES.PENDING_PAYMENT
     };
   }
@@ -282,13 +347,15 @@ class KaipayPaymentProvider {
   async queryStatus({ platformOrderId }) {
     const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
     if (!order) throw new Error("Payment order was not found");
+    const frozenRoute = requireFrozenOrderRoute(order);
     const queried = await this.client.queryOrder({
       platformOrderId: requireId(order.id, "Platform order ID"),
       providerOrderId: requireId(order.providerOrderId, "Kaipay provider order ID"),
       credentialVersion: requireId(order.paymentCredentialVersion, "Kaipay credential version"),
-      paymentChannel: requireId(order.paymentChannel, "Kaipay payment channel"),
-      providerCode: requireId(order.paymentProviderCode, "Kaipay provider code"),
-      scene: requireId(order.paymentScene, "Kaipay payment scene")
+      paymentChannel: frozenRoute.paymentChannel,
+      providerCode: frozenRoute.provider,
+      payMethod: frozenRoute.payMethod,
+      scene: frozenRoute.scene
     });
     const queriedOrder = {
       platformOrderId: requireId(queried && queried.platformOrderId, "Queried platform order ID"),
@@ -298,9 +365,15 @@ class KaipayPaymentProvider {
       paymentMethod: assertPaymentMethod(queried && queried.paymentMethod),
       paymentChannel: requireId(queried && queried.paymentChannel, "Queried Kaipay channel"),
       providerCode: requireId(queried && queried.providerCode, "Queried Kaipay provider"),
+      payMethod: requireId(queried && queried.payMethod, "Queried Kaipay pay method"),
       scene: requireId(queried && queried.scene, "Queried Kaipay scene"),
       status: requireCanonicalStatus(queried && queried.status)
     };
+    if (queriedOrder.paymentChannel !== frozenRoute.paymentChannel ||
+        queriedOrder.providerCode !== frozenRoute.provider || queriedOrder.payMethod !== frozenRoute.payMethod ||
+        queriedOrder.scene !== frozenRoute.scene) {
+      throw new Error("Queried Kaipay route identity does not match the frozen payment attempt");
+    }
     const reconciliation = reconcileQueriedProviderPayment({ order, queriedOrder });
     await this.eventStore.appendIdempotent({
       idempotencyKey: `provider-status:${reconciliation.paymentEventKey}`,
@@ -311,6 +384,10 @@ class KaipayPaymentProvider {
       reason: reconciliation.reason,
       provider: "KAIPAY",
       providerStatus: queriedOrder.status,
+      paymentChannel: frozenRoute.paymentChannel,
+      providerCode: frozenRoute.provider,
+      payMethod: frozenRoute.payMethod,
+      scene: frozenRoute.scene,
       adapterVersion: this.config.adapterVersion,
       credentialVersion: order.paymentCredentialVersion
     });
@@ -324,6 +401,7 @@ class KaipayPaymentProvider {
   async handleNotification({ platformOrderId, rawNotification, notificationHeaders }) {
     const order = await this.orderStore.getPaymentOrder(requireId(platformOrderId, "Platform order ID"));
     if (!order) throw new Error("Payment order was not found");
+    const frozenRoute = requireFrozenOrderRoute(order);
     const rawBytes = requireRawNotification(rawNotification);
     let notification = null;
     let verificationError = null;
@@ -331,7 +409,9 @@ class KaipayPaymentProvider {
       notification = await this.notificationProtocol.verify(rawBytes, {
         expectedPlatformOrderId: order.id,
         expectedProviderOrderId: order.providerOrderId,
-        expectedProviderCode: order.paymentProviderCode,
+        expectedProviderCode: frozenRoute.provider,
+        expectedPayMethod: frozenRoute.payMethod,
+        expectedScene: frozenRoute.scene,
         expectedAmountFen: order.amountFen,
         expectedCredentialVersion: order.paymentCredentialVersion,
         headers: notificationHeaders,
@@ -352,12 +432,18 @@ class KaipayPaymentProvider {
         notification && notification.valid === true &&
         notification.platformOrderId === order.id &&
         notification.credentialVersion === order.paymentCredentialVersion &&
+        notification.providerCode === frozenRoute.provider &&
+        notification.payMethod === frozenRoute.payMethod &&
+        notification.scene === frozenRoute.scene &&
         typeof notification.providerOrderId === "string" && notification.providerOrderId.trim()
       ),
       providerOrderId: notification && notification.providerOrderId,
       status: canonicalStatus,
       eventId: notification && notification.eventId,
-      credentialVersion: notification && notification.credentialVersion
+      credentialVersion: notification && notification.credentialVersion,
+      providerCode: notification && notification.providerCode,
+      payMethod: notification && notification.payMethod,
+      scene: notification && notification.scene
     };
     const notificationDigest = digestNotification(rawBytes);
     await this.eventStore.appendIdempotent({
@@ -372,6 +458,10 @@ class KaipayPaymentProvider {
       verificationError: verificationError ? "notification_verification_failed" : null,
       provider: "KAIPAY",
       providerStatus: verifiedNotification.status,
+      paymentChannel: frozenRoute.paymentChannel,
+      providerCode: frozenRoute.provider,
+      payMethod: frozenRoute.payMethod,
+      scene: frozenRoute.scene,
       adapterVersion: this.config.adapterVersion,
       credentialVersion: order.paymentCredentialVersion || null,
       providerEventId: verifiedNotification.eventId || null
@@ -392,9 +482,10 @@ class KaipayPaymentProvider {
           platformOrderId: order.id,
           providerOrderId: requireId(verifiedNotification.providerOrderId, "Kaipay provider order ID"),
           credentialVersion: requireId(order.paymentCredentialVersion, "Kaipay credential version"),
-          paymentChannel: requireId(order.paymentChannel, "Kaipay payment channel"),
-          providerCode: requireId(order.paymentProviderCode, "Kaipay provider code"),
-          scene: requireId(order.paymentScene, "Kaipay payment scene")
+          paymentChannel: frozenRoute.paymentChannel,
+          providerCode: frozenRoute.provider,
+          payMethod: frozenRoute.payMethod,
+          scene: frozenRoute.scene
         });
         queriedOrder = {
           platformOrderId: requireId(queried && queried.platformOrderId, "Queried platform order ID"),
@@ -404,9 +495,15 @@ class KaipayPaymentProvider {
           paymentMethod: assertPaymentMethod(queried && queried.paymentMethod),
           paymentChannel: requireId(queried && queried.paymentChannel, "Queried Kaipay channel"),
           providerCode: requireId(queried && queried.providerCode, "Queried Kaipay provider"),
+          payMethod: requireId(queried && queried.payMethod, "Queried Kaipay pay method"),
           scene: requireId(queried && queried.scene, "Queried Kaipay scene"),
           status: requireCanonicalStatus(queried && queried.status)
         };
+        if (queriedOrder.paymentChannel !== frozenRoute.paymentChannel ||
+            queriedOrder.providerCode !== frozenRoute.provider || queriedOrder.payMethod !== frozenRoute.payMethod ||
+            queriedOrder.scene !== frozenRoute.scene) {
+          throw new Error("Queried Kaipay route identity does not match the frozen payment attempt");
+        }
       } catch (_error) {
         this.logger.warn?.("petpack.kaipay.provider_query_failed", { platformOrderId: order.id });
       }
@@ -422,6 +519,10 @@ class KaipayPaymentProvider {
       reason: reconciliation.reason,
       provider: "KAIPAY",
       providerStatus: queriedOrder?.status || verifiedNotification.status,
+      paymentChannel: frozenRoute.paymentChannel,
+      providerCode: frozenRoute.provider,
+      payMethod: frozenRoute.payMethod,
+      scene: frozenRoute.scene,
       adapterVersion: this.config.adapterVersion,
       credentialVersion: order.paymentCredentialVersion || null,
       providerEventId: verifiedNotification.eventId || null

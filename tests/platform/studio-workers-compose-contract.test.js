@@ -35,6 +35,7 @@ describe("private production Studio workers Compose contract", () => {
     expect(compose).toContain('["CMD", "node", "src/runtime/check-runtime-heartbeat.js"]');
     expect(compose).toContain("petpack-worker-work:/work");
     expect(compose).toContain("PETPACK_WORKER_COMPONENTS_MODULE: /app/platform/src/runtime/production-worker-components.js");
+    expect(compose).toContain("PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256: ${PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256:-}");
     expect(compose).toContain('command: ["src/runtime/start-outbox-dispatcher.js"]');
     expect(compose).not.toContain('command: ["node",');
   });
@@ -43,10 +44,15 @@ describe("private production Studio workers Compose contract", () => {
     const studioApi = compose.slice(compose.indexOf("  studio-api:"), compose.indexOf("  outbox-dispatcher:"));
     expect(studioApi).toContain('command: ["src/runtime/start-studio-api.js"]');
     expect(studioApi).toContain('PETPACK_PHONE_AUTH_ENABLED: ${PETPACK_PHONE_AUTH_ENABLED:?Set PETPACK_PHONE_AUTH_ENABLED=true for production}');
+    expect(studioApi).toContain('PETPACK_GENERATION_SALES_ENABLED: ${PETPACK_GENERATION_SALES_ENABLED:-false}');
     expect(studioApi).toContain("PETPACK_STUDIO_INTERNAL_TOKEN_FILE: /run/secrets/studio_internal_token");
     expect(studioApi).toContain("KAIPAY_CREDENTIALS_JSON_FILE: /run/secrets/kaipay_credentials_json");
     expect(studioApi).toContain("KAIPAY_ADAPTER_VERSION: kaipay-pay-api-v3-hmac-sha256/1");
-    expect(studioApi).toContain("KAIPAY_ALIPAY_SCENE: web");
+    expect(studioApi).toContain("KAIPAY_ALIPAY_PROVIDER: fuyou");
+    expect(studioApi).toContain("KAIPAY_ALIPAY_PAY_METHOD: alipay");
+    expect(studioApi).toContain("KAIPAY_ALIPAY_SCENE: native");
+    expect(studioApi).toContain("KAIPAY_WECHAT_PROVIDER: fuyou");
+    expect(studioApi).toContain("KAIPAY_WECHAT_PAY_METHOD: wechat");
     expect(studioApi).toContain("KAIPAY_WECHAT_SCENE: native");
     expect(studioApi).toContain("- petpack-edge");
     expect(studioApi).toContain("- petpack-egress");

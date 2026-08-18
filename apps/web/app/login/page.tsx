@@ -10,7 +10,7 @@ export default function LoginPage() {
       <section className="auth-card">
         <PageIntro title="手机号登录">短信验证码登录，无需密码。</PageIntro>
         <PhoneLoginForm
-          enabled={process.env.NEXT_PUBLIC_PHONE_AUTH_ENABLED === "true"}
+          enabled={process.env.NEXT_PUBLIC_PETPACK_PHONE_AUTH_ENABLED === "true"}
           environmentId={process.env.NEXT_PUBLIC_CLOUDBASE_ENV_ID}
           region={process.env.NEXT_PUBLIC_CLOUDBASE_REGION}
         />

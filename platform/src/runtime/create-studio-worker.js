@@ -6,6 +6,7 @@ const path = require("node:path");
 const { loadModelRegistry } = require("../config/model-registry");
 const { createTrustedFileProbe } = require("../media/ffprobe-media-probe");
 const { MediaWorker, runProcess } = require("../media/media-worker");
+const { createTrustedActionEndpointInspector } = require("../qa/trusted-action-endpoint-inspector");
 const { PrivateMasterImageWorkspace } = require("../media/private-master-image-workspace");
 const { PrivateMediaWorkspace } = require("../media/private-media-workspace");
 const { PrivatePetpackWorkspace } = require("../petpack/private-petpack-workspace");
@@ -16,6 +17,7 @@ const { createPostgresDatabase } = require("../persistence/postgres-database");
 const { PostgresProductionWorkerRepository } = require("../persistence/postgres-production-worker-repository");
 const { PostgresTransactionalWorkflowStore } = require("../persistence/postgres-transactional-workflow-store");
 const { ModelArkClient } = require("../providers/modelark-client");
+const { createConcurrencyLimitedModelArkClient } = require("../providers/modelark-concurrency-limiter");
 const { BullMqWorkflowWorker, loadBullMqConfig } = require("../queue/bullmq-workflow-queue");
 const { PrivateObjectStore } = require("../storage/private-object-store");
 const { createTencentCosPrivateObjectDriver } = require("../storage/tencent-cos-private-object-driver");
@@ -25,12 +27,18 @@ const { ProductionJobWorker } = require("../workers/production-job-worker");
 const { WorkflowJobRouter } = require("../workers/workflow-job-router");
 const { ProductionWorkflow } = require("../workflow/production-workflow");
 const { hydrateEnvironmentFromSecretFiles } = require("./load-secret-files");
+const {
+  requireProductionWorkerComponentManifestSha256,
+  verifyProductionWorkerComponentManifest
+} = require("./production-worker-component-manifest");
 
 // Production images have one reviewed component bundle location. Keeping this
 // path fixed prevents an operator from accidentally pointing a production
 // Worker at a development/fixture module that only passes the filesystem
 // checks below.
 const PRODUCTION_WORKER_COMPONENTS_MODULE = "/app/platform/src/runtime/production-worker-components.js";
+const CONTROLLED_REAL_WORKER_COMPONENTS_MODULE = "/app/platform/src/runtime/controlled-real-worker-components.js";
+const CONTROLLED_REAL_EVIDENCE_MODE = "controlled-real-staging";
 
 function boundedInteger(value, fallback, minimum, maximum, label, { nullable = false } = {}) {
   if (nullable && (value === undefined || value === "" || value === null)) return null;
@@ -55,6 +63,33 @@ function loadStudioWorkerRuntimeConfig(environment = process.env) {
     throw new Error("PETPACK_PLATFORM_MODE must be development, test, or production");
   }
   const production = mode === "production";
+  const evidenceMode = typeof environment.PETPACK_WORKER_EVIDENCE_MODE === "string" && environment.PETPACK_WORKER_EVIDENCE_MODE.trim()
+    ? environment.PETPACK_WORKER_EVIDENCE_MODE.trim()
+    : (production ? "production" : "development");
+  if (production && !["production", CONTROLLED_REAL_EVIDENCE_MODE].includes(evidenceMode)) {
+    throw new Error("Production infrastructure Worker evidence mode is invalid");
+  }
+  if (!production && evidenceMode !== "development") {
+    throw new Error("Non-production Worker evidence mode must be development");
+  }
+  const tempRoot = requiredAbsolutePath(
+    environment.PETPACK_WORKER_TEMP_ROOT,
+    os.tmpdir(),
+    "Worker temporary root",
+    { production }
+  );
+  const ffmpegPath = requiredAbsolutePath(
+    environment.FFMPEG_PATH,
+    "ffmpeg",
+    "FFmpeg path",
+    { production }
+  );
+  const ffprobePath = requiredAbsolutePath(
+    environment.FFPROBE_PATH,
+    "ffprobe",
+    "ffprobe path",
+    { production }
+  );
   const deliveryRetentionDays = boundedInteger(
     environment.PETPACK_DELIVERY_RETENTION_DAYS,
     null,
@@ -66,12 +101,22 @@ function loadStudioWorkerRuntimeConfig(environment = process.env) {
   if (production && deliveryRetentionDays === null) {
     throw new Error("Production delivery retention days are required");
   }
+  const workerComponentsManifestSha256 = production && evidenceMode === "production"
+    ? requireProductionWorkerComponentManifestSha256(
+        typeof environment.PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256 === "string"
+          ? environment.PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256.trim()
+          : ""
+      )
+    : null;
   return Object.freeze({
     mode,
     production,
-    tempRoot: requiredAbsolutePath(environment.PETPACK_WORKER_TEMP_ROOT, os.tmpdir(), "Worker temporary root", { production }),
-    ffmpegPath: requiredAbsolutePath(environment.FFMPEG_PATH, "ffmpeg", "FFmpeg path", { production }),
-    ffprobePath: requiredAbsolutePath(environment.FFPROBE_PATH, "ffprobe", "ffprobe path", { production }),
+    evidenceMode,
+    productionEvidence: evidenceMode === "production",
+    controlledRealEvidence: evidenceMode === CONTROLLED_REAL_EVIDENCE_MODE,
+    tempRoot,
+    ffmpegPath,
+    ffprobePath,
     masterLeaseSeconds: boundedInteger(environment.PETPACK_MASTER_JOB_LEASE_SECONDS, 900, 30, 3600, "Master job lease seconds"),
     videoLeaseSeconds: boundedInteger(environment.PETPACK_VIDEO_JOB_LEASE_SECONDS, 120, 30, 3600, "Video job lease seconds"),
     videoProcessingLeaseSeconds: boundedInteger(environment.PETPACK_VIDEO_PROCESSING_LEASE_SECONDS, 900, 30, 3600, "Video processing lease seconds"),
@@ -80,6 +125,7 @@ function loadStudioWorkerRuntimeConfig(environment = process.env) {
     providerPollQueryAttempts: boundedInteger(environment.PETPACK_PROVIDER_POLL_QUERY_ATTEMPTS, 3, 1, 20, "Provider poll query attempts"),
     maximumProviderPolls: boundedInteger(environment.PETPACK_MAX_PROVIDER_POLLS, 120, 1, 1000, "Maximum provider polls"),
     heavyJobConcurrency: boundedInteger(environment.PETPACK_HEAVY_JOB_CONCURRENCY, 1, 1, 16, "Heavy job concurrency"),
+    workerComponentsManifestSha256,
     deliveryRetentionDays
   });
 }
@@ -134,15 +180,21 @@ async function assertWorkerTempRoot(tempRoot) {
   return fsp.realpath(tempRoot);
 }
 
-async function loadWorkerComponentsModule({ environment = process.env, context = {}, production = false } = {}) {
+async function loadWorkerComponentsModule({ environment = process.env, context = {}, production = false, evidenceMode } = {}) {
   const modulePath = typeof environment.PETPACK_WORKER_COMPONENTS_MODULE === "string"
     ? environment.PETPACK_WORKER_COMPONENTS_MODULE.trim()
     : "";
   if (!modulePath || !path.isAbsolute(modulePath)) {
     throw new Error("PETPACK_WORKER_COMPONENTS_MODULE must be an absolute path");
   }
-  if (production && modulePath !== PRODUCTION_WORKER_COMPONENTS_MODULE) {
-    throw new Error(`Production Worker components module must be ${PRODUCTION_WORKER_COMPONENTS_MODULE}`);
+  const resolvedEvidenceMode = evidenceMode || (production ? "production" : "development");
+  const requiredModulePath = production && resolvedEvidenceMode === CONTROLLED_REAL_EVIDENCE_MODE
+    ? CONTROLLED_REAL_WORKER_COMPONENTS_MODULE
+    : production
+      ? PRODUCTION_WORKER_COMPONENTS_MODULE
+      : null;
+  if (requiredModulePath && modulePath !== requiredModulePath) {
+    throw new Error(`Production Worker components module must be ${requiredModulePath}`);
   }
   const stat = fs.lstatSync(modulePath);
   if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -158,7 +210,11 @@ async function loadWorkerComponentsModule({ environment = process.env, context =
   return components;
 }
 
-function validateWorkerComponents(components, { production }) {
+function validateWorkerComponents(components, {
+  production,
+  evidenceMode,
+  workerComponentsManifestSha256 = null
+} = {}) {
   if (!components || typeof components !== "object" || Array.isArray(components)) {
     throw new Error("Studio Worker components are required");
   }
@@ -167,14 +223,38 @@ function validateWorkerComponents(components, { production }) {
   requireMethod(components.mattingService, "inspectProcessedAction", "Matting service");
   requireMethod(components.deliveryValidator, "describe", "PetPack delivery validator");
   requireMethod(components.deliveryValidator, "validate", "PetPack delivery validator");
+  const resolvedEvidenceMode = evidenceMode || (production ? "production" : "development");
   if (!production) {
     requireMethod(components.modelArkClient, "createVideoTask", "Development ModelArk fixture client");
     requireMethod(components.modelArkClient, "getVideoTask", "Development ModelArk fixture client");
+  } else if (resolvedEvidenceMode === CONTROLLED_REAL_EVIDENCE_MODE) {
+    if (components.productionAssured !== false || components.classification !== "internal-controlled-real-staging") {
+      throw new Error("Controlled-real Worker components must be explicitly non-production staging evidence");
+    }
+    requireMethod(components.modelArkClient, "createVideoTask", "Controlled-real ModelArk client");
+    requireMethod(components.modelArkClient, "getVideoTask", "Controlled-real ModelArk client");
+    requireMethod(components.qaPolicyProvider, "getPolicy", "Controlled-real QA policy provider");
+    if (typeof components.allowedRunId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(components.allowedRunId)) {
+      throw new Error("Controlled-real allowed run ID must be a UUID");
+    }
   } else {
     if (components.productionAssured !== true) {
       throw new Error("Production Studio Worker components must be explicitly production-assured");
     }
+    if (Object.prototype.hasOwnProperty.call(components, "endpointInspector")) {
+      throw new Error("Production Worker components cannot override the trusted endpoint inspector");
+    }
     requireMethod(components.qaPolicyProvider, "getPolicy", "Production QA policy provider");
+    const verifiedProductionComponentManifest = verifyProductionWorkerComponentManifest({
+      manifest: components.productionComponentManifest,
+      components,
+      expectedSha256: workerComponentsManifestSha256
+    });
+    components = Object.freeze({
+      ...components,
+      verifiedProductionComponentManifest
+    });
   }
   if (components.close !== undefined && typeof components.close !== "function") {
     throw new Error("Worker components close hook must be a function");
@@ -205,6 +285,7 @@ class StudioWorkerRuntime {
       this.started = true;
       this.logger.info?.("petpack.studio_worker.started", {
         mode: this.config.mode,
+        evidenceMode: this.config.evidenceMode,
         concurrency: ready?.concurrency,
         tempRootReady: Boolean(tempRoot)
       });
@@ -270,6 +351,7 @@ async function createStudioWorkerRuntime({
     const rawComponents = workerComponents || await loadWorkerComponentsModule({
       environment: hydrated,
       production: config.production,
+      evidenceMode: config.evidenceMode,
       context: {
         database: runtimeDatabase,
         modelRegistry: runtimeModelRegistry,
@@ -280,7 +362,11 @@ async function createStudioWorkerRuntime({
       }
     });
     componentsToClose = rawComponents;
-    const components = validateWorkerComponents(rawComponents, { production: config.production });
+    const components = validateWorkerComponents(rawComponents, {
+      production: config.production,
+      evidenceMode: config.evidenceMode,
+      workerComponentsManifestSha256: config.workerComponentsManifestSha256
+    });
     const runStore = new PostgresTransactionalWorkflowStore({ database: runtimeDatabase, logger });
     const promptStore = new PostgresPetPackStudioRepository({ database: runtimeDatabase, logger });
     const workflow = new ProductionWorkflow({
@@ -307,9 +393,14 @@ async function createStudioWorkerRuntime({
       tempRoot: config.tempRoot,
       logger
     });
-    const modelArkClient = components.modelArkClient || new ModelArkClient({
+    const baseModelArkClient = components.modelArkClient || new ModelArkClient({
       registry: runtimeModelRegistry,
       fetchImpl,
+      logger
+    });
+    const modelArkClient = createConcurrencyLimitedModelArkClient(baseModelArkClient, {
+      imageMaxConcurrent: runtimeModelRegistry.modelArk.image.maxConcurrent,
+      videoMaxConcurrent: runtimeModelRegistry.modelArk.video.maxConcurrent,
       logger
     });
     const probeAsset = components.probeAsset || createTrustedFileProbe({ ffprobePath: config.ffprobePath });
@@ -317,10 +408,17 @@ async function createStudioWorkerRuntime({
       ...plan,
       executable: config.ffmpegPath
     }));
+    if (config.productionEvidence && components.endpointInspector !== undefined) {
+      throw new Error("Production Worker components cannot override the trusted endpoint inspector");
+    }
+    const endpointInspector = config.productionEvidence
+      ? createTrustedActionEndpointInspector({ ffmpegPath: config.ffmpegPath })
+      : (components.endpointInspector || null);
     const mediaWorker = new MediaWorker({
       mattingService: components.mattingService,
       probeAsset,
       runPlan: runMediaPlan,
+      endpointInspector,
       logger
     });
     const imageMasterWorker = new ImageMasterWorker({
@@ -334,7 +432,7 @@ async function createStudioWorkerRuntime({
       modelRegistry: runtimeModelRegistry,
       qaPolicyProvider: components.qaPolicyProvider,
       leaseSeconds: config.masterLeaseSeconds,
-      productionMode: config.production,
+      productionMode: config.productionEvidence,
       logger
     });
     const productionJobWorker = new ProductionJobWorker({
@@ -349,8 +447,10 @@ async function createStudioWorkerRuntime({
       mediaWorkspace,
       workflow,
       qaPolicyProvider: components.qaPolicyProvider,
-      productionMode: config.production,
+      productionMode: config.productionEvidence,
       processingLeaseSeconds: config.videoProcessingLeaseSeconds,
+      mediaProcessorVersion: components.mediaProcessorVersion,
+      mediaProcessorCalibrationDigest: components.mattingService.productionMetadata?.calibrationDigest,
       logger
     });
     const petpackPipelineWorker = new PetpackPipelineWorker({
@@ -361,11 +461,22 @@ async function createStudioWorkerRuntime({
       probeAsset,
       leaseSeconds: config.petpackLeaseSeconds,
       maxConcurrentHeavyJobs: config.heavyJobConcurrency,
-      productionMode: config.production,
+      packageMatteMode: components.packageMatteMode,
+      productionMode: config.productionEvidence,
       deliveryRetentionDays: config.deliveryRetentionDays,
       logger
     });
-    const router = new WorkflowJobRouter({ imageMasterWorker, productionJobWorker, petpackPipelineWorker });
+    const baseRouter = new WorkflowJobRouter({ imageMasterWorker, productionJobWorker, petpackPipelineWorker });
+    const router = components.allowedRunId
+      ? Object.freeze({
+          async process(job) {
+            if (job?.data?.runId !== components.allowedRunId) {
+              throw new Error("Controlled-real Worker refused a job outside its allowed run");
+            }
+            return baseRouter.process(job);
+          }
+        })
+      : baseRouter;
     const runtimeQueueWorker = queueWorker || new BullMqWorkflowWorker({
       config: loadBullMqConfig(hydrated),
       handler: router,
@@ -398,6 +509,8 @@ async function createStudioWorkerRuntime({
 }
 
 module.exports = {
+  CONTROLLED_REAL_EVIDENCE_MODE,
+  CONTROLLED_REAL_WORKER_COMPONENTS_MODULE,
   StudioWorkerRuntime,
   assertStudioWorkerSchemaReady,
   assertWorkerTempRoot,

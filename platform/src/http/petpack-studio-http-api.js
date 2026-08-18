@@ -817,6 +817,9 @@ function mapError(error) {
   if (error instanceof HttpApiError) {
     return { status: error.status, code: error.code, message: error.message };
   }
+  if (error?.code === "generation_sales_disabled") {
+    return { status: 503, code: "generation_sales_disabled", message: "新订单暂未开放，请稍后再试" };
+  }
   if (error?.code === "character_regeneration_limit_reached") {
     return { status: 409, code: "character_regeneration_limit_reached", message: "该视角的重新生成次数已用完" };
   }

@@ -1,0 +1,6 @@
+{
+  "name": "petpack-electron-interaction-runner",
+  "version": "1.0.0",
+  "private": true,
+  "main": "run-electron-interaction-verification.js"
+}

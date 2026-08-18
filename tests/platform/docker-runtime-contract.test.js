@@ -38,12 +38,15 @@ describe("production Docker build contracts", () => {
     const dockerfile = read("platform/docker/media-worker/Dockerfile");
     expect(dockerfile).toContain("node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e");
     expect(dockerfile).toContain("gcr.io/distroless/cc-debian12:nonroot@sha256:adcd20c7b4c988b73cbfbddb26d2eee574571e6d7c9ffea29b3821e0690efb77");
-    expect(dockerfile).toContain("FFMPEG_STATIC_URL=https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz");
+    expect(dockerfile).toContain("FFMPEG_STATIC_URL=https://github.com/publicala/ffmpeg-static/releases/download/v7.0.2/ffmpeg-7.0.2-amd64-static.tar.xz");
+    expect(dockerfile).toContain("FFMPEG_STATIC_FALLBACK_URL=https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz");
     expect(dockerfile).toContain("FFMPEG_STATIC_SHA256=ABDA8D77CE8309141F83AB8EDF0596834087C52467F6BADF376A6A2A4C87CF67");
     expect(dockerfile).toContain("sha256sum --check --status");
     expect(dockerfile).not.toContain("install -y --no-install-recommends ffmpeg");
     expect(dockerfile).toContain("Acquire::http::Timeout=30");
     expect(dockerfile).toContain("Acquire::Retries=3");
+    expect(dockerfile).toContain("--retry-all-errors");
+    expect(dockerfile).toContain("--connect-timeout 20");
     expect(dockerfile).toContain("COPY platform/package.json platform/package-lock.json ./");
     expect(dockerfile).toContain("npm ci --omit=dev --ignore-scripts");
     expect(dockerfile).toContain("USER 10001:10001");

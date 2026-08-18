@@ -83,11 +83,16 @@ function createSeedreamPayload({ modelReference, prompt, sourceImages, outputSiz
     model: modelReference.endpointId,
     prompt: requiredString(prompt, "Seedream server prompt"),
     image: sourceImages.map((asset, index) => assertPrivateInput(asset, `sourceImages[${index}]`, { allowDataUrl: allowDataUrls })),
-    sequential_image_generation: "disabled",
-    stream: false,
     response_format: "url",
     watermark: false
   };
+  // Seedream 5.0 Pro is a single-image model and rejects the legacy
+  // multi-image/stream controls that are accepted by Seedream 4.x/5.0 Lite.
+  // Keep the legacy controls only for models that advertise those features.
+  if (!/seedream-5-0-pro(?:-|$)/i.test(modelReference.endpointId)) {
+    payload.sequential_image_generation = "disabled";
+    payload.stream = false;
+  }
   if (typeof outputSize === "string" && outputSize.trim()) {
     payload.size = outputSize.trim();
   }

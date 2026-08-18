@@ -4,8 +4,30 @@ const KAIPAY_V3_ADAPTER_VERSION = "kaipay-pay-api-v3-hmac-sha256/1";
 const KAIPAY_OFFICIAL_API_ORIGIN = "https://api.kaipay.cn";
 const KAIPAY_CHANNELS = Object.freeze(["ALIPAY", "WXPAY"]);
 const KAIPAY_CHANNEL_CONFIG = Object.freeze({
-  ALIPAY: Object.freeze({ provider: "alipay", allowedScenes: Object.freeze(["web", "native"]), defaultScene: "web" }),
-  WXPAY: Object.freeze({ provider: "wechat", allowedScenes: Object.freeze(["native"]), defaultScene: "native" })
+  ALIPAY: Object.freeze({
+    provider: "alipay",
+    payMethod: "alipay",
+    allowedScenes: Object.freeze(["web", "native"]),
+    defaultScene: "web"
+  }),
+  WXPAY: Object.freeze({
+    provider: "wechat",
+    payMethod: "wechat",
+    allowedScenes: Object.freeze(["native"]),
+    defaultScene: "native"
+  })
+});
+const KAIPAY_PROVIDER_ROUTES = Object.freeze({
+  alipay: Object.freeze({
+    alipay: Object.freeze(["web", "native"])
+  }),
+  wechat: Object.freeze({
+    wechat: Object.freeze(["native"])
+  }),
+  fuyou: Object.freeze({
+    alipay: Object.freeze(["native"]),
+    wechat: Object.freeze(["native"])
+  })
 });
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
@@ -51,18 +73,54 @@ function normalizePaymentChannel(value) {
   return channel;
 }
 
-function normalizeScene(channelValue, sceneValue) {
+function normalizeProvider(value) {
+  const provider = String(value || "").trim().toLowerCase();
+  if (!Object.hasOwn(KAIPAY_PROVIDER_ROUTES, provider)) {
+    throw new Error("Kaipay provider is unsupported by this website");
+  }
+  return provider;
+}
+
+function normalizePayMethod(value) {
+  const payMethod = String(value || "").trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_]{0,31}$/.test(payMethod)) throw new Error("Kaipay pay method is invalid");
+  return payMethod;
+}
+
+function normalizeScene(channelValue, sceneValue, route = {}) {
   const channel = normalizePaymentChannel(channelValue);
   const config = KAIPAY_CHANNEL_CONFIG[channel];
+  const provider = normalizeProvider(route.provider || config.provider);
+  const payMethod = normalizePayMethod(route.payMethod || config.payMethod);
   const scene = String(sceneValue || config.defaultScene).trim().toLowerCase();
-  if (!config.allowedScenes.includes(scene)) {
-    throw new Error(`Kaipay ${channel} scene is unsupported by this website`);
+  const allowedScenes = KAIPAY_PROVIDER_ROUTES[provider]?.[payMethod] || [];
+  if (payMethod !== config.payMethod || !allowedScenes.includes(scene)) {
+    throw new Error(`Kaipay ${channel} provider/payMethod/scene route is unsupported by this website`);
   }
   return scene;
 }
 
-function providerForChannel(channelValue) {
-  return KAIPAY_CHANNEL_CONFIG[normalizePaymentChannel(channelValue)].provider;
+function normalizeChannelRoute(channelValue, route = {}) {
+  const channel = normalizePaymentChannel(channelValue);
+  const defaults = KAIPAY_CHANNEL_CONFIG[channel];
+  const provider = normalizeProvider(route.provider || defaults.provider);
+  const payMethod = normalizePayMethod(route.payMethod || defaults.payMethod);
+  const scene = normalizeScene(channel, route.scene || defaults.defaultScene, { provider, payMethod });
+  return Object.freeze({ paymentChannel: channel, provider, payMethod, scene });
+}
+
+function routeForChannel(config, channelValue) {
+  const channel = normalizePaymentChannel(channelValue);
+  const isAlipay = channel === "ALIPAY";
+  return normalizeChannelRoute(channel, {
+    provider: isAlipay ? config?.alipayProvider : config?.wechatProvider,
+    payMethod: isAlipay ? config?.alipayPayMethod : config?.wechatPayMethod,
+    scene: isAlipay ? config?.alipayScene : config?.wechatScene
+  });
+}
+
+function providerForChannel(channelValue, config) {
+  return routeForChannel(config, channelValue).provider;
 }
 
 function credentialVersionFor({ apiKey, apiSecret }) {
@@ -173,6 +231,21 @@ function normalizeResponseStatus(value) {
   throw new Error("Kaipay returned an unknown V3 order status");
 }
 
+function hasFuyouPaidEvidenceWithoutActualAmount(data, expectedProvider) {
+  if (expectedProvider !== "fuyou" || (data?.actualAmount !== undefined && data.actualAmount !== null)) return false;
+  if (String(data.rawStatus || "").trim().toLowerCase() !== "paid") return false;
+  const providerStatus = new Map(String(data.providerStatus || "").split(",").map((entry) => {
+    const separator = entry.indexOf("=");
+    return separator > 0
+      ? [entry.slice(0, separator).trim(), entry.slice(separator + 1).trim()]
+      : [entry.trim(), ""];
+  }));
+  if (providerStatus.get("result_code") !== "000000" || providerStatus.get("trans_stat") !== "SUCCESS") return false;
+  if (!requiredString(data.providerOrderNo, "Queried Fuyou order ID", { maxLength: 100 })) return false;
+  const paidAt = Date.parse(requiredString(data.paidAt, "Queried Fuyou paid time", { maxLength: 64 }));
+  return Number.isFinite(paidAt);
+}
+
 function requireHttpsUrl(value, label) {
   let parsed;
   try {
@@ -198,7 +271,14 @@ function normalizeNextAction(value, { topLevel = {}, expectedType } = {}) {
       ? action.qrCode
       : "";
     const imageCandidate = action.qrCodeImageUrl || topLevel.qrCodeImageUrl;
-    const qrCodeImageUrl = imageCandidate ? requireHttpsUrl(imageCandidate, "Kaipay QR image URL") : "";
+    let qrCodeImageUrl = "";
+    if (imageCandidate) {
+      try {
+        qrCodeImageUrl = requireHttpsUrl(imageCandidate, "Kaipay QR image URL");
+      } catch (error) {
+        if (!qrCode) throw error;
+      }
+    }
     if (!qrCode && !qrCodeImageUrl) throw new Error("Kaipay QR action is incomplete");
     return Object.freeze({ type, ...(qrCode ? { qrCode } : {}), ...(qrCodeImageUrl ? { qrCodeImageUrl } : {}) });
   }
@@ -258,9 +338,13 @@ class KaipayV3Client {
     if (this.selectedMerchantCode && !/^[A-Za-z0-9._-]{1,128}$/.test(this.selectedMerchantCode)) {
       throw new Error("KAIPAY_SELECTED_MERCHANT_CODE is invalid");
     }
+    this.channelRoutes = Object.freeze({
+      ALIPAY: routeForChannel(config, "ALIPAY"),
+      WXPAY: routeForChannel(config, "WXPAY")
+    });
     this.channelScenes = Object.freeze({
-      ALIPAY: normalizeScene("ALIPAY", config.alipayScene),
-      WXPAY: normalizeScene("WXPAY", config.wechatScene)
+      ALIPAY: this.channelRoutes.ALIPAY.scene,
+      WXPAY: this.channelRoutes.WXPAY.scene
     });
     this.timeoutMs = boundedTimeout(config.requestTimeoutMs);
     if (typeof fetchImpl !== "function" || typeof now !== "function" || typeof nonceFactory !== "function") {
@@ -336,8 +420,13 @@ class KaipayV3Client {
   async createCheckout(request) {
     const platformOrderId = requiredString(request?.platformOrderId, "Platform order ID", { maxLength: 100 });
     const paymentChannel = normalizePaymentChannel(request?.paymentChannel);
-    const provider = providerForChannel(paymentChannel);
-    const scene = normalizeScene(paymentChannel, request?.scene || this.channelScenes[paymentChannel]);
+    const configuredRoute = this.channelRoutes[paymentChannel];
+    const route = normalizeChannelRoute(paymentChannel, {
+      provider: request?.providerCode || configuredRoute.provider,
+      payMethod: request?.payMethod || configuredRoute.payMethod,
+      scene: request?.scene || configuredRoute.scene
+    });
+    const { provider, payMethod, scene } = route;
     const credentialVersion = request?.credentialVersion
       ? getCredential(this.credentials, request.credentialVersion).credentialVersion
       : this.credentials.active.credentialVersion;
@@ -346,6 +435,7 @@ class KaipayV3Client {
       amount: moneyFromFen(request?.amountFen),
       provider,
       scene,
+      ...(provider === "fuyou" ? { payMethod } : {}),
       productName: requiredString(request?.subject, "Kaipay product name", { maxLength: 256 }),
       productDesc: requiredString(request?.description || request?.subject, "Kaipay product description", { maxLength: 512 }),
       notifyUrl: requireHttpsUrl(request?.notifyUrl, "Kaipay notification URL"),
@@ -363,7 +453,9 @@ class KaipayV3Client {
     const providerOrderId = requiredString(data.orderNo, "Kaipay provider order ID", { maxLength: 100 });
     if (requiredString(data.merchantOrderNo, "Kaipay merchant order ID", { maxLength: 100 }) !== platformOrderId ||
         fenFromAmount(data.amount, "Kaipay checkout amount") !== request.amountFen || data.currency !== "CNY" ||
-        data.provider !== provider || data.scene !== scene) {
+        data.provider !== provider ||
+        (data.payMethod !== undefined && data.payMethod !== null && data.payMethod !== payMethod) ||
+        data.scene !== scene) {
       throw new Error("Kaipay checkout identity does not match the request");
     }
     const status = normalizeResponseStatus(data.status);
@@ -373,6 +465,7 @@ class KaipayV3Client {
       providerOrderId,
       paymentChannel,
       providerCode: provider,
+      payMethod,
       scene,
       credentialVersion,
       status,
@@ -380,25 +473,40 @@ class KaipayV3Client {
     });
   }
 
-  async queryOrder({ platformOrderId, providerOrderId, credentialVersion, paymentChannel, providerCode, scene }) {
+  async queryOrder({ platformOrderId, providerOrderId, credentialVersion, paymentChannel, providerCode, payMethod, scene }) {
     const expectedPlatformOrderId = requiredString(platformOrderId, "Platform order ID", { maxLength: 100 });
     const expectedProviderOrderId = requiredString(providerOrderId, "Kaipay provider order ID", { maxLength: 100 });
     const expectedChannel = normalizePaymentChannel(paymentChannel);
-    const expectedProvider = providerCode || providerForChannel(expectedChannel);
-    const expectedScene = normalizeScene(expectedChannel, scene || this.channelScenes[expectedChannel]);
+    const configuredRoute = this.channelRoutes[expectedChannel];
+    const expectedRoute = normalizeChannelRoute(expectedChannel, {
+      provider: providerCode || configuredRoute.provider,
+      payMethod: payMethod || configuredRoute.payMethod,
+      scene: scene || configuredRoute.scene
+    });
+    const expectedProvider = expectedRoute.provider;
+    const expectedPayMethod = expectedRoute.payMethod;
+    const expectedScene = expectedRoute.scene;
     const pathWithQuery = `/pay/api/v3/order/query?orderNo=${encodeURIComponent(expectedProviderOrderId)}`;
     const data = await this._request({ method: "GET", pathWithQuery, credentialVersion, operation: "order query" });
     const status = normalizeResponseStatus(data.status);
     if (requiredString(data.orderNo, "Queried Kaipay order ID", { maxLength: 100 }) !== expectedProviderOrderId ||
         requiredString(data.merchantOrderNo, "Queried platform order ID", { maxLength: 100 }) !== expectedPlatformOrderId ||
         fenFromAmount(data.amount, "Queried Kaipay amount") <= 0 || data.currency !== "CNY" ||
-        (data.provider !== undefined && data.provider !== expectedProvider) ||
-        (data.scene !== undefined && data.scene !== expectedScene)) {
+        data.provider !== expectedProvider ||
+        (data.payMethod !== undefined && data.payMethod !== null && data.payMethod !== expectedPayMethod) ||
+        data.scene !== expectedScene) {
       throw new Error("Kaipay order query identity does not match the request");
     }
     const amountFen = fenFromAmount(data.amount, "Queried Kaipay amount");
-    if (status === "PAID" && fenFromAmount(data.actualAmount, "Queried Kaipay actual amount") !== amountFen) {
-      throw new Error("Kaipay order query actual amount does not match the order");
+    if (status === "PAID") {
+      const actualAmountMissing = data.actualAmount === undefined || data.actualAmount === null;
+      if (actualAmountMissing) {
+        if (!hasFuyouPaidEvidenceWithoutActualAmount(data, expectedProvider)) {
+          throw new Error("Kaipay order query actual amount does not match the order");
+        }
+      } else if (fenFromAmount(data.actualAmount, "Queried Kaipay actual amount") !== amountFen) {
+        throw new Error("Kaipay order query actual amount does not match the order");
+      }
     }
     return Object.freeze({
       platformOrderId: expectedPlatformOrderId,
@@ -408,10 +516,14 @@ class KaipayV3Client {
       paymentMethod: "KAIPAY",
       paymentChannel: expectedChannel,
       providerCode: expectedProvider,
+      payMethod: expectedPayMethod,
       scene: expectedScene,
       credentialVersion,
       status,
-      nextAction: normalizeNextAction(data.nextAction, { topLevel: data })
+      nextAction: normalizeNextAction(data.nextAction, {
+        topLevel: data,
+        expectedType: status === "PENDING" ? (expectedScene === "web" ? "redirect" : "qr_code") : undefined
+      })
     });
   }
 
@@ -519,13 +631,21 @@ class KaipayV3NotificationProtocol {
     const platformOrderId = requiredString(body.merchantOrderNo, "Kaipay webhook merchant order ID", { maxLength: 100 });
     const providerOrderId = requiredString(body.orderNo, "Kaipay webhook provider order ID", { maxLength: 100 });
     const providerCode = requiredString(body.provider, "Kaipay webhook provider", { maxLength: 32 }).toLowerCase();
+    const payMethod = body.payMethod === undefined
+      ? null
+      : requiredString(body.payMethod, "Kaipay webhook pay method", { maxLength: 32 }).toLowerCase();
+    const scene = body.scene === undefined
+      ? null
+      : requiredString(body.scene, "Kaipay webhook scene", { maxLength: 32 }).toLowerCase();
     const eventId = requiredString(body.eventId, "Kaipay webhook event ID", { maxLength: 256 });
     const amountFen = fenFromAmount(body.amount, "Kaipay webhook amount");
     const actualAmountFen = fenFromAmount(body.actualAmount, "Kaipay webhook actual amount");
     if (body.apiVersion !== "v3" || body.eventType !== event || body.status !== "paid" || body.currency !== "CNY" ||
         platformOrderId !== context.expectedPlatformOrderId ||
         (context.expectedProviderOrderId && providerOrderId !== context.expectedProviderOrderId) ||
-        (context.expectedProviderCode && providerCode !== context.expectedProviderCode) ||
+        providerCode !== context.expectedProviderCode ||
+        (payMethod !== null && payMethod !== context.expectedPayMethod) ||
+        (scene !== null && scene !== context.expectedScene) ||
         (context.expectedAmountFen && (amountFen !== context.expectedAmountFen || actualAmountFen !== context.expectedAmountFen))) {
       throw new Error("Kaipay webhook identity does not match the order");
     }
@@ -534,6 +654,8 @@ class KaipayV3NotificationProtocol {
       platformOrderId,
       providerOrderId,
       providerCode,
+      payMethod: context.expectedPayMethod || payMethod,
+      scene: context.expectedScene || scene,
       eventId,
       amountFen,
       actualAmountFen,
@@ -578,11 +700,15 @@ module.exports = {
   hmacSha256Hex,
   moneyFromFen,
   normalizeApiBaseUrl,
+  normalizeChannelRoute,
   normalizeNextAction,
+  normalizePayMethod,
   normalizePaymentChannel,
+  normalizeProvider,
   normalizeResponseStatus,
   normalizeScene,
   parseV3Credentials,
   providerForChannel,
+  routeForChannel,
   sha256Hex
 };

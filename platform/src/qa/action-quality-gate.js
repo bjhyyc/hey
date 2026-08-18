@@ -7,7 +7,10 @@ const {
 } = require("./character-canvas-v1");
 const { validateVideoAppearanceInspection } = require("./appearance-lock-v1");
 const { validateActionMediaProbe } = require("./media-inspector");
+const { validateDecodedEndpointInspection } = require("./frame-continuity-metrics");
 const { validateSleepLoopBoundaryInspection } = require("./sleep-loop-boundary-v1");
+const { validateChromaSubjectInspection } = require("./chroma-subject-integrity");
+const { validateProductionEvidenceReport } = require("./production-evidence-provenance");
 
 const ACTION_QA_CONTRACT_VERSION = "petpack-action-qa/v3";
 
@@ -113,11 +116,13 @@ function validateVideoAction({
   sampledFrames,
   firstFrame,
   lastFrame,
+  endpointInspection,
   expectedFirstMasterHash,
   expectedLastMasterHash,
   referenceMetrics,
   contentInspection,
   appearanceInspection,
+  provenance,
   loopBoundaryInspection,
   expectedDuration,
   policy,
@@ -140,8 +145,23 @@ function validateVideoAction({
     expectedLastMasterHash
   });
   appendErrors(errors, "endpoints", endpoints);
+  const decodedEndpoints = validateDecodedEndpointInspection(endpointInspection, {
+    production,
+    actionId,
+    expectedFirstMasterHash,
+    expectedLastMasterHash,
+    expectedOutputHash: provenance?.outputSha256
+  });
+  appendErrors(errors, "decodedEndpoints", decodedEndpoints);
 
   const frames = Array.isArray(sampledFrames) ? sampledFrames : [];
+  const chromaIntegrity = validateChromaSubjectInspection(contentInspection?.chromaIntegrity, {
+    production,
+    expectedFrameCount: frames.length
+  });
+  appendErrors(errors, "chromaIntegrity", chromaIntegrity);
+  const productionEvidence = validateProductionEvidenceReport({ actionId, provenance }, { production });
+  appendErrors(errors, "productionEvidence", productionEvidence);
   const frameResults = frames.map((frame) => validateCanvasFrame(frame, {
     canvas: CHARACTER_CANVAS_V1,
     policy: resolvedPolicy,
@@ -189,6 +209,10 @@ function validateVideoAction({
     errors,
     media,
     endpoints,
+    decodedEndpoints,
+    chromaIntegrity,
+    productionEvidence,
+    provenance: productionEvidence.evidence,
     canvas,
     continuity,
     content,
@@ -198,11 +222,14 @@ function validateVideoAction({
     frameResults,
     evidence: {
       contentInspection: contentEvidence,
+      chromaIntegrity: chromaIntegrity.evidence,
+      provenance: productionEvidence.evidence,
       appearance: appearance.evidence,
       ...(actionId === "sleep-loop" ? { loopBoundary: loopBoundary.evidence } : {}),
       endpoints: {
         firstMasterHash: String(firstFrame?.masterHash || ""),
-        lastMasterHash: String(lastFrame?.masterHash || "")
+        lastMasterHash: String(lastFrame?.masterHash || ""),
+        decoded: decodedEndpoints.evidence
       },
       continuity: {
         sampledFrameCount: frames.length,

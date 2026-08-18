@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const {
+  CONTROLLED_REAL_EVIDENCE_MODE,
   StudioWorkerRuntime,
   assertStudioWorkerSchemaReady,
   createStudioWorkerRuntime,
@@ -12,6 +13,69 @@ const {
   loadWorkerComponentsModule,
   validateWorkerComponents
 } = require("../../platform/src/runtime/create-studio-worker");
+const {
+  PRODUCTION_WORKER_COMPONENT_MANIFEST_CONTRACT_VERSION,
+  checksumProductionWorkerComponentManifest
+} = require("../../platform/src/runtime/production-worker-component-manifest");
+
+function productionComponent(metadata, methods) {
+  const component = { ...methods };
+  Object.defineProperty(component, "productionMetadata", {
+    value: Object.freeze(metadata),
+    enumerable: true,
+    writable: false,
+    configurable: false
+  });
+  return Object.freeze(component);
+}
+
+function productionComponents() {
+  const metadata = {
+    masterImageProcessor: {
+      version: "master/1.0.0",
+      contractVersion: "character-canvas-v1-master-processor/v1",
+      calibrationDigest: "1".repeat(64)
+    },
+    mattingService: {
+      version: "media/1.0.0",
+      contractVersion: "petpack-media-processor/v1",
+      calibrationDigest: "2".repeat(64)
+    },
+    qaPolicyProvider: {
+      version: "qa-policy/1.0.0",
+      contractVersion: "petpack-qa-policy-provider/v1",
+      calibrationDigest: "3".repeat(64)
+    },
+    deliveryValidator: {
+      version: "validator/1.0.0",
+      contractVersion: "petpack-delivery-validator/v1",
+      calibrationDigest: "4".repeat(64)
+    }
+  };
+  const productionComponentManifest = {
+    contractVersion: PRODUCTION_WORKER_COMPONENT_MANIFEST_CONTRACT_VERSION,
+    evidenceClass: "production",
+    components: metadata
+  };
+  return {
+    productionAssured: true,
+    productionComponentManifest,
+    masterImageProcessor: productionComponent(metadata.masterImageProcessor, {
+      version: metadata.masterImageProcessor.version,
+      contractVersion: metadata.masterImageProcessor.contractVersion,
+      normalizeAndInspect: vi.fn()
+    }),
+    mattingService: productionComponent(metadata.mattingService, {
+      createMatteAndMetrics: vi.fn(),
+      inspectProcessedAction: vi.fn()
+    }),
+    qaPolicyProvider: productionComponent(metadata.qaPolicyProvider, { getPolicy: vi.fn() }),
+    deliveryValidator: productionComponent(metadata.deliveryValidator, {
+      describe: vi.fn(), validate: vi.fn()
+    }),
+    mediaProcessorVersion: metadata.mattingService.version
+  };
+}
 
 function readySchemaRow(overrides = {}) {
   return {
@@ -79,6 +143,13 @@ describe("Studio Worker runtime", () => {
       FFMPEG_PATH: "/usr/bin/ffmpeg",
       FFPROBE_PATH: "/usr/bin/ffprobe"
     })).toThrow(/retention days are required/);
+    expect(() => loadStudioWorkerRuntimeConfig({
+      PETPACK_PLATFORM_MODE: "production",
+      PETPACK_WORKER_TEMP_ROOT: "/work",
+      FFMPEG_PATH: "/usr/bin/ffmpeg",
+      FFPROBE_PATH: "/usr/bin/ffprobe",
+      PETPACK_DELIVERY_RETENTION_DAYS: "30"
+    })).toThrow(/WORKER_COMPONENTS_MANIFEST_SHA256/);
   });
 
   it("requires worker tables, the side-master migration, and Kaipay V3 migration", async () => {
@@ -100,6 +171,63 @@ describe("Studio Worker runtime", () => {
     expect(() => validateWorkerComponents(components, { production: true })).toThrow(/production-assured/);
   });
 
+  it("requires a pinned live component manifest in production, not only an assurance boolean", () => {
+    const components = productionComponents();
+    expect(() => validateWorkerComponents(components, {
+      production: true,
+      workerComponentsManifestSha256: "a".repeat(64)
+    })).toThrow(/pinned SHA-256/);
+    const expectedSha256 = checksumProductionWorkerComponentManifest(
+      components.productionComponentManifest
+    );
+    const validated = validateWorkerComponents(components, {
+      production: true,
+      workerComponentsManifestSha256: expectedSha256
+    });
+    expect(Object.isFrozen(validated)).toBe(true);
+    expect(validated.verifiedProductionComponentManifest.sha256).toBe(expectedSha256);
+  });
+
+  it("does not let a production component bundle replace the runtime trusted endpoint inspector", () => {
+    const components = productionComponents();
+    components.endpointInspector = vi.fn();
+    const expectedSha256 = checksumProductionWorkerComponentManifest(
+      components.productionComponentManifest
+    );
+    expect(() => validateWorkerComponents(components, {
+      production: true,
+      workerComponentsManifestSha256: expectedSha256
+    })).toThrow(/cannot override the trusted endpoint inspector/);
+  });
+
+  it("keeps production infrastructure while explicitly classifying a single controlled-real run as staging evidence", () => {
+    const config = loadStudioWorkerRuntimeConfig({
+      PETPACK_PLATFORM_MODE: "production",
+      PETPACK_WORKER_EVIDENCE_MODE: CONTROLLED_REAL_EVIDENCE_MODE,
+      PETPACK_WORKER_TEMP_ROOT: "/work",
+      FFMPEG_PATH: "/usr/bin/ffmpeg",
+      FFPROBE_PATH: "/usr/bin/ffprobe",
+      PETPACK_DELIVERY_RETENTION_DAYS: "30"
+    });
+    expect(config).toMatchObject({
+      production: true,
+      productionEvidence: false,
+      controlledRealEvidence: true,
+      evidenceMode: CONTROLLED_REAL_EVIDENCE_MODE
+    });
+    const components = {
+      ...fakeComponents(),
+      classification: "internal-controlled-real-staging",
+      productionAssured: false,
+      allowedRunId: "8783b68b-eabd-447f-99d9-cba49c245c91",
+      qaPolicyProvider: { getPolicy: vi.fn() }
+    };
+    expect(validateWorkerComponents(components, {
+      production: true,
+      evidenceMode: CONTROLLED_REAL_EVIDENCE_MODE
+    })).toBe(components);
+  });
+
   it("rejects a development fixture path before loading it in production", async () => {
     await expect(loadWorkerComponentsModule({
       production: true,
@@ -118,7 +246,8 @@ describe("Studio Worker runtime", () => {
         PETPACK_WORKER_TEMP_ROOT: "/work",
         FFMPEG_PATH: "/usr/bin/ffmpeg",
         FFPROBE_PATH: "/usr/bin/ffprobe",
-        PETPACK_DELIVERY_RETENTION_DAYS: "30"
+        PETPACK_DELIVERY_RETENTION_DAYS: "30",
+        PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256: "a".repeat(64)
       },
       workerComponents: fakeComponents(),
       database: fakeDatabase()

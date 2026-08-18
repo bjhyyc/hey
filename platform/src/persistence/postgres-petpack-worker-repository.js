@@ -1,18 +1,24 @@
 const crypto = require("node:crypto");
 
+const { REQUIRED_ACTION_IDS } = require("../domain/action-catalog");
 const { PRODUCTION_STATES } = require("../domain/production-state-machine");
 const {
   PETPACK_BUILD_POLICY_VERSION,
   PETPACK_CONTENT_TYPE,
   PETPACK_VALIDATION_POLICY_VERSION,
+  checksumJson,
   createPackageInputRevision,
   normalizeBoundedJson,
   normalizePackageInputActions,
   normalizePetpackArtifact,
   requiredString
 } = require("../petpack/package-contract");
+const { REQUIRED_MASTER_KINDS } = require("../qa/production-evidence-provenance");
 const { assertPrivateObjectKey, normalizeSha256 } = require("../storage/private-object-store");
 const { JOB_NAMES } = require("../workflow/production-workflow");
+
+const PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION =
+  "petpack-production-media-snapshot-evidence/v1";
 
 const PACKAGE_JOB_NAMES = new Set([
   JOB_NAMES.PROCESS_MEDIA,
@@ -111,12 +117,139 @@ function mapActionRow(row) {
     contentType: row.content_type,
     processingPolicyVersion: row.processing_policy_version,
     processorVersion: row.processor_version,
+    sourceMediaAssetId: row.source_media_asset_id || null,
+    sourceSha256: row.source_sha256
+      ? normalizeSha256(row.source_sha256, `${row.action_id} provider source checksum`)
+      : null,
     qa: parseJsonObject(row.qa_report, `${row.action_id} action QA report`)
   };
 }
 
 function mapActions(result) {
-  return normalizePackageInputActions(rows(result).map(mapActionRow));
+  const mapped = rows(result).map(mapActionRow);
+  const sourceByActionId = new Map(mapped.map((action) => [action.actionId, action]));
+  return normalizePackageInputActions(mapped).map((action) => {
+    const source = sourceByActionId.get(action.actionId);
+    return source?.sourceMediaAssetId && source?.sourceSha256
+      ? {
+          ...action,
+          sourceMediaAssetId: requiredString(
+            source.sourceMediaAssetId,
+            `${action.actionId} provider source media asset ID`,
+            128
+          ),
+          sourceSha256: source.sourceSha256
+        }
+      : action;
+  });
+}
+
+function mapMasterEvidenceRow(row) {
+  if (!REQUIRED_MASTER_KINDS.includes(row.kind)) {
+    throw new Error("Current master evidence has an unsupported kind");
+  }
+  return {
+    kind: row.kind,
+    masterGenerationId: requiredString(row.master_generation_id, `${row.kind} master generation ID`, 128),
+    imageCandidateId: requiredString(row.image_candidate_id, `${row.kind} image candidate ID`, 128),
+    sourceMediaAssetId: requiredString(row.source_media_asset_id, `${row.kind} provider source asset ID`, 128),
+    mediaAssetId: requiredString(row.media_asset_id, `${row.kind} normalized media asset ID`, 128),
+    qaReportId: requiredString(row.qa_report_id, `${row.kind} master QA report ID`, 128),
+    inputSha256: normalizeSha256(row.input_sha256, `${row.kind} provider source checksum`),
+    outputSha256: normalizeSha256(row.output_sha256, `${row.kind} normalized master checksum`),
+    processingPolicyVersion: requiredString(
+      row.processing_policy_version,
+      `${row.kind} master processing policy version`,
+      128
+    ),
+    processorVersion: requiredString(row.processor_version, `${row.kind} master processor version`, 128),
+    modelRegistryVersion: requiredString(
+      row.model_registry_version,
+      `${row.kind} master model registry version`,
+      128
+    ),
+    qa: parseJsonObject(row.qa_report, `${row.kind} master QA report`)
+  };
+}
+
+function mapMasterEvidence(result) {
+  const mapped = {};
+  for (const row of rows(result)) {
+    const evidence = mapMasterEvidenceRow(row);
+    if (mapped[evidence.kind]) throw new Error(`Current ${evidence.kind} master evidence is duplicated`);
+    mapped[evidence.kind] = evidence;
+  }
+  return mapped;
+}
+
+function normalizeProductionMediaSnapshotEvidence(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      value.contractVersion !== PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION) {
+    throw new Error("Production media snapshot evidence contract is required");
+  }
+  const masterEvidence = value.masterEvidence;
+  if (!masterEvidence || typeof masterEvidence !== "object" || Array.isArray(masterEvidence) ||
+      Object.keys(masterEvidence).some((kind) => !REQUIRED_MASTER_KINDS.includes(kind))) {
+    throw new Error("Production media snapshot master evidence is invalid");
+  }
+  const masters = REQUIRED_MASTER_KINDS.map((kind) => {
+    const record = masterEvidence[kind];
+    if (!record || typeof record !== "object" || Array.isArray(record) || record.kind !== kind) {
+      throw new Error(`Production ${kind} master evidence is required`);
+    }
+    return {
+      kind,
+      masterGenerationId: requiredString(record.masterGenerationId, `${kind} master generation ID`, 128),
+      imageCandidateId: requiredString(record.imageCandidateId, `${kind} image candidate ID`, 128),
+      sourceMediaAssetId: requiredString(record.sourceMediaAssetId, `${kind} provider source asset ID`, 128),
+      mediaAssetId: requiredString(record.mediaAssetId, `${kind} normalized media asset ID`, 128),
+      qaReportId: requiredString(record.qaReportId, `${kind} master QA report ID`, 128),
+      inputSha256: normalizeSha256(record.inputSha256, `${kind} provider source checksum`),
+      outputSha256: normalizeSha256(record.outputSha256, `${kind} normalized master checksum`),
+      processingPolicyVersion: requiredString(
+        record.processingPolicyVersion,
+        `${kind} master processing policy version`,
+        128
+      ),
+      processorVersion: requiredString(record.processorVersion, `${kind} master processor version`, 128),
+      modelRegistryVersion: requiredString(record.modelRegistryVersion, `${kind} master model registry version`, 128),
+      qaSha256: checksumJson(parseJsonObject(record.qa, `${kind} master QA report`))
+    };
+  });
+
+  const rawActions = Array.isArray(value.actions) ? value.actions : [];
+  const rawByActionId = new Map(rawActions.map((action) => [action?.actionId, action]));
+  const actions = normalizePackageInputActions(rawActions).map((action) => {
+    const raw = rawByActionId.get(action.actionId);
+    return {
+      actionId: action.actionId,
+      generationActionId: action.generationActionId,
+      sourceMediaAssetId: requiredString(
+        raw?.sourceMediaAssetId,
+        `${action.actionId} provider source media asset ID`,
+        128
+      ),
+      mediaAssetId: action.mediaAssetId,
+      qaReportId: action.qaReportId,
+      inputSha256: normalizeSha256(raw?.sourceSha256, `${action.actionId} provider source checksum`),
+      outputSha256: action.sha256,
+      processingPolicyVersion: action.processingPolicyVersion,
+      processorVersion: action.processorVersion,
+      qaSha256: checksumJson(action.qa)
+    };
+  });
+  if (actions.length !== REQUIRED_ACTION_IDS.length) {
+    throw new Error("Exactly seven production action evidence bindings are required");
+  }
+  return {
+    contractVersion: PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION,
+    masters,
+    actions
+  };
+}
+
+function createProductionMediaEvidenceRevision(value) {
+  return checksumJson(normalizeProductionMediaSnapshotEvidence(value));
 }
 
 function normalizeValidationDescriptor(value) {
@@ -250,6 +383,7 @@ class PostgresPetpackWorkerRepository {
               action.prompt_version_id, action.prompt_version_label,
               action.processing_policy_version, action.processor_version,
               asset.object_key, asset.sha256, asset.byte_size, asset.content_type,
+              source.id AS source_media_asset_id, source.sha256 AS source_sha256,
               qa.report AS qa_report
          FROM generation_action action
          JOIN production_run run ON run.id = action.run_id
@@ -280,10 +414,85 @@ class PostgresPetpackWorkerRepository {
          JOIN prompt_version prompt
            ON prompt.id = action.prompt_version_id
           AND prompt.version = action.prompt_version_label
-        WHERE action.run_id = $1
-          AND action.state = 'qa_passed'
-        ORDER BY action.action_id
-        ${lock ? "FOR UPDATE OF action, asset, qa" : ""}`,
+         WHERE action.run_id = $1
+           AND action.state = 'qa_passed'
+         ORDER BY action.action_id
+         ${lock ? "FOR UPDATE OF action, asset, source, qa" : ""}`,
+      [runId]
+    ));
+  }
+
+  async _loadCurrentMasterEvidence(tx, runId, { lock = false } = {}) {
+    return mapMasterEvidence(await tx.query(
+      `SELECT selected.kind,
+              generation.id AS master_generation_id,
+              candidate.id AS image_candidate_id,
+              source.id AS source_media_asset_id,
+              asset.id AS media_asset_id,
+              qa.id AS qa_report_id,
+              source.sha256 AS input_sha256,
+              asset.sha256 AS output_sha256,
+              generation.processing_policy_version,
+              generation.processor_version,
+              candidate.model_registry_version,
+              qa.report AS qa_report
+         FROM production_run run
+         JOIN character_revision revision
+           ON revision.id = run.character_revision_id
+          AND revision.project_id = run.project_id
+         JOIN LATERAL (
+           VALUES
+             ('front'::text, revision.front_candidate_id),
+             ('side'::text, revision.side_candidate_id),
+             ('sleep'::text, revision.sleep_candidate_id)
+         ) AS selected(kind, candidate_id) ON selected.candidate_id IS NOT NULL
+         JOIN image_candidate candidate
+           ON candidate.id = selected.candidate_id
+          AND candidate.project_id = run.project_id
+          AND candidate.run_id = run.id
+          AND candidate.order_id = run.order_id
+          AND candidate.kind = selected.kind
+          AND candidate.qa_status = 'passed'
+          AND candidate.model_registry_version = run.model_registry_version
+         JOIN master_image_generation generation
+           ON generation.image_candidate_id = candidate.id
+          AND generation.run_id = run.id
+          AND generation.project_id = run.project_id
+          AND generation.order_id = run.order_id
+          AND generation.kind = selected.kind
+          AND generation.generation_attempt = candidate.generation_attempt
+          AND generation.normalized_media_asset_id = candidate.media_asset_id
+          AND generation.qa_report_id = candidate.qa_report_id
+          AND generation.status = 'qa_passed'
+         JOIN media_asset source
+           ON source.id = generation.provider_output_asset_id
+          AND source.project_id = run.project_id
+          AND source.run_id = run.id
+          AND source.kind = 'provider_output'
+         JOIN media_asset asset
+           ON asset.id = candidate.media_asset_id
+          AND asset.id = generation.normalized_media_asset_id
+          AND asset.project_id = run.project_id
+          AND asset.run_id = run.id
+          AND asset.kind = (selected.kind || '_master')::media_kind
+          AND asset.content_type = 'image/png'
+          AND asset.deleted_at IS NULL
+          AND (asset.expires_at IS NULL OR asset.expires_at > now())
+         JOIN qa_report qa
+           ON qa.id = candidate.qa_report_id
+          AND qa.id = generation.qa_report_id
+          AND qa.project_id = run.project_id
+          AND qa.run_id = run.id
+          AND qa.action_id IS NULL
+          AND qa.subject_kind = 'image'
+          AND qa.status = 'passed'
+          AND qa.source_media_asset_id = source.id
+          AND qa.subject_media_asset_id = asset.id
+          AND qa.policy_version = generation.processing_policy_version
+          AND qa.processor_version = generation.processor_version
+        WHERE run.id = $1
+        ORDER BY CASE selected.kind WHEN 'front' THEN 1 WHEN 'side' THEN 2 ELSE 3 END
+        ${lock ? "FOR UPDATE OF revision, candidate, generation, source, asset, qa" : ""}`,
       [runId]
     ));
   }
@@ -395,6 +604,10 @@ class PostgresPetpackWorkerRepository {
   }
 
   async claimMediaSnapshot(input = {}) {
+    if (input.requireProductionEvidence !== undefined && typeof input.requireProductionEvidence !== "boolean") {
+      throw new Error("Production media evidence requirement must be boolean");
+    }
+    const requireProductionEvidence = input.requireProductionEvidence === true;
     const claim = normalizeRunClaimInput(input);
     return this.database.transaction(async (transaction) => {
       const tx = requireQuery(transaction);
@@ -406,6 +619,9 @@ class PostgresPetpackWorkerRepository {
         throw new Error("Production run is not at the seven-action media gate");
       }
       const actions = await this._loadCurrentActions(tx, claim.runId, { lock: true });
+      const masterEvidence = requireProductionEvidence
+        ? await this._loadCurrentMasterEvidence(tx, claim.runId, { lock: true })
+        : null;
       const lease = await this._leaseExecution(tx, execution, claim);
       if (lease.exhausted) await this._failRun(tx, run, "package_media_gate_attempts_exhausted");
       if (lease.outcome !== "claimed") return { ...lease, runId: claim.runId };
@@ -416,17 +632,29 @@ class PostgresPetpackWorkerRepository {
         orderId: run.order_id,
         projectName: requiredString(run.project_name, "Pet project display name", 256),
         runVersion: Number(run.run_version),
-        actions
+        actions,
+        ...(requireProductionEvidence ? { masterEvidence } : {})
       };
     });
   }
 
-  async completeMediaSnapshot({ jobId, leaseToken, revisionSha256, packageName, actions, buildJob } = {}) {
+  async completeMediaSnapshot({
+    jobId,
+    leaseToken,
+    revisionSha256,
+    packageName,
+    actions,
+    buildJob,
+    productionEvidence = null
+  } = {}) {
     const safeJobId = requiredString(jobId, "Queue job ID");
     const safeLease = requiredString(leaseToken, "Execution lease token", 128);
     const safePackageName = requiredString(packageName, "Frozen PetPack display name", 256);
     const normalizedActions = normalizePackageInputActions(actions);
     const revision = normalizeSha256(revisionSha256, "Package input revision");
+    const expectedProductionEvidenceRevision = productionEvidence === null
+      ? null
+      : createProductionMediaEvidenceRevision(productionEvidence);
     assertRunWorkflowJob(buildJob, { expectedName: JOB_NAMES.BUILD_PACKAGE });
     return this.database.transaction(async (transaction) => {
       const tx = requireQuery(transaction);
@@ -454,12 +682,27 @@ class PostgresPetpackWorkerRepository {
       if (computed.revisionSha256 !== revision) {
         throw new Error("Package input revision does not match its frozen name and seven actions");
       }
+      const currentActions = await this._loadCurrentActions(tx, run.run_id, { lock: true });
       const live = createPackageInputRevision({
         runId: run.run_id,
         packageName: safePackageName,
-        actions: await this._loadCurrentActions(tx, run.run_id, { lock: true })
+        actions: currentActions
       });
       if (live.revisionSha256 !== revision) throw new Error("Seven-action inputs changed before snapshot commit");
+      if (expectedProductionEvidenceRevision) {
+        const currentMasterEvidence = await this._loadCurrentMasterEvidence(tx, run.run_id, { lock: true });
+        const currentProductionEvidenceRevision = createProductionMediaEvidenceRevision({
+          contractVersion: PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION,
+          masterEvidence: currentMasterEvidence,
+          actions: currentActions
+        });
+        if (currentProductionEvidenceRevision !== expectedProductionEvidenceRevision) {
+          throw Object.assign(
+            new Error("Production media QA evidence changed before snapshot commit"),
+            { code: "production_media_evidence_changed" }
+          );
+        }
+      }
 
       const snapshotId = this.idFactory();
       const snapshot = rows(await tx.query(
@@ -505,6 +748,51 @@ class PostgresPetpackWorkerRepository {
       await this._insertOutboxExact(tx, buildJob);
       await this._completeExecution(tx, { jobId: safeJobId, leaseToken: safeLease });
       return { snapshotId: persistedSnapshotId, revisionSha256: revision };
+    });
+  }
+
+  async failMediaSnapshotEvidence({
+    jobId,
+    leaseToken,
+    errorCode = "production_evidence_provenance_invalid"
+  } = {}) {
+    const safeJobId = requiredString(jobId, "Queue job ID");
+    const safeLease = requiredString(leaseToken, "Execution lease token", 128);
+    const code = normalizeErrorCode(errorCode, "production_evidence_provenance_invalid");
+    return this.database.transaction(async (transaction) => {
+      const tx = requireQuery(transaction);
+      const row = oneRow(await tx.query(
+        `SELECT execution.run_id, run.project_id, run.order_id,
+                run.state AS run_state, run.version AS run_version
+           FROM production_job_execution execution
+           JOIN production_run run ON run.id = execution.run_id
+          WHERE execution.job_id = $1
+            AND execution.lease_token = $2::uuid
+            AND execution.job_name = $3
+            AND execution.status = 'leased'
+            AND execution.leased_until > now()
+          FOR UPDATE OF execution, run`,
+        [safeJobId, safeLease, JOB_NAMES.PROCESS_MEDIA]
+      ), "Active production media-evidence execution lease was not found");
+      const settled = rows(await tx.query(
+        `UPDATE production_job_execution
+            SET status = 'dead', lease_token = NULL, lease_owner = NULL,
+                leased_until = NULL, last_error_code = $3, updated_at = now()
+          WHERE job_id = $1 AND lease_token = $2::uuid
+            AND job_name = $4 AND status = 'leased'
+        RETURNING id`,
+        [safeJobId, safeLease, code, JOB_NAMES.PROCESS_MEDIA]
+      ));
+      if (settled.length !== 1) {
+        throw new Error("Production media-evidence execution could not be rejected");
+      }
+      await this._failRun(tx, row, code);
+      this.logger.warn?.("petpack.worker.production_media_evidence_settled", {
+        runId: row.run_id,
+        status: "dead",
+        errorCode: code
+      });
+      return { status: "evidence_rejected", runId: row.run_id, errorCode: code };
     });
   }
 
@@ -1186,9 +1474,13 @@ class PostgresPetpackWorkerRepository {
 
 module.exports = {
   PACKAGE_JOB_NAMES,
+  PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION,
   PostgresPetpackWorkerRepository,
   assertRunWorkflowJob,
+  createProductionMediaEvidenceRevision,
   mapActionRow,
+  mapMasterEvidenceRow,
+  normalizeProductionMediaSnapshotEvidence,
   normalizeRunClaimInput,
   normalizeClaimedPetpackArtifact,
   normalizeValidationDescriptor

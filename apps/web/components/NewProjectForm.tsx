@@ -2,26 +2,28 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { studioBrowserApi, type KaipayNextAction } from "@/lib/studio-browser-api";
+import {
+  KAIPAY_STATUS_POLL_INTERVAL_MS,
+  kaipayQrPresentation,
+  requireHttpsPaymentUrl,
+} from "@/lib/kaipay-payment-ui";
+import {
+  studioBrowserApi,
+  type KaipayNextAction,
+  type KaipayPaymentChannel,
+} from "@/lib/studio-browser-api";
 
-type QrPayment = { projectId: string; imageUrl: string };
-
-function requireHttpsUrl(value: string) {
-  const parsed = new URL(value);
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash) {
-    throw new Error("支付跳转地址无效，请稍后重试");
-  }
-  return parsed.toString();
-}
+type QrPayment = { projectId: string; imageUrl: string; paymentChannel: KaipayPaymentChannel };
 
 export function NewProjectForm() {
   const router = useRouter();
   const [displayName, setDisplayName] = useState("");
-  const [paymentChannel, setPaymentChannel] = useState<"ALIPAY" | "WXPAY">("ALIPAY");
+  const [paymentChannel, setPaymentChannel] = useState<KaipayPaymentChannel>("ALIPAY");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
   const showWxpay = process.env.NEXT_PUBLIC_KAIPAY_WXPAY_ENABLED === "true";
+  const planCode = process.env.NEXT_PUBLIC_PETPACK_PLAN_CODE || "petpack-seven-action-v1";
 
   useEffect(() => {
     if (!qrPayment) return;
@@ -41,33 +43,42 @@ export function NewProjectForm() {
       }
     };
     void check();
-    const timer = window.setInterval(() => void check(), 3000);
+    const timer = window.setInterval(() => void check(), KAIPAY_STATUS_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
   }, [qrPayment, router]);
 
-  async function renderQrAction(action: Extract<KaipayNextAction, { type: "qr_code" }>, projectId: string) {
-    let imageUrl = action.qrCodeImageUrl ? requireHttpsUrl(action.qrCodeImageUrl) : "";
+  async function renderQrAction(
+    action: Extract<KaipayNextAction, { type: "qr_code" }>,
+    projectId: string,
+    selectedPaymentChannel: KaipayPaymentChannel,
+  ) {
+    const presentation = kaipayQrPresentation(selectedPaymentChannel);
+    let imageUrl = action.qrCodeImageUrl ? requireHttpsPaymentUrl(action.qrCodeImageUrl) : "";
     if (!imageUrl && action.qrCode) {
       const { toDataURL } = await import("qrcode");
       imageUrl = await toDataURL(action.qrCode, { errorCorrectionLevel: "M", margin: 2, width: 280 });
     }
-    if (!imageUrl) throw new Error("暂时无法显示微信支付二维码，请稍后重试");
-    setQrPayment({ projectId, imageUrl });
-    setMessage("请使用微信扫码付款，付款成功后会自动进入上传页面");
+    if (!imageUrl) throw new Error(presentation.missingQrMessage);
+    setQrPayment({ projectId, imageUrl, paymentChannel: selectedPaymentChannel });
+    setMessage(presentation.scanMessage);
     setBusy(false);
   }
 
-  async function handleNextAction(action: KaipayNextAction | undefined, projectId: string) {
+  async function handleNextAction(
+    action: KaipayNextAction | undefined,
+    projectId: string,
+    selectedPaymentChannel: KaipayPaymentChannel,
+  ) {
     if (!action) throw new Error("支付服务没有返回下一步操作，请稍后重试");
     if (action.type === "redirect") {
-      window.location.assign(requireHttpsUrl(action.url));
+      window.location.assign(requireHttpsPaymentUrl(action.url));
       return;
     }
     if (action.type === "qr_code") {
-      await renderQrAction(action, projectId);
+      await renderQrAction(action, projectId, selectedPaymentChannel);
       return;
     }
     if (action.type === "poll" || action.type === "none") {
@@ -84,29 +95,32 @@ export function NewProjectForm() {
     setMessage("");
     try {
       const result = await studioBrowserApi.createCheckout({
-        planCode: "petpack-seven-action-v1",
+        planCode,
         displayName: displayName.trim(),
         paymentMethod: "KAIPAY",
         paymentChannel,
         idempotencyKey: crypto.randomUUID(),
       });
-      await handleNextAction(result.checkout.nextAction, result.project.id);
+      await handleNextAction(result.checkout.nextAction, result.project.id, paymentChannel);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "暂时无法创建项目");
       setBusy(false);
     }
   }
 
-  if (qrPayment) return <section className="workflow-card payment-qr-card">
-    <p className="eyebrow">微信支付</p>
-    <h2>扫码完成付款</h2>
-    <img alt="微信支付二维码" className="payment-qr-image" height="280" src={qrPayment.imageUrl} width="280" />
-    <p className="form-message" aria-live="polite">{message}</p>
-    <button className="primary-button form-submit" onClick={() => void studioBrowserApi.refreshPaymentStatus(qrPayment.projectId).then((result) => {
-      if (result.order?.status === "paid") router.push(`/projects/${encodeURIComponent(qrPayment.projectId)}/photos`);
-      else setMessage("暂未确认到账，请勿重复付款，稍后再试");
-    }).catch(() => setMessage("暂时无法查询付款状态，请稍后再试"))} type="button">我已完成付款</button>
-  </section>;
+  if (qrPayment) {
+    const presentation = kaipayQrPresentation(qrPayment.paymentChannel);
+    return <section className="workflow-card payment-qr-card">
+      <p className="eyebrow">{presentation.paymentName}</p>
+      <h2>扫码完成付款</h2>
+      <img alt={presentation.imageAlt} className="payment-qr-image" height="280" src={qrPayment.imageUrl} width="280" />
+      <p className="form-message" aria-live="polite">{message}</p>
+      <button className="primary-button form-submit" onClick={() => void studioBrowserApi.refreshPaymentStatus(qrPayment.projectId).then((result) => {
+        if (result.order?.status === "paid") router.push(`/projects/${encodeURIComponent(qrPayment.projectId)}/photos`);
+        else setMessage("暂未确认到账，请勿重复付款，稍后再试");
+      }).catch(() => setMessage("暂时无法查询付款状态，请稍后再试"))} type="button">我已完成付款</button>
+    </section>;
+  }
 
   return <section aria-labelledby="payment-title" className="payment-picker">
     <div><h2 id="payment-title">选择支付方式</h2></div>

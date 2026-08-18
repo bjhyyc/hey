@@ -10,6 +10,8 @@
 platform/docker/**
 !platform/docker/media-worker
 !platform/docker/media-worker/assemble-runtime.sh
+!platform/docker/media-worker/work-root
+!platform/docker/media-worker/work-root/.keep
 !platform/src
 !platform/src/**
 platform/src/development
@@ -18,3 +20,9 @@ platform/src/development/**
 !src
 !src/shared
 !src/shared/**
+!src/main
+src/main/**
+!src/main/services
+src/main/services/**
+!src/main/services/logger.js
+!src/main/services/petpack.js

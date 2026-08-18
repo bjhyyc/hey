@@ -21,6 +21,7 @@ function readySchemaRow(overrides = {}) {
     has_image_prompts: true,
     has_kaipay_adapter_version: true,
     has_kaipay_v3_identity: true,
+    has_kaipay_fuyou_identity: true,
     ...overrides
   };
 }
@@ -45,7 +46,8 @@ describe("Studio API runtime", () => {
       host: "127.0.0.1",
       port: 0,
       allowNonLoopback: false,
-      phoneAuthExchangeEnabled: false
+      phoneAuthExchangeEnabled: false,
+      generationSalesEnabled: true
     });
     expect(loadStudioApiRuntimeConfig({
       PETPACK_PLATFORM_MODE: "production",
@@ -58,8 +60,15 @@ describe("Studio API runtime", () => {
       port: 8787,
       allowNonLoopback: true,
       phoneAuthExchangeEnabled: true,
+      generationSalesEnabled: false,
       internalBearerToken: "internal-token-at-least-32-bytes-long"
     });
+    expect(loadStudioApiRuntimeConfig({
+      PETPACK_PLATFORM_MODE: "production",
+      PETPACK_API_PORT: "8787",
+      PETPACK_GENERATION_SALES_ENABLED: "true",
+      PETPACK_STUDIO_INTERNAL_TOKEN: "internal-token-at-least-32-bytes-long"
+    }).generationSalesEnabled).toBe(true);
     expect(() => loadStudioApiRuntimeConfig({
       PETPACK_PLATFORM_MODE: "production",
       PETPACK_API_PORT: "8787"
@@ -68,16 +77,19 @@ describe("Studio API runtime", () => {
     expect(() => loadStudioApiRuntimeConfig({ PETPACK_API_PORT: "80" })).toThrow(/port/);
   });
 
-  it("requires the full Studio and Kaipay V3 schema through migration 015", async () => {
+  it("requires the full Studio and Fuyou identity schema through migration 016", async () => {
     await expect(assertStudioApiSchemaReady({
       query: vi.fn(async () => ({ rows: [readySchemaRow({ has_kaipay_adapter_version: false })] }))
-    })).rejects.toThrow(/migration 015/);
+    })).rejects.toThrow(/migration 016/);
     await expect(assertStudioApiSchemaReady({
       query: vi.fn(async () => ({ rows: [readySchemaRow({ has_kaipay_v3_identity: false })] }))
-    })).rejects.toThrow(/migration 015/);
+    })).rejects.toThrow(/migration 016/);
+    await expect(assertStudioApiSchemaReady({
+      query: vi.fn(async () => ({ rows: [readySchemaRow({ has_kaipay_fuyou_identity: false })] }))
+    })).rejects.toThrow(/migration 016/);
     await expect(assertStudioApiSchemaReady({
       query: vi.fn(async () => ({ rows: [readySchemaRow()] }))
-    })).resolves.toEqual({ ready: true, migration: 15 });
+    })).resolves.toEqual({ ready: true, migration: 16 });
   });
 
   it("checks readiness before listening and closes cleanly", async () => {

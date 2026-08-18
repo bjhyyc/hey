@@ -1,18 +1,19 @@
-const { createKaipayV3Adapters, providerForChannel } = require("../providers/kaipay-v3");
+const { createKaipayV3Adapters, normalizeChannelRoute, routeForChannel } = require("../providers/kaipay-v3");
 const { loadKaipayConfig } = require("../providers/kaipay-payment-provider");
 const { hydrateEnvironmentFromSecretFiles } = require("./load-secret-files");
 
-function assertSceneCapability(providers, { channel, scene }) {
-  const provider = providerForChannel(channel);
-  const entry = providers.find((candidate) => candidate && candidate.provider === provider);
+function assertSceneCapability(providers, { channel, paymentChannel, provider, payMethod, scene }) {
+  const route = normalizeChannelRoute(channel || paymentChannel, { provider, payMethod, scene });
+  const entry = providers.find((candidate) => candidate && candidate.provider === route.provider);
   const scenes = Array.isArray(entry?.scenes) ? entry.scenes : [];
-  const payMethod = channel === "ALIPAY" ? "alipay" : "wechat";
-  const expectedActionType = scene === "web" ? "redirect" : "qr_code";
-  const matchedScene = scenes.find((candidate) => candidate && candidate.scene === scene);
+  const expectedActionType = route.scene === "web" ? "redirect" : "qr_code";
+  const matchedScene = scenes.find((candidate) => candidate && candidate.scene === route.scene);
   const requiredFields = Array.isArray(matchedScene?.requiredFields) ? matchedScene.requiredFields : [];
-  if (!entry || !Array.isArray(entry.payMethods) || !entry.payMethods.includes(payMethod) ||
-      !matchedScene || matchedScene.actionType !== expectedActionType || !requiredFields.includes("notifyUrl")) {
-    throw new Error(`Kaipay V3 capabilities do not include ${provider}/${scene}`);
+  const requiredRouteFields = route.provider === "fuyou" ? ["notifyUrl", "payMethod"] : ["notifyUrl"];
+  if (!entry || !Array.isArray(entry.payMethods) || !entry.payMethods.includes(route.payMethod) ||
+      !matchedScene || matchedScene.actionType !== expectedActionType ||
+      requiredRouteFields.some((field) => !requiredFields.includes(field))) {
+    throw new Error(`Kaipay V3 capabilities do not include ${route.provider}/${route.payMethod}/${route.scene}`);
   }
 }
 
@@ -22,8 +23,8 @@ async function runKaipayCapabilitiesProbe({ environment = process.env, fetchImpl
   const { kaipayClient } = createKaipayV3Adapters({ config, fetchImpl });
   const result = await kaipayClient.getCapabilities();
   const providers = Array.isArray(result?.providers) ? result.providers : [];
-  assertSceneCapability(providers, { channel: "ALIPAY", scene: config.alipayScene });
-  assertSceneCapability(providers, { channel: "WXPAY", scene: config.wechatScene });
+  assertSceneCapability(providers, routeForChannel(config, "ALIPAY"));
+  assertSceneCapability(providers, routeForChannel(config, "WXPAY"));
   return Object.freeze({ ok: true });
 }
 

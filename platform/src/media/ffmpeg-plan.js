@@ -39,12 +39,16 @@ function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, expect
   const padX = Math.round(basePadX + offsetX);
   const padY = Math.round(basePadY + offsetY);
   const normalize = `trim=start=0:end=${duration},setpts=PTS-STARTPTS,fps=${CHARACTER_CANVAS_V1.fps},scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=decrease,pad=${CHARACTER_CANVAS_V1.width}:${CHARACTER_CANVAS_V1.height}:${padX}:${padY}:color=black,setsar=1`;
+  const greenExcess = "max(g(X,Y)-(r(X,Y)+b(X,Y))/2,0)";
+  const insetAlpha = "min(alpha(X,Y),min(alpha(X-1,Y),min(alpha(X+1,Y),min(alpha(X,Y-1),alpha(X,Y+1)))))";
+  const decontaminate = `geq=r='clip(r(X,Y)+(${greenExcess})*0.5,0,255)'` +
+    `:g='clip(g(X,Y)-(${greenExcess})*0.5,0,255)'` +
+    `:b='clip(b(X,Y)+(${greenExcess})*0.5,0,255)'` +
+    `:a='${insetAlpha}'`;
   const filterComplex = [
     `[0:v]${normalize},format=rgba[pet]`,
     `[1:v]${normalize},format=gray[matte]`,
-    "[pet][matte]alphamerge[cutout]",
-    `color=c=0x00ff00:s=${CHARACTER_CANVAS_V1.width}x${CHARACTER_CANVAS_V1.height}:r=${CHARACTER_CANVAS_V1.fps}[background]`,
-    "[background][cutout]overlay=shortest=1:format=auto,format=yuv420p[outv]"
+    `[pet][matte]alphamerge,${decontaminate},format=yuva420p[outv]`
   ].join(";");
   return {
     executable: "ffmpeg",
@@ -56,7 +60,9 @@ function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, expect
       "-map", "[outv]",
       "-an",
       "-c:v", "libvpx-vp9",
-      "-pix_fmt", "yuv420p",
+      "-pix_fmt", "yuva420p",
+      "-auto-alt-ref", "0",
+      "-metadata:s:v:0", "alpha_mode=1",
       "-r", String(CHARACTER_CANVAS_V1.fps),
       "-frames:v", String(exactFrameCount),
       requireWorkerPath(outputPath, "Worker output path")
@@ -69,7 +75,7 @@ function createVideoNormalizationPlan({ inputPath, mattePath, outputPath, expect
       frameCount: exactFrameCount,
       codec: "vp9",
       audio: false,
-      matteMode: "green-screen"
+      matteMode: "alpha"
     }
   };
 }

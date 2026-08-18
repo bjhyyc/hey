@@ -86,7 +86,14 @@ function resolveDeliveryDownloadTtlSeconds({ expiresAt, now = Date.now(), storag
  * storage keys never appear in `getProjectView`.
  */
 class PetPackStudioService {
-  constructor({ repository, paymentProvider, objectStore, workflow, logger = console } = {}) {
+  constructor({
+    repository,
+    paymentProvider,
+    objectStore,
+    workflow,
+    checkoutEnabled = true,
+    logger = console
+  } = {}) {
     this.repository = requireRepository(repository);
     if (!paymentProvider || typeof paymentProvider.createCheckout !== "function" ||
         typeof paymentProvider.handleNotification !== "function" || typeof paymentProvider.queryStatus !== "function") {
@@ -101,11 +108,18 @@ class PetPackStudioService {
     this.paymentProvider = paymentProvider;
     this.objectStore = objectStore;
     this.workflow = workflow;
+    if (typeof checkoutEnabled !== "boolean") throw new Error("Checkout admission must be a boolean");
+    this.checkoutEnabled = checkoutEnabled;
     this.logger = logger;
   }
 
   async createCheckout({ actor, planCode, displayName, paymentMethod, paymentChannel, idempotencyKey }) {
     const user = requireActor(actor);
+    if (!this.checkoutEnabled) {
+      const error = new Error("New PetPack orders are temporarily disabled");
+      error.code = "generation_sales_disabled";
+      throw error;
+    }
     const order = await this.repository.createProjectOrder({
       userId: user.id,
       planCode: requiredString(planCode, "Plan code"),

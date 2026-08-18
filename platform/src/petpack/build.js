@@ -25,6 +25,8 @@ const GREEN_SCREEN_CONFIG = Object.freeze({
   softness: 0.08
 });
 
+const SUPPORTED_MATTE_MODES = new Set(["green-screen", "alpha"]);
+
 // ZIP entry timestamps are part of the archive bytes. A fixed, DOS-compatible
 // instant plus caller-supplied deterministic clip UUIDs makes a retry produce
 // the same PetPack checksum instead of silently creating a second artifact.
@@ -74,13 +76,41 @@ function assertWebmSignature(buffer, actionId) {
   }
 }
 
+function requireMatteMode(asset, { allowLegacyDefault = false } = {}) {
+  const matteMode = asset && asset.matteMode;
+  if (allowLegacyDefault && matteMode === undefined) return "green-screen";
+  if (!SUPPORTED_MATTE_MODES.has(matteMode)) {
+    throw new Error(`${asset && asset.actionId || "action"} matteMode must be green-screen or alpha`);
+  }
+  return matteMode;
+}
+
+function manifestGreenScreen(asset) {
+  // Older callers of the manifest helper predate matteMode and produced
+  // green-screen packages, so keep that default while allowing approved alpha
+  // actions to rely on their native WebM transparency.
+  return requireMatteMode(asset, { allowLegacyDefault: true }) === "green-screen"
+    ? { greenScreen: { ...GREEN_SCREEN_CONFIG } }
+    : {};
+}
+
+function assertAlphaModeTag(probe, actionId) {
+  const video = Array.isArray(probe && probe.streams)
+    ? probe.streams.find((stream) => stream && stream.codec_type === "video")
+    : null;
+  const alphaMode = video && video.tags && typeof video.tags === "object"
+    ? Object.entries(video.tags).find(([key]) => key.toLowerCase() === "alpha_mode")?.[1]
+    : undefined;
+  if (alphaMode !== "1") {
+    throw new Error(`${actionId} trusted media probe must report alpha_mode=1 for alpha media`);
+  }
+}
+
 async function assertQualityApproved(asset, probeAsset) {
   const buffer = Buffer.isBuffer(asset && asset.buffer) ? asset.buffer : null;
   if (!buffer || buffer.length === 0) throw new Error(`${asset && asset.actionId || "action"} output bytes are required`);
   assertWebmSignature(buffer, asset.actionId);
-  if (asset.matteMode !== "green-screen") {
-    throw new Error(`${asset.actionId} must use the Desktop Pet-compatible green-screen media profile`);
-  }
+  const matteMode = requireMatteMode(asset);
   if (asset.container !== "webm" || asset.codec !== "vp9") {
     throw new Error(`${asset.actionId} must be a VP9 WebM asset`);
   }
@@ -119,6 +149,7 @@ async function assertQualityApproved(asset, probeAsset) {
   if (!liveMedia.ok) {
     throw new Error(`${asset.actionId} failed its trusted post-build media probe: ${liveMedia.errors.join("; ")}`);
   }
+  if (matteMode === "alpha") assertAlphaModeTag(liveProbe, asset.actionId);
   if (
     Number(summary.width) !== CHARACTER_CANVAS_V1.width ||
     Number(summary.height) !== CHARACTER_CANVAS_V1.height ||
@@ -145,13 +176,14 @@ function createStudioPetpackManifest({ packageId, name, version, actionClipIds, 
   const assetPath = (actionId) => `assets/${ACTION_FILE_NAMES[actionId]}`;
   const createClip = (actionId) => {
     const studioActionKey = toStudioActionKey(actionId);
+    const asset = assetByAction.get(actionId);
     return {
     id: actionClipIds[studioActionKey],
     name: studioActionKey,
     asset: assetPath(actionId),
     ...(actionId === "sleep-loop" ? { type: "loop" } : { type: "oneshot" }),
-    durationMs: Number(assetByAction.get(actionId).durationMs),
-    greenScreen: { ...GREEN_SCREEN_CONFIG },
+    durationMs: Number(asset.durationMs),
+    ...manifestGreenScreen(asset),
     ...(profile.interruptActionKeys.includes(studioActionKey) ? { interrupt: true } : {})
     };
   };
@@ -165,7 +197,7 @@ function createStudioPetpackManifest({ packageId, name, version, actionClipIds, 
         id: actionClipIds[toStudioActionKey("idle")],
         name: "idle",
         asset: assetPath("idle"),
-        greenScreen: { ...GREEN_SCREEN_CONFIG }
+        ...manifestGreenScreen(assetByAction.get("idle"))
       },
       clips: REQUIRED_ACTION_IDS.filter((actionId) => actionId !== "idle").map(createClip)
     },

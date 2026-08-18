@@ -52,7 +52,11 @@ KAIPAY_NOTIFY_BASE_URL=https://api.heyirmy.com/api/payments/kaipay/notify
 KAIPAY_RETURN_BASE_URL=https://heyirmy.com/projects/payment-return
 KAIPAY_ADAPTER_VERSION=kaipay-pay-api-v3-hmac-sha256/1
 KAIPAY_DEFAULT_CHANNEL=ALIPAY
-KAIPAY_ALIPAY_SCENE=web
+KAIPAY_ALIPAY_PROVIDER=fuyou
+KAIPAY_ALIPAY_PAY_METHOD=alipay
+KAIPAY_ALIPAY_SCENE=native
+KAIPAY_WECHAT_PROVIDER=fuyou
+KAIPAY_WECHAT_PAY_METHOD=wechat
 KAIPAY_WECHAT_SCENE=native
 KAIPAY_REQUEST_TIMEOUT_MS=15000
 KAIPAY_ALLOW_SIMULATED_PAYMENTS=false
@@ -62,9 +66,13 @@ KAIPAY_ALLOW_SIMULATED_PAYMENTS=false
 capabilities/merchant configuration explicitly requires a selected merchant
 code for this account.
 
-The browser never receives API credentials. Alipay uses `provider=alipay`,
-`scene=web`, and a validated HTTPS redirect action. WeChat uses
-`provider=wechat`, `scene=native`, and a QR action rendered by the website.
+The browser never receives API credentials. `ALIPAY` and `WXPAY` are the
+customer-facing payment channels. This account's enabled acquiring route is
+the Kaipay `fuyou` provider, so both channels use `scene=native`: Alipay sends
+`provider=fuyou`, `payMethod=alipay`; WeChat sends `provider=fuyou`,
+`payMethod=wechat`. Both return a QR action rendered by the website. Do not
+replace `provider` with `alipay` or `wechat` unless the Kaipay merchant page
+shows a usable self-owned official merchant for that provider.
 
 ## 4. Public callback
 
@@ -100,8 +108,9 @@ npm run verify:kaipay
 
 It sends only the signed `GET /pay/api/v3/capabilities` request and prints only
 `kaipay_v3_capabilities=ok` or a safe failure category. It confirms that the
-credential can use the V3 API matrix for `alipay/web` and `wechat/native`; it
-does not prove that both merchant payment channels are approved, and it does
+credential can use the V3 API matrix for `fuyou/alipay/native` and
+`fuyou/wechat/native`; it does not prove that both merchant payment methods are
+currently receivable, and it does
 not create an order.
 
 Only after callback reachability and the merchant channel page are confirmed:

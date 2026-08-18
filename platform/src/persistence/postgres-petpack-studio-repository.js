@@ -51,6 +51,7 @@ const PAYMENT_NOTIFICATION_IV_BYTES = 12;
 const PAYMENT_NOTIFICATION_TAG_BYTES = 16;
 const PAYMENT_NOTIFICATION_MAX_BYTES = 1024 * 1024;
 const PAYMENT_EVENT_PROVIDER = "KAIPAY";
+const KAIPAY_FUYOU_ADAPTER_VERSION = "kaipay-pay-api-v3-hmac-sha256/1";
 
 // These fragments are selected exclusively from ADMIN_OPERATION_STATUSES;
 // browser input is never interpolated into SQL. `action` / `outbox` aliases
@@ -201,15 +202,23 @@ function normalizeProviderEventId(value) {
 
 function normalizeKaipayV3Route(event, adapterVersion) {
   if (!isKaipayV3Adapter(adapterVersion)) {
-    return { paymentChannel: null, providerCode: null, paymentScene: null };
+    return { paymentChannel: null, payMethod: null, providerCode: null, paymentScene: null };
   }
   const paymentChannel = requiredString(event.paymentChannel, "Kaipay payment channel");
+  const payMethod = requiredString(event.payMethod, "Kaipay pay method");
   const providerCode = requiredString(event.providerCode, "Kaipay provider code");
   const paymentScene = requiredString(event.scene, "Kaipay payment scene");
-  const valid = (paymentChannel === "ALIPAY" && providerCode === "alipay" && ["web", "native"].includes(paymentScene)) ||
-    (paymentChannel === "WXPAY" && providerCode === "wechat" && paymentScene === "native");
+  const fuyouRoute = providerCode === "fuyou" && adapterVersion === KAIPAY_FUYOU_ADAPTER_VERSION;
+  const valid = (
+    paymentChannel === "ALIPAY" && payMethod === "alipay" &&
+    ((providerCode === "alipay" && ["web", "native"].includes(paymentScene)) ||
+      (fuyouRoute && paymentScene === "native"))
+  ) || (
+    paymentChannel === "WXPAY" && payMethod === "wechat" &&
+    (providerCode === "wechat" || fuyouRoute) && paymentScene === "native"
+  );
   if (!valid) throw new Error("Kaipay V3 route identity is invalid");
-  return { paymentChannel, providerCode, paymentScene };
+  return { paymentChannel, payMethod, providerCode, paymentScene };
 }
 
 function optionalPaymentStatus(value) {
@@ -433,6 +442,7 @@ function mapOrder(row) {
     providerOrderId: nullableString(row.provider_order_id),
     paymentCredentialVersion: nullableString(row.payment_credential_version),
     paymentChannel: nullableString(row.payment_channel),
+    paymentPayMethod: nullableString(row.payment_pay_method),
     paymentProviderCode: nullableString(row.payment_provider_code),
     paymentScene: nullableString(row.payment_scene),
     paidAt: row.paid_at || null,
@@ -931,14 +941,15 @@ class PostgresPetPackStudioRepository {
                 order_record.status AS order_status, order_record.version,
                 COALESCE(order_record.provider_order_id, attempt.provider_order_id) AS provider_order_id,
                 attempt.credential_version AS payment_credential_version,
-                attempt.payment_channel, attempt.provider_code AS payment_provider_code,
+                attempt.payment_channel, attempt.pay_method AS payment_pay_method,
+                attempt.provider_code AS payment_provider_code,
                 attempt.payment_scene, order_record.paid_at,
                 order_record.created_at AS order_created_at,
                 order_record.updated_at AS order_updated_at
            FROM customer_order order_record
            LEFT JOIN LATERAL (
              SELECT provider_order_id, credential_version, payment_channel,
-                    provider_code, payment_scene
+                    pay_method, provider_code, payment_scene
                FROM payment_attempt
               WHERE order_id = order_record.id
               ORDER BY created_at DESC, id DESC
@@ -977,38 +988,39 @@ class PostgresPetPackStudioRepository {
         if (amountFen !== databaseNumber(order.amount_fen, "Order amountFen")) throw new Error("Checkout amount does not match the order");
         const paymentMethod = assertPaymentMethod(event.paymentMethod);
         if (paymentMethod !== order.payment_method || !providerOrderId) throw new Error("Checkout payment identity does not match the order");
-        const { paymentChannel, providerCode, paymentScene } = normalizeKaipayV3Route(event, adapterVersion);
+        const { paymentChannel, payMethod, providerCode, paymentScene } = normalizeKaipayV3Route(event, adapterVersion);
         const insertedAttempt = rows(await tx.query(
           `INSERT INTO payment_attempt
             (id, order_id, provider, provider_order_id, payment_method, amount_fen,
              status, idempotency_key, adapter_version, credential_version,
-             payment_channel, provider_code, payment_scene)
-           VALUES ($1, $2, $3, $4, $5, $6, 'created', $7, $8, $9, $10, $11, $12)
+             payment_channel, pay_method, provider_code, payment_scene)
+           VALUES ($1, $2, $3, $4, $5, $6, 'created', $7, $8, $9, $10, $11, $12, $13)
            ON CONFLICT (idempotency_key) DO NOTHING
            RETURNING id`,
           [
             this.idFactory(), platformOrderId, provider, providerOrderId,
             paymentMethod, amountFen, idempotencyKey, adapterVersion,
-            credentialVersion, paymentChannel, providerCode, paymentScene
+            credentialVersion, paymentChannel, payMethod, providerCode, paymentScene
           ]
         ));
         if (!insertedAttempt.length) {
           const existing = oneRow(await tx.query(
             `SELECT order_id, provider, provider_order_id, payment_method,
                     amount_fen, adapter_version, credential_version,
-                    payment_channel, provider_code, payment_scene
+                    payment_channel, pay_method, provider_code, payment_scene
                FROM payment_attempt
               WHERE idempotency_key = $1`,
             [idempotencyKey]
           ), "Payment attempt idempotency record was not found");
           if (existing.order_id !== platformOrderId || existing.provider !== provider ||
               existing.provider_order_id !== providerOrderId || existing.payment_method !== paymentMethod ||
-               databaseNumber(existing.amount_fen, "Existing checkout amountFen") !== amountFen ||
-               existing.adapter_version !== adapterVersion ||
-               nullableString(existing.credential_version) !== credentialVersion ||
-               nullableString(existing.payment_channel) !== paymentChannel ||
-               nullableString(existing.provider_code) !== providerCode ||
-               nullableString(existing.payment_scene) !== paymentScene) {
+              databaseNumber(existing.amount_fen, "Existing checkout amountFen") !== amountFen ||
+              existing.adapter_version !== adapterVersion ||
+              nullableString(existing.credential_version) !== credentialVersion ||
+              nullableString(existing.payment_channel) !== paymentChannel ||
+              nullableString(existing.pay_method) !== payMethod ||
+              nullableString(existing.provider_code) !== providerCode ||
+              nullableString(existing.payment_scene) !== paymentScene) {
             throw new Error("Payment attempt idempotency key belongs to another checkout");
           }
         }

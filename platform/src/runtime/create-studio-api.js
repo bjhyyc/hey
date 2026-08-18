@@ -51,6 +51,9 @@ function loadStudioApiRuntimeConfig(environment = process.env) {
     port: boundedPort(environment.PETPACK_API_PORT || environment.PETPACK_LOCAL_API_PORT),
     allowNonLoopback: production,
     phoneAuthExchangeEnabled: environment.PETPACK_PHONE_AUTH_ENABLED === "true",
+    generationSalesEnabled: production
+      ? environment.PETPACK_GENERATION_SALES_ENABLED === "true"
+      : environment.PETPACK_GENERATION_SALES_ENABLED !== "false",
     internalBearerToken
   });
 }
@@ -78,18 +81,23 @@ async function assertStudioApiSchemaReady(database) {
                SELECT 1 FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = 'payment_event'
                   AND column_name = 'provider_event_id'
-             ) AS has_kaipay_v3_identity`
+             ) AS has_kaipay_v3_identity,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'payment_attempt'
+                  AND column_name = 'pay_method'
+             ) AS has_kaipay_fuyou_identity`
   );
   const row = result && Array.isArray(result.rows) ? result.rows[0] : null;
   const required = [
     "has_order", "has_project", "has_run", "has_outbox", "has_payment_event",
     "has_video_prompts", "has_image_prompts", "has_kaipay_adapter_version",
-    "has_kaipay_v3_identity"
+    "has_kaipay_v3_identity", "has_kaipay_fuyou_identity"
   ];
   if (!row || required.some((name) => row[name] !== true)) {
-    throw new Error("PostgreSQL Studio API schema is not ready through migration 015");
+    throw new Error("PostgreSQL Studio API schema is not ready through migration 016");
   }
-  return Object.freeze({ ready: true, migration: 15 });
+  return Object.freeze({ ready: true, migration: 16 });
 }
 
 class StudioApiRuntime {
@@ -206,6 +214,7 @@ async function createStudioApiRuntime({
       paymentProvider: runtimePaymentProvider,
       objectStore: runtimeObjectStore,
       workflow: runtimeWorkflow,
+      checkoutEnabled: config.generationSalesEnabled,
       logger
     });
     const runtimeControlsRepository = controlsRepository || new PostgresProductionControlsRepository({

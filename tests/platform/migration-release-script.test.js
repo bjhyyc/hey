@@ -10,11 +10,13 @@ const script = fs.readFileSync(
 );
 
 describe("read-only migration release gate", () => {
-  it("requires a real directory, 15 ordered migrations, and Kaipay V3", () => {
+  it("requires a real directory, 16 ordered migrations, and the Fuyou identity migration", () => {
     expect(script).toContain("realpath -e --");
-    expect(script).toContain("fewer_than_15_migrations");
+    expect(script).toContain("fewer_than_16_migrations");
+    expect(script).toContain("seq 1 16");
     expect(script).toContain("printf '%03d'");
-    expect(script).toContain("015_kaipay_v3_order_identity.sql");
+    expect(script).toContain("016_kaipay_fuyou_order_identity.sql");
+    expect(script).toContain("kaipay_fuyou_identity_migration_missing");
   });
 
   it("rejects unsafe SQL entries and emits checksums without applying SQL", () => {

@@ -178,7 +178,7 @@ class TencentCosPrivateObjectDriver {
     if (!config || typeof config !== "object") throw new Error("Tencent COS configuration is required");
     this.config = config;
     this.cos = cosClient || new CosClass({ SecretId: config.secretId, SecretKey: config.secretKey });
-    for (const method of ["getObjectUrl", "headObject", "getObject", "putObject"]) {
+    for (const method of ["getObjectUrl", "headObject", "getObject", "getObjectStream", "putObject"]) {
       if (typeof this.cos?.[method] !== "function") throw new Error(`Tencent COS client must implement ${method}`);
     }
   }
@@ -301,7 +301,13 @@ class TencentCosPrivateObjectDriver {
 
     let source;
     try {
-      source = this.cos.getObject({
+      // cos-nodejs-sdk-v5 deliberately discards the synchronous stream return
+      // value from `getObject(..., { ReturnStream: true })` because only API
+      // names ending in `Stream` are classified as synchronous by its public
+      // wrapper. Calling the documented getObjectStream entry point is
+      // therefore required; otherwise the object may have downloaded while
+      // the caller receives `undefined` and cannot consume it.
+      source = this.cos.getObjectStream({
         ...params,
         Headers: metadata.etag ? { "If-Match": metadata.etag } : {},
         ReturnStream: true
