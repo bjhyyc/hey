@@ -1,1 +1,5 @@
 *.sh text eol=lf
+# Migration checksums are deployment gates: run-migrations.sh refuses to
+# proceed when an applied file's bytes change, so a CRLF checkout must never
+# rewrite them.
+*.sql text eol=lf
