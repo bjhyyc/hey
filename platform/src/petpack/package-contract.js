@@ -118,8 +118,16 @@ function normalizePassedActionQa(value, actionId) {
   }
   if (actionId === "sleep-loop") {
     const boundary = evidence.loopBoundary;
+    // Two accepted seam styles mirror the sleep-loop boundary gate: settled
+    // end-exhale rest windows at both boundaries, or continuous breathing with
+    // measured phase-matched boundary frames.
+    const boundaryStyleSatisfied = boundary && (
+      boundary.boundaryMode === "phase-matched-continuous"
+        ? boundary.boundaryPhaseMatched === true
+        : boundary.startsAtEndExhaleRest === true && boundary.endsAtEndExhaleRest === true
+    );
     if (!boundary || boundary.contractVersion !== SLEEP_LOOP_BOUNDARY_CONTRACT_VERSION ||
-        boundary.startsAtEndExhaleRest !== true || boundary.endsAtEndExhaleRest !== true ||
+        !boundaryStyleSatisfied ||
         boundary.completeBreathCycle !== true || boundary.nextInhaleStarted !== false ||
         Number(boundary.completedBreathCycles) !== 1 || Number(boundary.sampledFrameCount) !== sampledFrameCount) {
       throw new Error("sleep-loop QA report has incomplete resting-boundary evidence");

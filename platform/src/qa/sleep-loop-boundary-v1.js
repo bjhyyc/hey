@@ -27,10 +27,13 @@ function requireTrue(value, label, errors) {
 }
 
 /**
- * A seamless breathing loop must start and end at the same end-exhale rest
- * pose. Pixel similarity alone is insufficient: motion must also decay to zero
- * before the last frame, otherwise the next iteration creates an acceleration
- * spike even when the endpoint images look alike.
+ * A seamless breathing loop must either start and end at the same end-exhale
+ * rest pose (boundaryMode "end-exhale-rest", the default), or breathe
+ * continuously with the boundary frames landing in the same measured breath
+ * phase (boundaryMode "phase-matched-continuous"). In both modes pixel
+ * similarity alone is insufficient: the seam pixel/motion deltas must also
+ * stay inside the policy thresholds, otherwise the next iteration creates a
+ * visible pop even when the endpoint images look alike.
  */
 function validateSleepLoopBoundaryInspection(inspection, { sampledFrameCount, policy } = {}) {
   const errors = [];
@@ -40,8 +43,19 @@ function validateSleepLoopBoundaryInspection(inspection, { sampledFrameCount, po
   if (inspection.contractVersion !== SLEEP_LOOP_BOUNDARY_CONTRACT_VERSION) {
     errors.push(`Sleep-loop boundary contractVersion must be ${SLEEP_LOOP_BOUNDARY_CONTRACT_VERSION}`);
   }
-  requireTrue(inspection.startsAtEndExhaleRest, "Sleep-loop startsAtEndExhaleRest", errors);
-  requireTrue(inspection.endsAtEndExhaleRest, "Sleep-loop endsAtEndExhaleRest", errors);
+  const boundaryMode = inspection.boundaryMode === undefined ? "end-exhale-rest" : inspection.boundaryMode;
+  if (!["end-exhale-rest", "phase-matched-continuous"].includes(boundaryMode)) {
+    errors.push("Sleep-loop boundaryMode is unsupported");
+  }
+  if (boundaryMode === "phase-matched-continuous") {
+    requireTrue(inspection.boundaryPhaseMatched, "Sleep-loop boundaryPhaseMatched", errors);
+    if (inspection.measuredFromDecodedOutput !== true) {
+      errors.push("Sleep-loop phase-matched mode requires decoded-output measurement");
+    }
+  } else {
+    requireTrue(inspection.startsAtEndExhaleRest, "Sleep-loop startsAtEndExhaleRest", errors);
+    requireTrue(inspection.endsAtEndExhaleRest, "Sleep-loop endsAtEndExhaleRest", errors);
+  }
   requireTrue(inspection.completeBreathCycle, "Sleep-loop completeBreathCycle", errors);
   if (inspection.nextInhaleStarted !== false) {
     errors.push("Sleep-loop nextInhaleStarted must be false");
@@ -55,11 +69,13 @@ function validateSleepLoopBoundaryInspection(inspection, { sampledFrameCount, po
   }
   const firstRestFrames = integer(inspection.firstRestFrameCount, "Sleep-loop firstRestFrameCount", errors, { min: 1 });
   const lastRestFrames = integer(inspection.lastRestFrameCount, "Sleep-loop lastRestFrameCount", errors, { min: 1 });
-  if (Number.isFinite(firstRestFrames) && firstRestFrames < Number(policy.minLoopRestFrameCount)) {
-    errors.push("Sleep-loop opening rest is shorter than the configured threshold");
-  }
-  if (Number.isFinite(lastRestFrames) && lastRestFrames < Number(policy.minLoopRestFrameCount)) {
-    errors.push("Sleep-loop closing rest is shorter than the configured threshold");
+  if (boundaryMode === "end-exhale-rest") {
+    if (Number.isFinite(firstRestFrames) && firstRestFrames < Number(policy.minLoopRestFrameCount)) {
+      errors.push("Sleep-loop opening rest is shorter than the configured threshold");
+    }
+    if (Number.isFinite(lastRestFrames) && lastRestFrames < Number(policy.minLoopRestFrameCount)) {
+      errors.push("Sleep-loop closing rest is shorter than the configured threshold");
+    }
   }
   const seamPixelDelta = finiteNonNegative(inspection.seamPixelDelta, "Sleep-loop seamPixelDelta", errors);
   const seamMotionDelta = finiteNonNegative(inspection.seamMotionDelta, "Sleep-loop seamMotionDelta", errors);

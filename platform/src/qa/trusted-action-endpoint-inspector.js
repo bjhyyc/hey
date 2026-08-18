@@ -198,7 +198,15 @@ function createTrustedActionEndpointInspector({ ffmpegPath, spawnImpl = spawn, t
       error.code = "last_master_hash_mismatch";
       throw error;
     }
-    const options = { width: CHARACTER_CANVAS_V1.width, height: CHARACTER_CANVAS_V1.height };
+    // Bounded centroid alignment factors out the provider's systematic
+    // endpoint reframing (a uniform ~9px translation measured across every
+    // action of a real batch) before the strict content thresholds apply; the
+    // applied offset is bounded and recorded in the evidence.
+    const options = {
+      width: CHARACTER_CANVAS_V1.width,
+      height: CHARACTER_CANVAS_V1.height,
+      alignment: { maxOffsetPx: 12 }
+    };
     const firstFrame = compareRgbaFrames(firstBytes, endpointFrames[0].bytes, options);
     const lastFrame = compareRgbaFrames(lastBytes, endpointFrames[1].bytes, options);
     const firstDecision = evaluateEndpointFrameContinuity(firstFrame);

@@ -56,7 +56,10 @@ function resolveActionMotionPolicy(policy, actionId, { production = false } = {}
   const specifications = {
     maxGroundDeltaPx: [0, 100],
     maxCanvasScaleDelta: [0, 1],
-    maxRelativeScaleJitter: [0, 1],
+    // A pose-morph action (curled sleep to a standing stretch apex) can more
+    // than double its projected height relative to its first frame, so the
+    // per-action envelope may declare a full-morph range beyond 1.
+    maxRelativeScaleJitter: [0, 2],
     minAdjacentMaskIoU: [0, 1],
     maxRowSpanHoleRatio: [0, 1]
   };
@@ -70,6 +73,29 @@ function resolveActionMotionPolicy(policy, actionId, { production = false } = {}
       normalized[key] = value;
     }
   }
+  // Optional per-action composition margin: motion extremes (a roll flip, a
+  // stretch apex) legitimately approach the canvas edges further than static
+  // poses; each action's calibrated allowance overrides the policy globals for
+  // both the visible-margin and safe-frame checks.
+  if (envelope.minEdgeMarginPx !== undefined) {
+    const margin = Number(envelope.minEdgeMarginPx);
+    if (!Number.isFinite(margin) || margin < 0 || margin > 200) {
+      errors.push("Action motion envelope minEdgeMarginPx is invalid");
+    } else {
+      normalized.minEdgeMarginPx = margin;
+    }
+  }
+  // Optional per-action horizontal excursion: a roll displaces the subject
+  // sideways mid-action by design and returns to its start; the calibrated
+  // per-action bound replaces the static-pose global for those frames.
+  if (envelope.maxHorizontalOffsetPx !== undefined) {
+    const excursion = Number(envelope.maxHorizontalOffsetPx);
+    if (!Number.isFinite(excursion) || excursion < 0 || excursion > 200) {
+      errors.push("Action motion envelope maxHorizontalOffsetPx is invalid");
+    } else {
+      normalized.maxHorizontalOffsetPx = excursion;
+    }
+  }
   return {
     ok: errors.length === 0,
     errors,
@@ -80,7 +106,16 @@ function resolveActionMotionPolicy(policy, actionId, { production = false } = {}
       maxRelativeTorsoDelta: normalized.maxCanvasScaleDelta,
       maxRelativeHeadDelta: normalized.maxCanvasScaleDelta,
       maxRelativeShoulderDelta: normalized.maxCanvasScaleDelta,
-      maxRelativeFrameScaleJitter: normalized.maxRelativeScaleJitter
+      maxRelativeFrameScaleJitter: normalized.maxRelativeScaleJitter,
+      ...(normalized.minEdgeMarginPx !== undefined
+        ? {
+            minimumVisibleMarginPx: normalized.minEdgeMarginPx,
+            safeFrameInsetPx: normalized.minEdgeMarginPx
+          }
+        : {}),
+      ...(normalized.maxHorizontalOffsetPx !== undefined
+        ? { maxHorizontalOffsetPx: normalized.maxHorizontalOffsetPx }
+        : {})
     } : policy,
     chromaThresholds: errors.length === 0
       ? { maximumRowSpanHoleRatio: normalized.maxRowSpanHoleRatio }

@@ -88,10 +88,57 @@ async function main() {
     `calibration-${new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)}`);
   await fsp.mkdir(outputRoot, { recursive: true });
 
-  const masters = Object.fromEntries(["front", "side", "sleep"].map((kind) => [
-    kind,
-    requiredFile(path.join(batchRoot, "masters", `${kind}.png`), `${kind} master`)
-  ]));
+  // Two accepted batch layouts:
+  // - postprocess layout: masters/<kind>.png + videos/<actionId>.webm
+  // - raw canary artifacts: artifacts/NN-<kind>.jpg + artifacts/NN-<actionId>.mp4
+  //   The generation canary uploads the RAW masters as Seedance endpoint
+  //   frames, so endpoint continuity must compare against a plain aspect-fit
+  //   854x480 rendering of those raw masters (replicating the provider's own
+  //   downscale), never against the repositioning production normalization.
+  const canaryLayout = fs.existsSync(path.join(batchRoot, "artifacts", "01-front.jpg"));
+  const CANARY_MASTER_FILES = { front: "01-front.jpg", side: "02-side.jpg", sleep: "03-sleep.jpg" };
+  const CANARY_VIDEO_FILES = {
+    idle: "04-idle.mp4",
+    "sleep-transition": "05-sleep-transition.mp4",
+    "sleep-loop": "06-sleep-loop.mp4",
+    stretch: "07-stretch.mp4",
+    sneeze: "08-sneeze.mp4",
+    roll: "09-roll.mp4",
+    "hover-attention": "10-hover-attention.mp4"
+  };
+  let masters;
+  let videoPathFor;
+  if (canaryLayout) {
+    const plainRoot = path.join(outputRoot, "plain-masters");
+    await fsp.mkdir(plainRoot, { recursive: true });
+    masters = {};
+    for (const [kind, fileName] of Object.entries(CANARY_MASTER_FILES)) {
+      const rawPath = requiredFile(path.join(batchRoot, "artifacts", fileName), `${kind} raw master`);
+      const plainPath = path.join(plainRoot, `${kind}.png`);
+      await runProcess({
+        executable: ffmpegPath,
+        args: [
+          "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", rawPath,
+          "-vf", "scale=854:480:flags=lanczos",
+          "-frames:v", "1", "-compression_level", "9", plainPath
+        ]
+      });
+      masters[kind] = plainPath;
+    }
+    videoPathFor = (actionId) => requiredFile(
+      path.join(batchRoot, "artifacts", CANARY_VIDEO_FILES[actionId]),
+      `${actionId} source`
+    );
+  } else {
+    masters = Object.fromEntries(["front", "side", "sleep"].map((kind) => [
+      kind,
+      requiredFile(path.join(batchRoot, "masters", `${kind}.png`), `${kind} master`)
+    ]));
+    videoPathFor = (actionId) => requiredFile(
+      path.join(batchRoot, "videos", `${actionId}.webm`),
+      `${actionId} source`
+    );
+  }
   const sourcePhotos = ["image-2.jpg", "image-1.jpg", "image-3.jpg"].map((name) =>
     requiredFile(path.join(photosRoot, name), "source photo"));
 
@@ -166,8 +213,15 @@ async function main() {
 
   // Actions: the batch videos were generated against the ORIGINAL batch
   // masters, so endpoint continuity is checked against those exact files.
-  const referenceMetrics = await measureMasterReference(masters.front);
+  // Each action is judged against the geometry of the master it starts from:
+  // sleep-anchored actions carry the sleep pose's projection, and comparing
+  // them against the front master's geometry only measures the pose gap.
+  const referenceMetricsByKind = {
+    front: await measureMasterReference(masters.front),
+    sleep: await measureMasterReference(masters.sleep)
+  };
   const masterHashes = Object.fromEntries(["front", "sleep"].map((kind) => [kind, sha256File(masters[kind])]));
+  const passedActions = {};
   const endpointsByAction = {
     idle: ["front", "front"],
     sneeze: ["front", "front"],
@@ -181,7 +235,7 @@ async function main() {
   for (const [actionId, [firstKind, lastKind]] of Object.entries(endpointsByAction)) {
     const scratch = path.join(outputRoot, `action-${actionId}`);
     await fsp.mkdir(scratch, { recursive: true });
-    const sourcePath = requiredFile(path.join(batchRoot, "videos", `${actionId}.webm`), `${actionId} source`);
+    const sourcePath = videoPathFor(actionId);
     const mattePath = path.join(scratch, "matte.webm");
     const processedPath = path.join(scratch, "processed.webm");
     const entry = { ok: false, errors: [] };
@@ -240,7 +294,7 @@ async function main() {
         endpointInspection,
         expectedFirstMasterHash: masterHashes[firstKind],
         expectedLastMasterHash: masterHashes[lastKind],
-        referenceMetrics,
+        referenceMetrics: referenceMetricsByKind[firstKind],
         contentInspection: inspection.contentInspection,
         appearanceInspection: inspection.appearanceInspection,
         provenance: inspection.provenance,
@@ -251,6 +305,16 @@ async function main() {
       });
       entry.ok = qa.ok;
       entry.errors = qa.errors;
+      if (qa.ok) {
+        const processedBuffer = fs.readFileSync(processedPath);
+        passedActions[actionId] = {
+          qa,
+          processedPath,
+          buffer: processedBuffer,
+          sha256: crypto.createHash("sha256").update(processedBuffer).digest("hex"),
+          byteSize: processedBuffer.length
+        };
+      }
       entry.scores = {
         identityMin: inspection.appearanceInspection.faceIdentityMinScore,
         coatMin: inspection.appearanceInspection.coatColorMinScore,
@@ -276,10 +340,112 @@ async function main() {
   }
 
   mattingService.close();
+
+  // Packaging + full production delivery validation (pinned clean-tree
+  // upstream import plus a REAL Electron interaction run) executes only when
+  // every master and action passed the production gates.
+  if (report.summary.mastersPassed === 3 && report.summary.actionsPassed === 7) {
+    const { buildPetpack } = require("../petpack/build");
+    const {
+      PetpackDeliveryValidator,
+      checksumPinnedUpstreamTree,
+      createElectronInteractionVerifier,
+      createUpstreamImportVerifier
+    } = require("../petpack/delivery-validator");
+    const packageId = "hey-border-collie-v2prompt-20260818";
+    const packageScratch = path.join(outputRoot, "delivery");
+    await fsp.mkdir(packageScratch, { recursive: true });
+    const orderedActionIds = ["idle", "sneeze", "roll", "sleep-transition", "sleep-loop", "stretch", "hover-attention"];
+    const built = await buildPetpack({
+      packageId,
+      name: "Hey Pet 边牧 v2 提示词批次",
+      assets: orderedActionIds.map((actionId) => ({
+        actionId,
+        buffer: passedActions[actionId].buffer,
+        localPath: passedActions[actionId].processedPath,
+        expectedSha256: passedActions[actionId].sha256,
+        container: "webm",
+        codec: "vp9",
+        matteMode: "alpha",
+        qa: passedActions[actionId].qa
+      })),
+      probeAsset
+    });
+    const packagePath = path.join(packageScratch, `${packageId}.petpack`);
+    await fsp.writeFile(packagePath, built.bytes, { flag: "wx" });
+
+    const upstreamTreeSha256 = checksumPinnedUpstreamTree(PROJECT_ROOT);
+    const electronExecutablePath = path.join(PROJECT_ROOT, "node_modules", "electron", "dist", "electron.exe");
+    const runnerPath = path.join(PROJECT_ROOT, "platform", "src", "petpack", "run-electron-interaction-verification.js");
+    const validator = new PetpackDeliveryValidator({
+      probeAsset,
+      originalImportVerifier: createUpstreamImportVerifier({
+        upstreamRoot: PROJECT_ROOT,
+        expectedSourceTreeSha256: upstreamTreeSha256
+      }),
+      interactionVerifier: createElectronInteractionVerifier({
+        electronExecutablePath,
+        expectedElectronExecutableSha256: sha256File(electronExecutablePath),
+        runnerPath,
+        expectedRunnerSha256: sha256File(runnerPath),
+        runnerArguments: [`--client-root=${PROJECT_ROOT}`, `--client-tree-sha256=${upstreamTreeSha256}`],
+        childEnvironment: {
+          SYSTEMROOT: process.env.SystemRoot || "C:\\Windows",
+          USERPROFILE: process.env.USERPROFILE || packageScratch,
+          TEMP: process.env.TEMP || packageScratch,
+          TMP: process.env.TMP || packageScratch,
+          APPDATA: process.env.APPDATA || packageScratch,
+          LOCALAPPDATA: process.env.LOCALAPPDATA || packageScratch
+        },
+        timeoutMs: 8 * 60 * 1000
+      }),
+      productionMode: true,
+      logger: console
+    });
+    const validation = await validator.validate({
+      packagePath,
+      bytes: built.bytes,
+      expectedPackageId: packageId,
+      expectedPackageSha256: built.checksumSha256,
+      actions: orderedActionIds.map((actionId) => ({
+        actionId,
+        generationActionId: `calibration-${actionId}`,
+        mediaAssetId: `calibration-media-${actionId}`,
+        qaReportId: `calibration-qa-${actionId}`,
+        promptVersionId: "prompt-480p-v2",
+        promptVersionLabel: "正式发布候选·三母图七动作·480p-v2",
+        objectKey: `private/local-calibration/${packageId}/${actionId}.webm`,
+        sha256: passedActions[actionId].sha256,
+        byteSize: passedActions[actionId].byteSize,
+        contentType: "video/webm",
+        processingPolicyVersion: PRODUCTION_QA_POLICY.version,
+        processorVersion: "character-canvas-480p-alpha-vp9-v2",
+        qa: passedActions[actionId].qa
+      })),
+      scratchDirectory: packageScratch
+    });
+    report.delivery = {
+      ok: validation.ok,
+      packageId,
+      packageSha256: built.checksumSha256,
+      packageByteSize: built.bytes.length,
+      packagePath: path.relative(PROJECT_ROOT, packagePath).split(path.sep).join("/"),
+      validatorDescriptor: validator.describe(),
+      originalImport: validation.originalImport,
+      interactions: validation.interactions
+    };
+    console.log(`\n[delivery] ok=${validation.ok} package=${built.checksumSha256.slice(0, 16)}… import=${validation.originalImport.ok} interactions=${validation.interactions.ok}`);
+    if (validation.interactions.checks) {
+      for (const [check, passed] of Object.entries(validation.interactions.checks)) {
+        console.log(`  interaction ${check}: ${passed}`);
+      }
+    }
+  }
+
   report.finishedAt = new Date().toISOString();
   const reportPath = path.join(outputRoot, "report.json");
   await fsp.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  console.log(`\nsummary: masters ${report.summary.mastersPassed}/3, actions ${report.summary.actionsPassed}/7`);
+  console.log(`\nsummary: masters ${report.summary.mastersPassed}/3, actions ${report.summary.actionsPassed}/7${report.delivery ? `, delivery ok=${report.delivery.ok}` : ""}`);
   console.log(`report: ${path.relative(PROJECT_ROOT, reportPath)}`);
 }
 

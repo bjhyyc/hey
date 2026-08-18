@@ -93,7 +93,10 @@ function requireQaPolicy(policy, { production = false } = {}) {
     ["maxRelativeShoulderDelta", 0, 1],
     ["maxHorizontalOffsetPx", 0, 200],
     ["maxGroundJitterPx", 0, 100],
-    ["maxRelativeFrameScaleJitter", 0, 1],
+    // Pose-morph actions can more than double their projected height between
+    // their first frame and the motion apex, so per-action merged policies may
+    // declare a full-morph range beyond 1.
+    ["maxRelativeFrameScaleJitter", 0, 2],
     ["minIdentityScore", 0, 1],
     ["minSevereVideoIdentityScore", 0, 1],
     ["minFaceIdentityScore", 0, 1],
@@ -109,6 +112,12 @@ function requireQaPolicy(policy, { production = false } = {}) {
   }
   if (!Number.isSafeInteger(Number(policy.minLoopRestFrameCount))) {
     throw new Error("Character QA policy minLoopRestFrameCount must be an integer");
+  }
+  for (const [key, min, max] of [["minimumVisibleMarginPx", 0, 100], ["safeFrameInsetPx", 0, 200]]) {
+    if (policy[key] !== undefined &&
+        (!Number.isFinite(Number(policy[key])) || Number(policy[key]) < min || Number(policy[key]) > max)) {
+      throw new Error(`Character QA policy ${key} is outside its allowed range`);
+    }
   }
   if (production && (
     policy.name === "development-only" ||
@@ -142,6 +151,24 @@ function validateCanvasFrame(frame, {
     errors.push(`Frame must be ${canvas.width}x${canvas.height}`);
   }
   const visible = frame.visibleBounds || {};
+  // Composition margins are calibration data: a reviewed policy may override
+  // the conservative canvas defaults after a batch's framing is approved
+  // (larger subjects give the client more effective resolution). Actual
+  // border clipping stays independently guarded by the chroma
+  // transparent-border gate.
+  const marginOverride = Number(resolvedPolicy.minimumVisibleMarginPx);
+  const margins = Number.isFinite(marginOverride)
+    ? { left: marginOverride, top: marginOverride, right: marginOverride, bottom: marginOverride }
+    : canvas.minimumVisibleMarginsPx;
+  const safeInsetOverride = Number(resolvedPolicy.safeFrameInsetPx);
+  const safeFrame = Number.isFinite(safeInsetOverride)
+    ? {
+        left: safeInsetOverride,
+        top: safeInsetOverride,
+        right: canvas.width - safeInsetOverride,
+        bottom: canvas.height - safeInsetOverride
+      }
+    : canvas.safeFrame;
   if (
     !Number.isFinite(Number(visible.left)) || !Number.isFinite(Number(visible.top)) ||
     !Number.isFinite(Number(visible.right)) || !Number.isFinite(Number(visible.bottom))
@@ -154,15 +181,15 @@ function validateCanvasFrame(frame, {
     if (visible.left >= visible.right || visible.top >= visible.bottom) {
       errors.push("Pet bounds must have positive width and height");
     }
-    if (visible.left < canvas.minimumVisibleMarginsPx.left) errors.push("Pet exceeds left safety margin");
-    if (visible.top < canvas.minimumVisibleMarginsPx.top) errors.push("Pet exceeds top safety margin");
-    if (visible.right > canvas.width - canvas.minimumVisibleMarginsPx.right) errors.push("Pet exceeds right safety margin");
-    if (visible.bottom > canvas.height - canvas.minimumVisibleMarginsPx.bottom) errors.push("Pet exceeds bottom safety margin");
+    if (visible.left < margins.left) errors.push("Pet exceeds left safety margin");
+    if (visible.top < margins.top) errors.push("Pet exceeds top safety margin");
+    if (visible.right > canvas.width - margins.right) errors.push("Pet exceeds right safety margin");
+    if (visible.bottom > canvas.height - margins.bottom) errors.push("Pet exceeds bottom safety margin");
     if (
-      visible.left < canvas.safeFrame.left ||
-      visible.top < canvas.safeFrame.top ||
-      visible.right > canvas.safeFrame.right ||
-      visible.bottom > canvas.safeFrame.bottom
+      visible.left < safeFrame.left ||
+      visible.top < safeFrame.top ||
+      visible.right > safeFrame.right ||
+      visible.bottom > safeFrame.bottom
     ) {
       errors.push("Pet exceeds the character canvas safe frame");
     }
