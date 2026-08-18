@@ -168,7 +168,14 @@ const PRODUCTION_CALIBRATION = deepFreeze({
       // transparent-border gate.
       idle: { maxGroundDeltaPx: 6, maxCanvasScaleDelta: 0.2, maxRelativeScaleJitter: 0.2, minAdjacentMaskIoU: 0.8, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 24 },
       sneeze: { maxGroundDeltaPx: 8, maxCanvasScaleDelta: 0.25, maxRelativeScaleJitter: 0.2, minAdjacentMaskIoU: 0.6, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 24 },
-      roll: { maxGroundDeltaPx: 32, maxCanvasScaleDelta: 0.4, maxRelativeScaleJitter: 0.35, minAdjacentMaskIoU: 0.6, maxRowSpanHoleRatio: 0.25, minEdgeMarginPx: 16, maxHorizontalOffsetPx: 200 },
+      // A belly-up roll lays the body horizontal, so the subject's bounding
+      // box legitimately widens far beyond the seated first frame both checks
+      // compare against. Measured on the first real order's two visually
+      // acceptable roll takes (calico cat, large framing): max vs-first-frame
+      // scale delta 0.518 and 0.547. 0.65 covers that with margin while a
+      // balloon-style inflation still fails, and the adjacent-mask IoU floor
+      // continues to catch true deformation.
+      roll: { maxGroundDeltaPx: 32, maxCanvasScaleDelta: 0.65, maxRelativeScaleJitter: 0.65, minAdjacentMaskIoU: 0.6, maxRowSpanHoleRatio: 0.25, minEdgeMarginPx: 16, maxHorizontalOffsetPx: 200 },
       "sleep-transition": { maxGroundDeltaPx: 64, maxCanvasScaleDelta: 0.4, maxRelativeScaleJitter: 0.4, minAdjacentMaskIoU: 0.65, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 4 },
       "sleep-loop": { maxGroundDeltaPx: 6, maxCanvasScaleDelta: 0.15, maxRelativeScaleJitter: 0.05, minAdjacentMaskIoU: 0.98, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 24 },
       stretch: { maxGroundDeltaPx: 64, maxCanvasScaleDelta: 0.8, maxRelativeScaleJitter: 1.4, minAdjacentMaskIoU: 0.7, maxRowSpanHoleRatio: 0.25, minEdgeMarginPx: 0 },
@@ -221,7 +228,9 @@ const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   // enforced, because that separation inverts on a pale pet against a pale
   // floor. Reports from 1.1.0 and 1.2.0 are not comparable on appearance
   // outcomes, so the version moves with the semantics.
-  version: "hey-production-qa/1.2.0",
+  // 1.3.0 recalibrated the roll motion envelope from the first real order's
+  // accepted takes; roll outcomes are not comparable across it.
+  version: "hey-production-qa/1.3.0",
   // Composition margins recalibrated to the user-approved large framing:
   // the subject may approach the canvas edges; genuine clipping remains
   // guarded by the chroma transparent-border gate.
