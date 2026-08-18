@@ -180,6 +180,8 @@
 - 2026-08-19：三项改动一次部署完成。Worker `production-qa-20260819-r7`（ID `sha256:bf7ceebc…`，manifest SHA 与 r6 同为 `4725dc25…`，因生产组件未变）；API 运行时 `petpack-platform-runtime@sha256:39a7cba4…`（发布目录 `studio-api-species-progress-20260819`，compose 仅镜像一行变化）。两者传输 SHA 与加载后镜像 ID 均两端逐字节一致，切换前确认队列全空，切换后全部 7 容器 healthy、`/readyz` 与 `/health` 均 200。r6 镜像与前序发布目录保留回滚。网页包 `petpack-studio-web-species-progress-20260819-r11.zip`（SHA `eee4e84f…`，53 文件，正斜杠条目，`unzip -t` 通过）已交付用户待部署；后端向后兼容，未部署期间线上下单不受影响。
 - 2026-08-19：恢复被旧版本卡住的 `roll` 动作。新恢复逻辑只对新发生的失败生效，故按 `requeueVideoActionAfterQaFailure` 的完全相同语义手工恢复：事务内将动作由 `failed` 重置为 `queued`、清空全部供应商字段、`retry_count` 加一，并按平台自身的 `createWorkflowJob` 推导出确定性作业 ID 后入队一次 `petpack.generate-video-action`（未手写 ID，避免与新逻辑产生分歧）。执行后动作转 `running`，其余六个动作保持 `qa_passed`。
 
+- 2026-08-19：新恢复路径在首次真实执行中暴露自身缺陷并修复（提交 `3eed3a5`，镜像 r8）。重生成后的 roll 视频肉眼明显优于被拒版本（贴地翻滚、末帧准确回到正面坐姿），却仍以 `action_media_processing_failed` 死亡且未写 QA 报告。根因：`requeueVideoActionAfterQaFailure` 把 `normalizeQaPayload` 的包装对象（`{report, serialized}`）当作报告列写入，而非其 `serialized` 字段，导致每次调度都在仓储内抛错；包裹它的 catch 直接回落到通用重试，既烧光该动作三次尝试，又报出一个从未发生的媒体处理失败，真实原因不见于任何日志。修复除改正载荷外，更重要的是让回落前先记录调度失败的原因——一个坏掉的重生成不该再被报成坏掉的媒体。新增两项测试分别钉住载荷字段与"必须清空的供应商字段集合"。教训：兜底 catch 若不记录被吞的错误，会把新缺陷伪装成旧缺陷，排查代价极高。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
