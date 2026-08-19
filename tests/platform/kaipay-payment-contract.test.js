@@ -370,7 +370,8 @@ describe("Kaipay payment contract", () => {
     const repository = Object.fromEntries([
       "createProjectOrder", "listUserProjects", "reserveSourcePhoto", "getReservedSourcePhoto",
       "acceptSourcePhoto", "getRunByProject", "getSourcePhotoRevision", "getCharacterCandidate",
-      "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload"
+      "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload",
+      "createPhotoPrecheck", "findPhotoPrecheckByFingerprint", "getPhotoPrecheck", "countRecentPhotoPrechecks"
     ].map((name) => [name, vi.fn()]));
     repository.getProjectBundle = vi.fn(async () => ({ project, order: pendingOrder }));
     repository.markOrderPaymentState = vi.fn(async () => paidOrder);
@@ -443,7 +444,8 @@ describe("Kaipay payment contract", () => {
       "createProjectOrder", "listUserProjects", "getProjectBundle", "reserveSourcePhoto",
       "getReservedSourcePhoto", "acceptSourcePhoto", "getRunByProject", "getSourcePhotoRevision",
       "getCharacterCandidate", "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload",
-      "markOrderPaymentState"
+      "markOrderPaymentState",
+    "createPhotoPrecheck", "findPhotoPrecheckByFingerprint", "getPhotoPrecheck", "countRecentPhotoPrechecks"
     ].map((name) => [name, vi.fn()]));
     const paymentProvider = {
       createCheckout: vi.fn(),

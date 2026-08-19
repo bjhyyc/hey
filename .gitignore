@@ -28,3 +28,5 @@ docs/superpowers/
 ops/lighthouse/**/secrets/
 ops/lighthouse/**/tls/
 ops/lighthouse/**/runtime-tls/
+*.zip
+final-delivery/

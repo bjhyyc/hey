@@ -8,7 +8,12 @@ import {
   requireHttpsPaymentUrl,
 } from "@/lib/kaipay-payment-ui";
 import { loadHomePhotoDraft } from "@/lib/home-photo-draft";
-import type { PetSpecies } from "@/lib/photo-slots";
+import {
+  loadPrecheckPass,
+  precheckPassCoversPhotos,
+  type PrecheckPass,
+} from "@/lib/photo-precheck";
+import { fingerprintPhoto, type PetSpecies } from "@/lib/photo-slots";
 import {
   studioBrowserApi,
   type KaipayNextAction,
@@ -30,14 +35,31 @@ export function NewProjectForm() {
   const [species, setSpecies] = useState<PetSpecies>("dog");
 
   const [draftPhotoCount, setDraftPhotoCount] = useState<number | null>(null);
+  // The home page issued this pass when the vision pre-check approved the
+  // drafted photos; checkout sends it so the server can hold the gate.
+  const [precheckPass, setPrecheckPass] = useState<PrecheckPass | null>(null);
+  const [precheckCovered, setPrecheckCovered] = useState<boolean | null>(null);
 
   useEffect(() => {
     loadHomePhotoDraft()
-      .then((draft) => {
+      .then(async (draft) => {
         if (draft) setSpecies(draft.species);
         setDraftPhotoCount(draft ? draft.photos.filter(Boolean).length : 0);
+        const pass = loadPrecheckPass();
+        setPrecheckPass(pass);
+        if (draft && pass) {
+          const digests = await Promise.all(
+            draft.photos.filter((file): file is File => Boolean(file)).map(fingerprintPhoto),
+          );
+          setPrecheckCovered(precheckPassCoversPhotos(pass, draft.species, digests));
+        } else {
+          setPrecheckCovered(false);
+        }
       })
-      .catch(() => setDraftPhotoCount(0));
+      .catch(() => {
+        setDraftPhotoCount(0);
+        setPrecheckCovered(false);
+      });
   }, []);
   const showWxpay = process.env.NEXT_PUBLIC_KAIPAY_WXPAY_ENABLED === "true";
   const planCode = process.env.NEXT_PUBLIC_PETPACK_PLAN_CODE || "petpack-seven-action-v1";
@@ -118,6 +140,7 @@ export function NewProjectForm() {
         paymentChannel,
         idempotencyKey: crypto.randomUUID(),
         species,
+        ...(precheckPass && precheckCovered ? { precheckId: precheckPass.precheckId } : {}),
       });
       await handleNextAction(result.checkout.nextAction, result.project.id, paymentChannel);
     } catch (error) {
@@ -161,8 +184,12 @@ export function NewProjectForm() {
       <small>提示词会按种类定制，选错会影响生成效果</small>
     </div>
     {draftPhotoCount !== null && (draftPhotoCount > 0
-      ? <p className="form-message">已选好 {draftPhotoCount} 张照片，付款后自动上传。</p>
-      : <p className="form-message">还没有选照片——更推荐<a className="check-list-client-link" href="/#start">先回首页挑好照片</a>再付款，也可付款后再上传。</p>)}
+      ? <p className="form-message">
+          已选好 {draftPhotoCount} 张照片，付款后自动上传。
+          {precheckCovered === true ? <span className="precheck-state is-pass">照片预检已通过 ✓</span> : null}
+          {precheckCovered === false ? <span className="precheck-state is-miss">这组照片还没有通过预检，<a className="check-list-client-link" href="/#start">回首页完成预检</a>更稳妥</span> : null}
+        </p>
+      : <p className="form-message">还没有选照片——请<a className="check-list-client-link" href="/#start">回首页挑好照片并完成预检</a>后再付款。</p>)}
     <div aria-label="支付方式" className={`payment-methods${showWxpay ? " has-wechat" : ""}`} role="radiogroup">
       <label className={`payment-method${paymentChannel === "ALIPAY" ? " is-selected" : ""}`}>
         <input checked={paymentChannel === "ALIPAY"} disabled={busy} name="payment-method" onChange={() => setPaymentChannel("ALIPAY")} type="radio" value="ALIPAY" />

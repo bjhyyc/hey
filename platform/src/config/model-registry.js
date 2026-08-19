@@ -42,6 +42,12 @@ function loadModelRegistry(env = process.env) {
         maxConcurrent: getPositiveInteger(env, "MODELARK_IMAGE_MAX_CONCURRENT", 1),
         maxRetries: getPositiveInteger(env, "MODELARK_IMAGE_MAX_RETRIES", 2)
       },
+      vision: {
+        // Chat-completions vision model for the pre-payment photo pre-check.
+        // Optional: when unset the precheck endpoint reports unavailable and
+        // enforcement must stay off.
+        modelId: getOptionalString(env, "MODELARK_VISION_MODEL_ID")
+      },
       video: {
         endpointId: getOptionalString(env, "MODELARK_SEEDANCE_ENDPOINT_ID"),
         resolution: getOptionalString(env, "MODELARK_VIDEO_RESOLUTION") || "480p",

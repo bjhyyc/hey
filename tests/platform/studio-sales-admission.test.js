@@ -11,7 +11,8 @@ function repository() {
     "createProjectOrder", "listUserProjects", "getProjectBundle", "reserveSourcePhoto",
     "getReservedSourcePhoto", "acceptSourcePhoto", "getRunByProject", "getSourcePhotoRevision",
     "getCharacterCandidate", "getCharacterCandidates", "getDeliveryForProject",
-    "authorizeDeliveryDownload", "markOrderPaymentState"
+    "authorizeDeliveryDownload", "markOrderPaymentState",
+    "createPhotoPrecheck", "findPhotoPrecheckByFingerprint", "getPhotoPrecheck", "countRecentPhotoPrechecks"
   ].map((method) => [method, vi.fn()]));
 }
 

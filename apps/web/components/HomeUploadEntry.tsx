@@ -8,6 +8,11 @@ import {
   saveHomePhotoDraft,
 } from "@/lib/home-photo-draft";
 import {
+  runPhotoPrecheck,
+  savePrecheckPass,
+  type PrecheckVerdict,
+} from "@/lib/photo-precheck";
+import {
   availablePhotoSlotIndexes,
   emptyPhotoSlots,
   hasDuplicatePhotos,
@@ -58,6 +63,7 @@ export function HomeUploadEntry() {
   ]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [precheckVerdicts, setPrecheckVerdicts] = useState<PrecheckVerdict[] | null>(null);
   const count = selectedPhotoCount(photos);
   const ready = photosReady(photos);
 
@@ -163,12 +169,42 @@ export function HomeUploadEntry() {
     }
   }
 
-  function startMaking() {
+  async function startMaking() {
     if (!ready || busy) {
       setMessage(photoSelectionMessage(photos));
       return;
     }
-    router.push("/projects/new");
+    setBusy(true);
+    setPrecheckVerdicts(null);
+    setMessage("正在预检照片，通常几秒完成…");
+    try {
+      const result = await runPhotoPrecheck(species, photos);
+      setPrecheckVerdicts(result.verdicts);
+      if (!result.passed) {
+        const failed = result.verdicts.filter((verdict) => !verdict.ok);
+        const speciesOnly = failed.length > 0 &&
+          failed.every((verdict) => verdict.reasons.some((reason) => reason.includes("种类")));
+        setMessage(speciesOnly
+          ? `看起来不是${species === "dog" ? "狗" : "猫"}，请先改正上方的宠物种类再试`
+          : result.setReasons.length > 0
+            ? result.setReasons.join("；")
+            : "部分照片未通过预检，请按提示更换后重试");
+        return;
+      }
+      savePrecheckPass({
+        precheckId: result.precheckId,
+        species,
+        photoSha256s: result.photoSha256s,
+        checkedAt: Date.now(),
+      });
+      router.push("/projects/new");
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "预检失败，请稍后重试";
+      setMessage(text);
+      if (/登录/.test(text)) router.push("/login");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -226,6 +262,16 @@ export function HomeUploadEntry() {
                 </i>
               ))}
             </span>
+            {precheckVerdicts ? (
+              <span className="home-precheck-verdicts" aria-label="预检结果">
+                {precheckVerdicts.map((verdict) => {
+                  const label = PHOTO_SLOT_DEFINITIONS[verdict.ordinal - 1]?.label ?? `第 ${verdict.ordinal} 张`;
+                  return verdict.ok
+                    ? <i className="is-ok" key={verdict.ordinal}>{label} ✓</i>
+                    : <i className="is-bad" key={verdict.ordinal}>{label} ✕ {verdict.reasons.join("；")}</i>;
+                })}
+              </span>
+            ) : null}
           </span>
         </div>
         <div className="home-upload-controls">
@@ -247,13 +293,31 @@ export function HomeUploadEntry() {
             </button>
           </span>
           <span className="home-upload-right">
+            <span aria-label="宠物种类" className="species-switch home-species-switch" role="radiogroup">
+              <button
+                aria-checked={species === "dog"}
+                className={species === "dog" ? "active" : undefined}
+                disabled={busy}
+                onClick={() => void updateSpecies("dog")}
+                role="radio"
+                type="button"
+              >狗</button>
+              <button
+                aria-checked={species === "cat"}
+                className={species === "cat" ? "active" : undefined}
+                disabled={busy}
+                onClick={() => void updateSpecies("cat")}
+                role="radio"
+                type="button"
+              >猫</button>
+            </span>
             <span className="home-models" aria-label="使用模型">
               <span className="home-model-tag"><PawIcon kind="cat" />Seedream 5.0 Pro</span>
               <span className="home-model-tag"><PawIcon kind="dog" />Seedance 2.0</span>
             </span>
-            <button className="home-upload-action" disabled={!ready || busy} onClick={startMaking} type="button">
+            <button className="home-upload-action" disabled={!ready || busy} onClick={() => void startMaking()} type="button">
               <svg className="home-spark-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8c.8 4.7 2.5 6.4 7.2 7.2-4.7.8-6.4 2.5-7.2 7.2-.8-4.7-2.5-6.4-7.2-7.2 4.7-.8 6.4-2.5 7.2-7.2Z" /><path d="M19.1 15.4c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z" /></svg>
-              <span>开始制作</span>
+              <span>{busy ? "预检中…" : "开始制作"}</span>
             </button>
           </span>
         </div>

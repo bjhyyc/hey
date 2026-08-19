@@ -1073,3 +1073,15 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
   .home-upload { min-height: 145px; }
   .page-main, .page-main.compact-page, .page-main.narrow-page { width: min(calc(100% - 24px), 640px); }
 }
+
+.home-precheck-verdicts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.home-precheck-verdicts i { font-style: normal; font-size: .72rem; padding: 3px 10px; border-radius: 999px; }
+.home-precheck-verdicts i.is-ok { color: var(--emerald); background: var(--emerald-soft); }
+.home-precheck-verdicts i.is-bad { color: #b3502f; background: rgba(192, 94, 60, 0.12); }
+.home-precheck-verdicts i.is-warn { color: #a4761e; background: rgba(217, 154, 39, 0.14); }
+.precheck-state { display: inline-block; margin-left: 8px; font-size: .78rem; }
+.precheck-state.is-pass { color: var(--emerald); }
+.precheck-state.is-miss { color: #b3502f; }
+
+.home-species-switch { margin-right: 10px; }
+.home-species-switch button { padding: 5px 14px; font-size: .78rem; }
