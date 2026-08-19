@@ -152,7 +152,6 @@ export function NewProjectForm() {
   if (qrPayment) {
     const presentation = kaipayQrPresentation(qrPayment.paymentChannel);
     return <section className="workflow-card payment-qr-card">
-      <p className="eyebrow">{presentation.paymentName}</p>
       <h2>扫码完成付款</h2>
       <img alt={presentation.imageAlt} className="payment-qr-image" height="280" src={qrPayment.imageUrl} width="280" />
       <p className="form-message" aria-live="polite">{message}</p>

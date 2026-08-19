@@ -5,10 +5,9 @@ import { PageShell } from "@/components/PageShell";
 
 export default function NewProjectPage() {
   return <PageShell>
-    <PageIntro eyebrow="开始" title="制作独属于你的桌宠">上传 2 张正面全身照和 1~2 张 45° 全身照，其余自动完成。</PageIntro>
+    <PageIntro title="制作独属于你的桌宠">上传 2 张正面全身照和 1~2 张 45° 全身照，其余自动完成。</PageIntro>
     <section className="plan-card">
       <div>
-        <p className="eyebrow">PETPACK</p>
         <h2>一个素材包，包含 7 个视频</h2>
         <ul className="check-list">
           <li><span className="check-list-number" aria-hidden="true">1</span>生成并确认宠物形象</li>

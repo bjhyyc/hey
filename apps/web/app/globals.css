@@ -472,7 +472,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .form-message { min-height: 1.3em; margin: 0; color: var(--muted); font-size: var(--text-small); line-height: 1.6; }
 .page-heading-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .project-list { display: grid; gap: 10px; }
-.project-card { padding: 19px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+.project-card {
+  padding: 19px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--ink-05);
+  border: 1px solid var(--ink-05);
+  border-radius: var(--radius-lg);
+  transition: background 160ms ease;
+}
+.project-card:hover { background: var(--sunken); }
 .project-card span:first-child { display: grid; gap: 5px; }
 .project-card strong { font-size: var(--text-body); font-weight: var(--weight-label); }
 .project-card small { color: var(--muted); font-size: var(--text-micro); }
@@ -809,14 +820,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   letter-spacing: var(--track-title);
 }
 
-.eyebrow {
-  margin: 0 0 9px;
-  color: var(--emerald);
-  font-size: var(--text-micro);
-  font-weight: var(--weight-heading);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
 
 .page-intro-copy {
   margin-top: 10px;
@@ -824,6 +827,28 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   font-size: var(--text-body);
   line-height: 1.7;
 }
+
+/* A quieter twin of the primary button: same height and type so the pair sits
+   on one line, an outline instead of a fill so it never competes with it. */
+.ghost-button {
+  min-height: 46px;
+  padding: 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--text-body);
+  font-weight: var(--weight-label);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.ghost-button:hover { background: var(--surface); border-color: var(--ink-40); }
+
+.action-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.action-row .primary-button { width: auto; padding: 0 20px; }
 
 .inline-button {
   width: fit-content;
@@ -1077,7 +1102,7 @@ body {
 }
 
 .site-shell { min-height: 100svh; display: grid; grid-template-rows: auto 1fr auto; }
-.shell { width: min(1040px, calc(100% - 48px)); margin-inline: auto; }
+.shell { width: min(calc(100% - 104px), 1328px); margin-inline: auto; }
 .site-header {
   position: relative;
   z-index: 5;
@@ -1188,13 +1213,16 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .home-upload-action:disabled { color: var(--amber); opacity: 1; background: var(--ink); }
 .home-automation-note { margin: 15px auto 0; color: var(--ink-40); font-size: var(--text-small); font-weight: var(--weight-body); line-height: 1.6; }
 
-.page-main { width: min(1040px, calc(100% - 48px)); margin-inline: auto; padding: 72px 0 0; }
-.page-main.compact-page, .page-main.narrow-page { width: min(760px, calc(100% - 48px)); }
+/* The home page's panel is 720px centred, not the full container; matching the
+   container made inner pages stretch edge to edge while the landing page kept
+   a tidy card. Match the panel instead, so a box is a box on every page. */
+.page-main { width: min(calc(100% - 48px), 720px); margin-inline: auto; padding: 72px 0 0; }
+.page-main.compact-page, .page-main.narrow-page { width: min(calc(100% - 48px), 720px); }
 .page-space { padding-top: 72px; }
-.page-intro { margin-bottom: 0; }
+.page-intro, .page-heading-row { margin-bottom: 32px; }
+.page-heading-row .page-intro { margin-bottom: 0; }
 .page-intro h1 { margin: 0; max-width: 630px; font-size: var(--text-title); line-height: 1.14; font-weight: var(--weight-label); letter-spacing: var(--track-title); }
 .page-intro-copy { margin: 10px 0 0; max-width: 600px; color: var(--muted); font-size: var(--text-body); line-height: 1.55; }
-.eyebrow { margin: 0 0 9px; color: var(--ink-40); font-size: var(--text-micro); font-weight: var(--weight-label); letter-spacing: .06em; }
 .workflow-card, .legal-copy, .plan-card, .payment-picker, .progress-card, .delivery-card, .instruction-card, .download-card, .admin-card, .admin-gateway, .admin-table-card, .prompt-editor-card {
   background: var(--ink-05); border: 1px solid var(--ink-05); border-radius: var(--radius-lg); box-shadow: none;
 }
@@ -1203,7 +1231,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .auth-card { width: min(100%, 480px); padding: 30px; background: var(--ink-05); border: 1px solid var(--ink-05); border-radius: var(--radius-lg); }
 .auth-card .page-intro h1 { font-size: var(--text-title); }
 .auth-card .stack-form { margin-top: 26px; }
-.plan-card { margin-top: 32px; padding: 32px; display: flex; justify-content: space-between; gap: 40px; }
+.plan-card { padding: 32px; display: flex; justify-content: space-between; gap: 40px; }
 .plan-card h2 { max-width: 590px; margin: 0; font-size: var(--text-section); font-weight: var(--weight-label); letter-spacing: var(--track-title); }
 .check-list { display: grid; gap: 10px; margin: 21px 0 0; padding: 0; color: var(--ink-52); font-size: var(--text-body); list-style: none; }
 .check-list li { display: flex; align-items: center; }
@@ -1217,7 +1245,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
   align-items: flex-start;
   gap: 13px;
 }
-.download-card { margin-top: 30px; padding: 26px; display: grid; grid-template-columns: .8fr 1.2fr; align-items: center; gap: 30px; }
+.download-card { padding: 26px; display: grid; grid-template-columns: .8fr 1.2fr; align-items: center; gap: 30px; }
 .client-window { min-height: 200px; background: var(--page); border: 1px solid var(--ink-16); border-radius: var(--radius-md); }
 .window-dots { display: flex; gap: 5px; padding: 11px; border-bottom: 1px solid var(--ink-08); }
 .window-dots i { width: 8px; height: 8px; background: var(--ink-16); border-radius: var(--radius-pill); }
@@ -1230,7 +1258,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .instruction-list li { display: flex; align-items: center; gap: 11px; color: var(--ink-52); font-size: var(--text-body); }
 .instruction-list span { width: 25px; height: 25px; flex: none; display: grid; place-items: center; color: var(--ink); background: var(--amber); border-radius: var(--radius-xs); font-size: var(--text-micro); font-weight: var(--weight-label); }
 
-.payment-picker { margin-top: 30px; padding: 28px; display: grid; gap: 20px; }
+.payment-picker { padding: 28px; display: grid; gap: 20px; }
 .payment-picker h2 { margin: 0; font-size: var(--text-section); font-weight: var(--weight-label); }
 .payment-name-field { display: grid; gap: 8px; color: var(--ink-52); font-size: var(--text-body); font-weight: var(--weight-label); }
 .payment-name-field input { width: 100%; min-height: 46px; padding: 13px 14px; color: var(--ink); background: var(--surface); border: 1px solid var(--ink-08); border-radius: var(--radius-sm); }
@@ -1250,8 +1278,16 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .payment-qr-card { display: grid; place-items: center; text-align: center; }
 .payment-qr-image { display: block; width: min(280px,100%); height: auto; padding: 10px; background: var(--surface); border: 1px solid var(--ink-08); border-radius: var(--radius-md); }
 .page-heading-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; }
-.empty-state, .empty-projects { min-height: 280px; margin-top: 32px; display: grid; place-items: center; align-content: center; color: var(--muted); text-align: center; background: var(--ink-05); border: 1px solid var(--ink-05); border-radius: var(--radius-lg); }
-.delivery-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 30px; padding: 28px; }
+.empty-state, .empty-projects { min-height: 280px; display: grid; place-items: center; align-content: center; color: var(--muted); text-align: center; background: var(--ink-05); border: 1px solid var(--ink-05); border-radius: var(--radius-lg); }
+/* The delivery card stacked its instructions, its button and its client link
+   into one row, which squeezed them into a line at any real width. This is the
+   page where somebody collects what they paid for; give it a column. */
+.delivery-card {
+  display: grid;
+  gap: 18px;
+  justify-items: start;
+  padding: 28px;
+}
 .prompt-list { display: grid; gap: 12px; }
 .prompt-list article { padding: 20px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; background: var(--ink-05); border: 1px solid var(--ink-05); border-radius: var(--radius-md); }
 .button, .primary-button { min-height: 46px; padding: 0 18px; color: var(--amber); background: var(--ink); border: 1px solid transparent; border-radius: var(--radius-md); font-size: var(--text-body); font-weight: var(--weight-label); display: inline-flex; align-items: center; justify-content: center; }

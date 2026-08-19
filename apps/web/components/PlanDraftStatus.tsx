@@ -33,8 +33,13 @@ export function PlanDraftStatus() {
         <p className="plan-draft-summary">
           已选好 {draft.photoCount} 张照片 · 宠物是{draft.species === "cat" ? "猫" : "狗"}
         </p>
-        <Link className="primary-button inline-button" href="/projects/new/pay">继续付款</Link>
-        <Link className="secondary-link" href="/#start">调整照片</Link>
+        {/* The way back sits before the way forward, at the same weight of
+            type, so changing your mind about the photos is as easy to reach as
+            paying for them. */}
+        <div className="action-row">
+          <Link className="ghost-button" href="/#start">继续调整照片</Link>
+          <Link className="primary-button inline-button" href="/projects/new/pay">继续付款</Link>
+        </div>
       </div>
     );
   }

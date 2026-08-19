@@ -209,7 +209,6 @@ export default function UiGallery() {
   return (
     <div className="shell" style={{ paddingBlock: "40px", display: "grid", gap: "56px" }}>
       <header>
-        <p className="eyebrow">开发用</p>
         <h1>状态画廊</h1>
         <p>真实项目跑不出来的中间状态在这里用假数据渲染，用于统一各页样式。</p>
       </header>

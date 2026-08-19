@@ -8,7 +8,7 @@ export default function NotFoundPage() {
     <div className="site-shell">
       <SiteHeader />
       <main className="shell page-main page-space narrow-page compact-page not-found-page">
-        <PageIntro eyebrow="404" title="这里没有内容" />
+        <PageIntro title="这里没有内容" />
         <Link className="button button-primary inline-button" href="/">
           返回首页
         </Link>

@@ -92,11 +92,16 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
       <div className="workflow-notice">
         <p>下载链接短时有效，过期后回到本页重新点击即可，不会额外收费。</p>
       </div>
-      <p>PetPack 已完成兼容验证，可以下载。</p><button className="primary-button form-submit" disabled={busy} onClick={() => void (async () => {
-        setBusy(true); try { const result = await studioBrowserApi.createDownload(projectId); window.location.assign(result.downloadUrl); } catch (e) { setMessage(e instanceof Error ? e.message : "下载暂不可用"); setBusy(false); }
-      })()} type="button">{busy ? "正在准备…" : "下载 PetPack"}</button></> : <p>素材包尚未完成。</p>}
+      <p>PetPack 已完成兼容验证，可以下载。</p>
+      {/* Both downloads sit on one line: the client is needed before the pack
+          is of any use, so it comes first, at a quieter weight. */}
+      <div className="action-row">
+        <Link className="ghost-button" href="/download-client" target="_blank">下载客户端</Link>
+        <button className="primary-button" disabled={busy} onClick={() => void (async () => {
+          setBusy(true); try { const result = await studioBrowserApi.createDownload(projectId); window.location.assign(result.downloadUrl); } catch (e) { setMessage(e instanceof Error ? e.message : "下载暂不可用"); setBusy(false); }
+        })()} type="button">{busy ? "正在准备…" : "下载 PetPack"}</button>
+      </div></> : <p>素材包尚未完成。</p>}
       <p className="form-message">{message}</p>
-      <Link className="secondary-link" href="/download-client" target="_blank">下载客户端</Link>
     </section>;
   }
   return <section className="workflow-card">
