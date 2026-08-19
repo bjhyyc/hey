@@ -483,8 +483,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .pay-species-row .pay-species-label { color: var(--ink); font-size: var(--text-small); }
 .pay-species-row small { color: var(--muted); font-size: var(--text-micro); }
 .species-switch.pay-species-switch { margin: 0; }
-.plan-draft-summary { margin: 0 0 4px; color: var(--ink); font-size: var(--text-body); font-weight: var(--weight-label); }
-.plan-cta .workflow-notice.plan-draft-notice { margin: 0 0 6px; }
+.plan-draft-summary { margin: 0; color: var(--ink); font-size: var(--text-body); font-weight: var(--weight-label); }
+.plan-cta .workflow-notice.plan-draft-notice { margin: 0 0 0 -15px; }
 .plan-cta .secondary-link { color: var(--muted); font-size: var(--text-small); }
 .plan-cta .secondary-link:hover { color: var(--ink); }
 .status-pill {
@@ -503,7 +503,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .plan-summary small { grid-column: 1 / -1; color: var(--muted); }
 .process-steps { margin: 22px 0 0; padding: 0; display: grid; gap: 9px; counter-reset: process; list-style: none; }
 .process-steps li { padding: 13px 16px; color: var(--muted); background: var(--surface-soft); border-radius: var(--radius-sm); }
-.workflow-notice { display: grid; gap: 7px; margin: 0 0 18px; padding: 0 0 0 13px; border-left: 2px solid var(--emerald-line); }
+.workflow-notice {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 18px -15px;
+  padding: 0 0 0 13px;
+  border-left: 2px solid var(--emerald-line);
+}
 .workflow-notice p { margin: 0; color: var(--muted); font-size: var(--text-small); line-height: 1.65; }
 .workflow-notice p strong { color: inherit; font-weight: var(--weight-heading); }
 /* Master candidates. The regenerate control had no background of its own and
@@ -1203,7 +1209,14 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .check-list li { display: flex; align-items: center; }
 .check-list-number { width: 20px; height: 20px; margin-right: 10px; flex: none; display: inline-grid; place-items: center; color: var(--ink); background: var(--ink-05); border-radius: var(--radius-xs); font-size: var(--text-micro); font-weight: var(--weight-heading); }
 .check-list-client-link { color: var(--ink); font-weight: var(--weight-heading); text-decoration: underline; text-underline-offset: 3px; }
-.plan-cta { min-width: 210px; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; }
+.plan-cta {
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 13px;
+}
 .download-card { margin-top: 30px; padding: 26px; display: grid; grid-template-columns: .8fr 1.2fr; align-items: center; gap: 30px; }
 .client-window { min-height: 200px; background: var(--page); border: 1px solid var(--ink-16); border-radius: var(--radius-md); }
 .window-dots { display: flex; gap: 5px; padding: 11px; border-bottom: 1px solid var(--ink-08); }
