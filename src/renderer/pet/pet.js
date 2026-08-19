@@ -475,13 +475,8 @@ function syncHoverDurationWithPixelHit(isOpaquePixel, reason, { resetLatch = fal
 
   if (!shouldTrackHover && (hoverStartedAt || pixelChanged)) {
     hoverStartedAt = 0;
-    // Playing the hover animation is part of the hover session, not the end of
-    // it: the state leaves "default" the moment the action starts, and clearing
-    // the latch there let the same unmoved cursor fire the action again as soon
-    // as the clip finished. Only the pointer actually leaving the pet's opaque
-    // pixels opens a new session.
-    if (resetLatch && !nextOpaquePixel) hoverDurationLatch.reset();
-    debugRulesLog("hover:pixel-stop", { reason, stillOnPet: nextOpaquePixel });
+    if (resetLatch) hoverDurationLatch.reset();
+    debugRulesLog("hover:pixel-stop", { reason });
   }
 }
 
