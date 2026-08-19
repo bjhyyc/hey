@@ -49,10 +49,12 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
 
   if (!view) return <p className="empty-state">{message}</p>;
   if (view.failed) {
-    return <section className="workflow-card">
-      <p><strong>制作没有完成</strong></p>
-      <p className="form-message">这个项目在生成阶段中断了，照片和订单都已保留。请联系我们处理，不要重复下单。</p>
-      <Link className="secondary-link" href="/projects">返回项目列表</Link>
+    // The only way out of a failed project, so it reads as a control rather
+    // than as one more line of the explanation around it.
+    return <section className="workflow-card failed-card">
+      <h3>制作没有完成</h3>
+      <p>这个项目在生成阶段中断了，照片和订单都已保留。请联系我们处理，不要重复下单。</p>
+      <Link className="ghost-button" href="/projects">返回项目列表</Link>
     </section>;
   }
   if (mode === "character") {
