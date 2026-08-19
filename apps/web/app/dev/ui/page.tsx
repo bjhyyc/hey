@@ -1,0 +1,161 @@
+"use client";
+
+import { notFound } from "next/navigation";
+import { useEffect, useState } from "react";
+import { PhotoSlots } from "@/components/PhotoSlots";
+import { PhotoUploadWorkflow } from "@/components/PhotoUploadWorkflow";
+import { ProjectWorkflow } from "@/components/ProjectWorkflow";
+import { emptyPhotoSlots, type PhotoFileSlots } from "@/lib/photo-slots";
+import type { ProjectView } from "@/lib/studio-browser-api";
+
+// Development-only state gallery. Most workflow states cannot be reached with a
+// real project - a finished run never shows "generating", a healthy run never
+// shows "redo" - so the components are fed fixtures here instead. Delete or
+// ignore in production; the route is excluded from the production build below.
+
+const ACTION_LABELS: Array<[string, string]> = [
+  ["idle", "待机"],
+  ["sneeze", "打喷嚏"],
+  ["roll", "打滚"],
+  ["sleep-transition", "入睡"],
+  ["sleep-loop", "睡眠循环"],
+  ["stretch", "伸懒腰"],
+  ["hover-attention", "悬停回应"],
+];
+
+function actions(states: string[]): ProjectView["actions"] {
+  return ACTION_LABELS.map(([actionId, label], index) => {
+    const stateLabel = states[index] ?? "排队中";
+    return {
+      actionId,
+      label,
+      stateLabel,
+      regenerated: stateLabel === "未通过",
+      complete: stateLabel === "已完成",
+    };
+  });
+}
+
+const FIXTURES: Record<string, ProjectView> = {
+  midway: {
+    project: { id: "midway", displayName: "团团", state: "producing" },
+    order: { id: "o1", status: "paid", amountFen: 1 },
+    characterCandidates: { front: null, side: null, canConfirm: false },
+    progress: [
+      { id: "p1", label: "照片已接收", state: "completed" },
+      { id: "p2", label: "母图已确认", state: "completed" },
+      { id: "p3", label: "生成七个动作", state: "active" },
+      { id: "p4", label: "抠图与打包", state: "pending" },
+    ],
+    actions: actions(["已完成", "已完成", "生成中", "抠像中", "未通过", "已生成", "排队中"]),
+    downloadReady: false,
+    failed: false,
+  },
+  failed: {
+    project: { id: "failed", displayName: "团团", state: "failed" },
+    order: { id: "o2", status: "paid", amountFen: 1 },
+    characterCandidates: { front: null, side: null, canConfirm: false },
+    progress: [
+      { id: "p1", label: "照片已接收", state: "completed" },
+      { id: "p2", label: "母图已确认", state: "completed" },
+      { id: "p3", label: "生成七个动作", state: "active" },
+      { id: "p4", label: "抠图与打包", state: "pending" },
+    ],
+    actions: actions(["已完成", "已完成", "已完成", "未通过", "排队中", "排队中", "排队中"]),
+    downloadReady: false,
+    failed: true,
+  },
+  ready: {
+    project: { id: "ready", displayName: "团团", state: "deliverable" },
+    order: { id: "o3", status: "paid", amountFen: 1 },
+    characterCandidates: { front: null, side: null, canConfirm: false },
+    progress: [
+      { id: "p1", label: "照片已接收", state: "completed" },
+      { id: "p2", label: "母图已确认", state: "completed" },
+      { id: "p3", label: "生成七个动作", state: "completed" },
+      { id: "p4", label: "抠图与打包", state: "completed" },
+    ],
+    actions: actions(["已完成", "已完成", "已完成", "已完成", "已完成", "已完成", "已完成"]),
+    downloadReady: true,
+    failed: false,
+  },
+};
+
+declare global {
+  interface Window { __galleryRealFetch?: typeof fetch }
+}
+
+if (typeof window !== "undefined") {
+  // Keep one handle on the genuine fetch, but always reinstall the stub so a
+  // hot reload picks up edited fixtures instead of replaying the first closure.
+  window.__galleryRealFetch = window.__galleryRealFetch ?? window.fetch.bind(window);
+  const real = window.__galleryRealFetch;
+  window.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const match = /\/api\/studio\/projects\/([^/?]+)$/.exec(url);
+    const fixture = match ? FIXTURES[match[1]] : null;
+    if (!fixture) return real(input, init);
+    return new Response(JSON.stringify(fixture), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+}
+
+// Stand-in photographs so the filled slot state is visible without real files.
+async function placeholderPhoto(index: number): Promise<File> {
+  const canvas = document.createElement("canvas");
+  canvas.width = 360;
+  canvas.height = 480;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = ["#cfd8d2", "#d8cfc6", "#cdd3dc", "#d6d2c4"][index % 4];
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "rgba(13,13,13,.34)";
+    context.font = "600 34px sans-serif";
+    context.textAlign = "center";
+    context.fillText(`照片 ${index + 1}`, canvas.width / 2, canvas.height / 2);
+  }
+  const blob: Blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.8));
+  return new File([blob], `slot-${index + 1}.jpg`, { type: "image/jpeg" });
+}
+
+function FilledSlots() {
+  const [photos, setPhotos] = useState<PhotoFileSlots>(emptyPhotoSlots);
+  useEffect(() => {
+    let live = true;
+    void Promise.all([0, 1, 2].map(placeholderPhoto)).then((files) => {
+      if (live) setPhotos([files[0], files[1], files[2], null]);
+    });
+    return () => { live = false; };
+  }, []);
+  return <PhotoSlots onChange={setPhotos} onMessage={() => undefined} value={photos} />;
+}
+
+export default function UiGallery() {
+  // A development instrument, not a page anyone should reach in production.
+  if (process.env.NODE_ENV === "production") notFound();
+  return (
+    <div className="shell" style={{ paddingBlock: "40px", display: "grid", gap: "56px" }}>
+      <header>
+        <p className="eyebrow">开发用</p>
+        <h1>状态画廊</h1>
+        <p>真实项目跑不出来的中间状态在这里用假数据渲染，用于统一各页样式。</p>
+      </header>
+      <section style={{ display: "grid", gap: "12px" }}>
+        <h2>photos · 空态</h2>
+        <PhotoUploadWorkflow projectId="gallery" />
+      </section>
+      <section style={{ display: "grid", gap: "12px" }}>
+        <h2>photos · 已选三张</h2>
+        <div className="workflow-card"><FilledSlots /></div>
+      </section>
+      {Object.keys(FIXTURES).map((key) => (
+        <section key={key} style={{ display: "grid", gap: "12px" }}>
+          <h2>{key}</h2>
+          <ProjectWorkflow mode="progress" projectId={key} />
+        </section>
+      ))}
+    </div>
+  );
+}

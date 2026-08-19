@@ -70,6 +70,14 @@ export function PhotoSlots({
               <img className="photo-slot-preview" src={previews[index] ?? ""} alt="" />
             ) : null}
             <span className="slot-number">{String(index + 1).padStart(2, "0")}</span>
+            <span className={`slot-need${slot.required ? "" : " is-optional"}`}>
+              {slot.required ? "必选" : "可选"}
+            </span>
+            {previews[index] ? null : (
+              <svg aria-hidden="true" className="slot-glyph" viewBox="0 0 24 24">
+                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" />
+              </svg>
+            )}
             <strong>{slot.title}</strong>
             <small>{slot.hint}</small>
             <input

@@ -291,8 +291,6 @@ export function HomeUploadEntry() {
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" /></svg>
               <span className="home-upload-count">{count === 4 ? "✓" : count || "3+"}</span>
             </button>
-          </span>
-          <span className="home-upload-right">
             <span aria-label="宠物种类" className="species-switch home-species-switch" role="radiogroup">
               <button
                 aria-checked={species === "dog"}
@@ -311,6 +309,8 @@ export function HomeUploadEntry() {
                 type="button"
               >猫</button>
             </span>
+          </span>
+          <span className="home-upload-right">
             <span className="home-models" aria-label="使用模型">
               <span className="home-model-tag"><PawIcon kind="cat" />Seedream 5.0 Pro</span>
               <span className="home-model-tag"><PawIcon kind="dog" />Seedance 2.0</span>
