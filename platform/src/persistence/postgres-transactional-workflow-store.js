@@ -335,6 +335,12 @@ class PostgresTransactionalWorkflowStore {
     });
   }
 
+  /**
+   * Regeneration keeps every earlier version on record, and an owner who spends
+   * their regenerations may well prefer the first one, so any attempt up to the
+   * run's current count may be confirmed - the generation and QA rows are keyed
+   * on the candidate's own attempt rather than the run's latest.
+   */
   async _claimConfirmedCharacterCandidate(tx, { run, candidateId, view }) {
     if (!["front", "side"].includes(view)) throw new Error("Confirmed character view must be front or side");
     const attemptColumn = view === "front" ? "front_generation_attempts" : "side_generation_attempts";
@@ -347,14 +353,14 @@ class PostgresTransactionalWorkflowStore {
            AND candidate.project_id = production_run.project_id
            AND candidate.run_id = production_run.id
            AND candidate.order_id = production_run.order_id
-           AND candidate.generation_attempt = production_run.${attemptColumn}
+           AND candidate.generation_attempt <= production_run.${attemptColumn}
          JOIN master_image_generation generation
            ON generation.image_candidate_id = candidate.id
           AND generation.run_id = production_run.id
           AND generation.project_id = production_run.project_id
           AND generation.order_id = production_run.order_id
           AND generation.kind = $3
-          AND generation.generation_attempt = production_run.${attemptColumn}
+          AND generation.generation_attempt = candidate.generation_attempt
           AND generation.status = 'qa_passed'
          JOIN media_asset asset
            ON asset.id = candidate.media_asset_id
@@ -381,7 +387,7 @@ class PostgresTransactionalWorkflowStore {
       [run.id, requireId(candidateId, `${view} candidate ID`), view]
     );
     if (candidate.rows.length !== 1) {
-      throw new Error(`The selected ${view} character is not a quality-approved current candidate for this production run`);
+      throw new Error(`The selected ${view} character is not a quality-approved candidate of this production run`);
     }
     return candidate.rows[0];
   }
