@@ -375,8 +375,12 @@ class PetPackStudioService {
     }
     const normalizedFiles = ensureSourcePhotoSet(files);
     if (this.photoPrecheckEnforced) {
+      // Species lives on the project, not on the order. Reading it from the
+      // order yielded undefined, so the fingerprint was computed over
+      // "undefined:<digests>" and could never match the stored pre-check -
+      // every paid customer hit "这组照片尚未通过预检" at the upload step.
       const fingerprint = precheckFingerprint(
-        bundle.order.species,
+        bundle.project.species,
         normalizedFiles.map((file) => file.sha256)
       );
       const precheck = await this.repository.findPhotoPrecheckByFingerprint(fingerprint);

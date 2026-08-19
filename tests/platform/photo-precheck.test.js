@@ -45,7 +45,7 @@ function buildService({ report = goodReport(), enforced = false, stored = new Ma
   const visionClient = {
     configured: true,
     modelId: "test-vision-model",
-    promptVersion: "pet-photo-precheck/v1",
+    promptVersion: "pet-photo-precheck/v2",
     judgePhotoSet: judgeSpy
   };
   const repository = {
@@ -135,6 +135,36 @@ describe("photo precheck service", () => {
     const result = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
     expect(result.passed).toBe(false);
     expect(result.verdicts[0].reasons.join("")).toContain("五官清晰");
+  });
+
+  it("lets the paid upload through on the pre-check it just passed", async () => {
+    // Species lives on the project, not on the order. Reading it from the
+    // order gave undefined here, so the grant recomputed the fingerprint over
+    // "undefined:<digests>" and refused every paid customer's own photos.
+    const { service, repository } = buildService({ enforced: true });
+    const precheck = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(precheck.passed).toBe(true);
+
+    repository.getProjectBundle.mockResolvedValue({
+      project: { id: "project-1", userId: ACTOR.id, species: "cat", state: "awaiting_photos" },
+      order: { id: "order-1", projectId: "project-1", userId: ACTOR.id, status: "paid" }
+    });
+    repository.getRunByProject.mockResolvedValue({ id: "run-1", state: "awaiting_photos" });
+    repository.reserveSourcePhoto.mockImplementation(async (input) => ({ ...input, id: "reservation" }));
+
+    const files = photoSet().map((photo, index) => ({
+      fileName: `p${index + 1}.jpg`,
+      contentType: "image/jpeg",
+      sha256: photo.originalSha256,
+      byteSize: 1024
+    }));
+    // The assertion is about the gate, not about the rest of the upload
+    // pipeline: whatever happens downstream, it must not be turned away for
+    // lacking a pre-check it demonstrably has.
+    const outcome = await service.createSourcePhotoUploadGrants({
+      actor: ACTOR, projectId: "project-1", files
+    }).then(() => null, (error) => error);
+    expect(outcome?.code).not.toBe("precheck_required");
   });
 
   it("fails when the photos are not the same animal", async () => {

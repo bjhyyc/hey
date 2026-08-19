@@ -425,6 +425,9 @@ function mapProject(row) {
     id,
     userId: row.project_user_id || row.user_id,
     displayName: row.display_name,
+    // The pre-check fingerprint is keyed on species, so it has to travel with
+    // the project rather than being looked up again later.
+    species: row.species,
     state: row.project_state || row.state,
     createdAt: row.project_created_at || row.created_at,
     updatedAt: row.project_updated_at || row.updated_at
@@ -828,7 +831,7 @@ class PostgresPetPackStudioRepository {
     const safeProjectId = requiredString(projectId, "Project ID");
     return this._transaction(async (tx) => {
       const result = rows(await tx.query(
-        `SELECT p.id AS project_id, p.user_id AS project_user_id, p.display_name,
+        `SELECT p.id AS project_id, p.user_id AS project_user_id, p.display_name, p.species,
                 p.state AS project_state, p.created_at AS project_created_at, p.updated_at AS project_updated_at,
                 o.id AS order_id, o.user_id AS order_user_id, o.project_id AS order_project_id,
                 o.plan_id, o.amount_fen, o.currency, o.payment_method, o.status AS order_status,
