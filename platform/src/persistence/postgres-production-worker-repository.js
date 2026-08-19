@@ -94,8 +94,16 @@ function assertActionWorkflowJob(job, { expectedName, runId, actionId } = {}) {
   return job;
 }
 
+// A delay of zero means "available now", which is exactly what an action
+// regeneration wants. Routing it through the positive-integer check rejected
+// it, so the regeneration could never be enqueued: the worker fell back to the
+// generic retry, burned the attempts and left the run stalled with the action
+// marked failed and no regeneration ever recorded.
 function normalizeDelaySeconds(value) {
-  return positiveInteger(value, "Outbox delay seconds", 3600);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 3600) {
+    throw new Error("Outbox delay seconds must be an integer between 0 and 3600");
+  }
+  return value;
 }
 
 function normalizeArchivedArtifact(artifact) {

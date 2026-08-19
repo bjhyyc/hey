@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import stateMachineModule from "../../platform/src/domain/production-state-machine.js";
 import workflowModule from "../../platform/src/workflow/production-workflow.js";
 import storeModule from "../../platform/src/persistence/postgres-transactional-workflow-store.js";
+import workerRepositoryModule from "../../platform/src/persistence/postgres-production-worker-repository.js";
 
 const { PRODUCTION_STATES } = stateMachineModule;
 const { ProductionWorkflow } = workflowModule;
@@ -97,6 +98,50 @@ describe("video action QA failure", () => {
 // repository and fell through to the generic retry - which then reported a
 // media-processing failure that never happened.
 describe("rejected action QA payload", () => {
+  // The tests around this method read its source rather than running it, which
+  // is how a regeneration that could never be enqueued survived: the enqueue
+  // asked for an immediate delay of zero seconds and the delay normaliser
+  // demanded a positive integer, so every rejected action fell back to the
+  // generic retry, burned its attempts and stalled the run.
+  it("enqueues an immediate regeneration rather than rejecting a zero delay", async () => {
+    const { PostgresProductionWorkerRepository } = workerRepositoryModule;
+    const inserted = [];
+    const tx = {
+      query: vi.fn(async (text, params) => {
+        if (String(text).includes("INSERT INTO outbox_job")) inserted.push({ text, params });
+        return { rows: [] };
+      })
+    };
+    const repository = new PostgresProductionWorkerRepository({
+      database: { transaction: async (run) => run(tx) },
+      idFactory: () => "00000000-0000-4000-8000-000000000000",
+      logger: { info() {}, warn() {}, error() {} }
+    });
+    const job = {
+      name: "petpack.generate-video-action",
+      dedupeKey: "petpack:regenerate",
+      data: { runId: "run-1", actionId: "sleep-loop" },
+      options: { attempts: 3 }
+    };
+
+    await expect(repository._insertDelayedOutbox(tx, job, 0)).resolves.toBeUndefined();
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].params).toContain(0);
+  });
+
+  it("still refuses a delay that is negative or beyond the cap", async () => {
+    const { PostgresProductionWorkerRepository } = workerRepositoryModule;
+    const tx = { query: vi.fn(async () => ({ rows: [] })) };
+    const repository = new PostgresProductionWorkerRepository({
+      database: { transaction: async (run) => run(tx) },
+      idFactory: () => "00000000-0000-4000-8000-000000000000",
+      logger: { info() {}, warn() {}, error() {} }
+    });
+    const job = { name: "petpack.generate-video-action", dedupeKey: "k", data: { runId: "r", actionId: "a" }, options: {} };
+    await expect(repository._insertDelayedOutbox(tx, job, -1)).rejects.toThrow(/between 0 and 3600/);
+    await expect(repository._insertDelayedOutbox(tx, job, 3601)).rejects.toThrow(/between 0 and 3600/);
+  });
+
   it("persists the serialized report rather than the normalizer's wrapper", async () => {
     const source = readFileSync(
       new URL("../../platform/src/persistence/postgres-production-worker-repository.js", import.meta.url),
