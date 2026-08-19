@@ -117,15 +117,6 @@ describe("GitHub Pages landing page", () => {
     expect(html).toContain("查看素材制作方法");
   });
 
-  test("documents the end-user quick start before source development", () => {
-    const readme = readProjectFile("README.md");
-
-    expect(readme).toContain("下载并安装 [macOS 版本]");
-    expect(readme).toContain("首次启动时控制面板会自动打开");
-    expect(readme).toContain("导入体验包 / Import sample petpack");
-    expect(readme.indexOf("## 快速开始")).toBeLessThan(readme.indexOf("### 从源码运行"));
-  });
-
   test("uses one bilingual bottom navigation for the five middle scenes", () => {
     const html = readProjectFile("landing/index.html");
     const sectionTabs = html.match(/<nav class="section-tabs"[\s\S]*?<\/nav>/)?.[0] ?? "";

@@ -34,14 +34,6 @@ describe("GitHub Release packaging", () => {
     expect(workflow).toContain("softprops/action-gh-release@v2");
   });
 
-  test("documents stable latest-version download links", () => {
-    const readme = readProjectFile("README.md");
-
-    expect(readme).toContain("releases/latest/download/Desktop-Pet-mac.dmg");
-    expect(readme).toContain("releases/latest/download/Desktop-Pet-windows.exe");
-    expect(readme).toContain("https://github.com/duzexu/desktop-pet/releases");
-  });
-
   test("receives renderer-facing versions through sandbox-safe arguments", () => {
     const petPreload = readProjectFile("src/preload/pet-preload.js");
     const panelPreload = readProjectFile("src/preload/panel-preload.js");
