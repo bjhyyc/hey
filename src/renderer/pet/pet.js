@@ -1326,15 +1326,11 @@ function applyRuntime(runtime) {
     })),
     clips: runtimeModel.animationConfig && runtimeModel.animationConfig.clips
   });
-  const carriedCooldowns = ruleRuntime && typeof ruleRuntime.getLastTriggeredAtByRuleId === "function"
-    ? ruleRuntime.getLastTriggeredAtByRuleId()
-    : null;
   if (ruleRuntime && typeof ruleRuntime.destroy === "function") {
     ruleRuntime.destroy();
   }
   ruleRuntime = createRuleRuntime({
     rules: runtimeModel.rules,
-    lastTriggeredAtByRuleId: carriedCooldowns,
     onTimerActions: (actions, eventContext) => {
       if (actions.length > 0) {
         executeRuntimeActions(actions, eventContext);

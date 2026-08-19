@@ -224,17 +224,10 @@ export function createRuleRuntime({
   rules = [],
   maxHistory = 40,
   now = Date.now,
-  onTimerActions = null,
-  lastTriggeredAtByRuleId: carriedCooldowns = null
+  onTimerActions = null
 } = {}) {
   const eventHistory = [];
-  // Cooldowns are a property of the pet's recent behaviour, not of a runtime
-  // instance. Loading or updating a package rebuilds this runtime, and letting
-  // the timestamps die with the old closure re-armed every cooldown - a hover
-  // action with a twenty-second cooldown could fire again seconds later.
-  const lastTriggeredAtByRuleId = carriedCooldowns && typeof carriedCooldowns === "object"
-    ? { ...carriedCooldowns }
-    : {};
+  const lastTriggeredAtByRuleId = {};
 
   // Per-rule state for stateful (sustained) rules.
   // ruleId -> { conditionTrueSince: number|null, active: boolean, exitTrueSince: number|null }
