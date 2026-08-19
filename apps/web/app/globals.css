@@ -647,6 +647,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .prompt-list i { color: var(--muted); font-style: normal; }
 .prompt-list span { color: var(--muted); font-size: var(--text-small); }
 .legal-copy { color: var(--muted); line-height: 1.85; }
+.legal-copy h2 { margin: 26px 0 8px; color: var(--ink); font-size: var(--text-lead); font-weight: var(--weight-label); letter-spacing: var(--track-lead); }
+.legal-copy h2:first-child { margin-top: 0; }
+.legal-copy p { margin: 0 0 12px; }
+.legal-copy p:last-child { margin-bottom: 0; }
+.legal-copy strong { color: var(--ink); font-weight: var(--weight-label); }
+.legal-copy ul { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 5px; font-size: var(--text-body); }
+.legal-copy a { color: var(--emerald); }
 
 .photo-slot-grid {
   display: grid;
@@ -850,6 +857,25 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .failed-card { display: grid; justify-items: start; gap: 12px; }
 .failed-card h3 { margin: 0; color: var(--ink); }
 .failed-card p { margin: 0; color: var(--muted); }
+
+/* The pre-order acknowledgement. It has to read as something you actively
+   agree to, not as fine print, so it sits at body size next to a real
+   checkbox rather than shrinking into a footnote. */
+.order-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 2px;
+  padding: 14px 15px;
+  color: var(--ink-70);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-small);
+  line-height: 1.6;
+  cursor: pointer;
+}
+.order-ack input { width: 17px; height: 17px; margin: 2px 0 0; flex: none; cursor: pointer; }
 
 .action-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .action-row .primary-button { width: auto; padding: 0 20px; }

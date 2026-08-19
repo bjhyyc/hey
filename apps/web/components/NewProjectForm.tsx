@@ -33,6 +33,9 @@ export function NewProjectForm() {
   // answer in the draft; before this it never reached the server, so every run
   // generated against the dog prompt set.
   const [species, setSpecies] = useState<PetSpecies>("dog");
+  // The consumer regulations require this to be an active choice before the
+  // order is placed - never pre-ticked, never buried in a linked agreement.
+  const [acknowledged, setAcknowledged] = useState(false);
 
   const [draftPhotoCount, setDraftPhotoCount] = useState<number | null>(null);
   // The home page issued this pass when the vision pre-check approved the
@@ -199,7 +202,20 @@ export function NewProjectForm() {
         <span><strong>微信支付</strong><small>微信扫码支付</small></span>
       </label> : null}
     </div>
-    <button className="primary-button form-submit" disabled={busy} onClick={() => void submit()} type="button">
+    <label className="order-ack">
+      <input
+        checked={acknowledged}
+        disabled={busy}
+        onChange={(event) => setAcknowledged(event.target.checked)}
+        type="checkbox"
+      />
+      <span>
+        我已知悉：成品由 AI 依据我的照片重新绘制，会尽量贴近毛色与神态，但不是照片复刻；
+        本商品为按我提供的照片定制的数字内容，交付后不适用七天无理由退货。
+        若文件损坏、无法导入或与我确认的母图明显不符，可免费重做或退款。
+      </span>
+    </label>
+    <button className="primary-button form-submit" disabled={busy || !acknowledged} onClick={() => void submit()} type="button">
       {busy ? "正在创建…" : "创建订单并前往付款"}
     </button>
     <p className="form-message" aria-live="polite">{message}</p>

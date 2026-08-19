@@ -65,7 +65,7 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
           what to look at, and what each control does. */}
       <div className="workflow-notice">
         <p><strong>看这两张像不像你的宠物</strong>：五官、毛色、花色位置。七个动作都会照着它们生成。</p>
-        <p>不满意可以单独重新生成某一张，次数用完前都可以反复看；满意后点下方按钮开始制作。</p>
+        <p>AI 是依据你的照片重新绘制，会尽量贴近，但不是照片复刻。不满意可以单独重新生成某一张。</p>
       </div>
       <div className="candidate-grid">
         <Candidate candidate={front} label="正面" busy={busy} onRegenerate={() => void (async () => {
@@ -82,8 +82,8 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
           await studioBrowserApi.confirmCharacter(projectId, front.id, side.id);
           window.location.assign(`/projects/${encodeURIComponent(projectId)}/progress`);
         } catch (error) { setMessage(error instanceof Error ? error.message : "确认失败"); setBusy(false); }
-      })()} type="button">{busy ? "正在确认…" : "确认形象，开始制作"}</button>
-      <p className="form-message">{message || "确认后开始生成七个动作，中途无法更换形象"}</p>
+      })()} type="button">{busy ? "正在确认…" : "就用这个形象，开始制作"}</button>
+      <p className="form-message">{message || "点击即表示你认可这个形象；七个动作将照此生成，中途无法更换"}</p>
     </section>;
   }
   if (mode === "delivery") {
