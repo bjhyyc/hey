@@ -1,4 +1,5 @@
 const { isSafeRelativePath } = require("../../../src/shared/path-safety");
+const { MAX_HEADER_BYTES } = require("../media/image-header-dimensions");
 
 const OBJECT_CLASSES = Object.freeze({
   SOURCE_PHOTO: "source-photo",
@@ -155,6 +156,37 @@ class PrivateObjectStore {
       byteSize: expectedSize,
       sha256: expectedDigest
     };
+  }
+
+  /**
+   * Reads the leading bytes of a private object. Enough to parse an image
+   * header without pulling a whole photograph into the API runtime.
+   */
+  async readObjectHead({ objectKey, maxBytes = MAX_HEADER_BYTES } = {}) {
+    const key = assertPrivateObjectKey(objectKey);
+    if (typeof this.driver.getPrivate !== "function") {
+      throw new Error("Private object-storage driver must support trusted object reads");
+    }
+    const limit = Number(maxBytes);
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > MAX_HEADER_BYTES) {
+      throw new Error("Object head read size is invalid");
+    }
+    const object = await this.driver.getPrivate({ objectKey: key });
+    const payload = object && (object.body ?? object.bytes ?? object.Body ?? object);
+    if (Buffer.isBuffer(payload)) return payload.subarray(0, limit);
+    if (!payload || typeof payload[Symbol.asyncIterator] !== "function") {
+      throw new Error("Private object read did not return readable bytes");
+    }
+    const chunks = [];
+    let collected = 0;
+    for await (const chunk of payload) {
+      const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(piece);
+      collected += piece.length;
+      if (collected >= limit) break;
+    }
+    if (typeof payload.destroy === "function") payload.destroy();
+    return Buffer.concat(chunks).subarray(0, limit);
   }
 
   async createDownloadGrant({ objectKey, expiresInSeconds, disposition = "attachment" } = {}) {

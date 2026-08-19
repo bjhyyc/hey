@@ -1,3 +1,4 @@
+const { readImageHeaderDimensions } = require("../media/image-header-dimensions");
 const { requireActor, requireProjectOwner } = require("../auth/authorization");
 const { PAYMENT_STATES, assertPaymentMethod } = require("../domain/payment-state-machine");
 const {
@@ -86,6 +87,11 @@ function resolveDeliveryDownloadTtlSeconds({ expiresAt, now = Date.now(), storag
 const PRECHECK_MAX_DATA_URL_BYTES = 1536 * 1024;
 const PRECHECK_TTL_HOURS = 24;
 const PRECHECK_VIEW_LABELS = Object.freeze({ front: "正面", side45: "侧面" });
+
+// The master-image processor refuses any identity reference whose decoded edge
+// exceeds this, and it does so deep inside generation - after the customer has
+// paid. Refuse it here instead, while they can still replace the photograph.
+const MAX_SOURCE_PHOTO_EDGE = 4096;
 
 function precheckFingerprint(species, photoSha256s) {
   const sorted = [...photoSha256s].sort();
@@ -416,6 +422,34 @@ class PetPackStudioService {
     return grants.map((grant, index) => ({ ordinal: index + 1, uploadUrl: grant.url, expiresInSeconds: grant.expiresInSeconds }));
   }
 
+  // The processor's decode limit is enforced here, at the moment the upload is
+  // accepted, because failing it later means a paid run dies with nothing the
+  // customer can do about it.
+  async _assertPhotoWithinDecodeLimit(objectKey, ordinal) {
+    if (typeof this.objectStore.readObjectHead !== "function") return;
+    let dimensions = null;
+    try {
+      dimensions = readImageHeaderDimensions(await this.objectStore.readObjectHead({ objectKey }));
+    } catch (error) {
+      // An unreadable header is not proof of an oversized photo; let the
+      // pipeline judge it rather than refusing a good upload on a read blip.
+      this.logger.warn?.("petpack.photo.dimension_probe_failed", {
+        ordinal,
+        errorName: error && error.name ? error.name : "Error"
+      });
+      return;
+    }
+    if (!dimensions) return;
+    if (dimensions.width > MAX_SOURCE_PHOTO_EDGE || dimensions.height > MAX_SOURCE_PHOTO_EDGE) {
+      const error = new Error(
+        `第 ${ordinal} 张照片尺寸过大（${dimensions.width}×${dimensions.height}），` +
+        `长边不能超过 ${MAX_SOURCE_PHOTO_EDGE} 像素，请压缩后重新上传`
+      );
+      error.code = "source_photo_too_large";
+      throw error;
+    }
+  }
+
   async confirmSourcePhotoUpload({ actor, projectId, ordinal, sha256, byteSize }) {
     const bundle = await this.repository.getProjectBundle(requiredString(projectId, "Project ID"));
     requireProjectOwner(actor, bundle.project);
@@ -437,6 +471,7 @@ class PetPackStudioService {
       expectedSha256: sha256.toLowerCase(),
       expectedByteSize: byteSize
     });
+    await this._assertPhotoWithinDecodeLimit(reservation.objectKey, Number(ordinal));
     const acceptance = await this.repository.acceptSourcePhoto({
       projectId: bundle.project.id,
       ordinal: Number(ordinal),
