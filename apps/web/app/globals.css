@@ -1063,6 +1063,7 @@ code {
 p { font-size: var(--text-body); font-weight: var(--weight-body); line-height: 1.62; }
 body {
   min-height: 100svh;
+  accent-color: var(--ink);
   color: var(--ink);
   background: var(--page);
   font-family: "Manrope Variable", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
@@ -1209,7 +1210,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .window-dots i { width: 8px; height: 8px; background: var(--ink-16); border-radius: var(--radius-pill); }
 .window-dots i:nth-child(2) { background: var(--amber); }
 .window-dots i:nth-child(3) { background: var(--ink-40); }
-.window-import { width: calc(100% - 34px); min-height: 118px; margin: 17px; display: grid; place-items: center; color: var(--ink-52); border: 1px dashed var(--ink-16); border-radius: var(--radius-sm); font-weight: var(--weight-label); text-align: center; }
+.window-import { width: calc(100% - 34px); min-height: 118px; margin: 17px; display: grid; place-items: center; color: var(--ink-52); border: 1px dashed var(--ink-16); border-radius: var(--radius-sm); font-weight: var(--weight-label); text-align: center; font-size: var(--text-small); }
 .download-card h2 { margin: 0; font-size: var(--text-section); font-weight: var(--weight-label); letter-spacing: var(--track-title); }
 .instruction-list { display: grid; gap: 12px; margin: 18px 0 22px; padding: 0; list-style: none; }
 .instruction-list.compact-list { margin-top: 17px; margin-bottom: 20px; }
@@ -1227,7 +1228,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .payment-method input { width: 17px; height: 17px; margin: 0; accent-color: var(--ink); }
 .payment-method span { display: block; min-width: 0; }
 .payment-method strong, .payment-method small { display: block; }
-.payment-method strong { font-weight: var(--weight-label); }
+.payment-method strong { font-size: var(--text-body); font-weight: var(--weight-label); }
 .payment-method small { margin-top: 4px; color: var(--muted); font-size: var(--text-small); }
 .payment-picker .form-message:empty { display: none; }
 .payment-channel-picker { margin: 0; padding: 0; border: 0; }
