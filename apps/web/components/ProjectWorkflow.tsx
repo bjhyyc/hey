@@ -36,8 +36,12 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
   // still generating, so it has to refresh until both candidates arrive or the
   // run gives up. Without this it showed "正在生成 正面" forever, including
   // after the run had already failed.
+  // Polling used to stop as soon as both candidates existed, but a regeneration
+  // leaves the previous pair in place while the run goes back to generating -
+  // so the page froze with a disabled confirm button until someone reloaded by
+  // hand. Stop only once the customer can actually act.
   const settled = Boolean(view && (view.failed
-    || (mode === "character" && view.characterCandidates.front && view.characterCandidates.side)));
+    || (mode === "character" && view.characterCandidates.canConfirm)));
 
   useEffect(() => { void load(); }, [load]);
 
@@ -67,6 +71,9 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
         <p><strong>看这两张像不像你的宠物</strong>：五官、毛色、花色位置。七个动作都会照着它们生成。</p>
         <p>AI 是依据你的照片重新绘制，会尽量贴近，但不是照片复刻。不满意可以单独重新生成某一张。</p>
       </div>
+      {front && side && !canConfirm
+        ? <p className="regenerating-note">正在重新生成，通常 1~2 分钟；完成后这里会自动更新。</p>
+        : null}
       <div className="candidate-grid">
         <Candidate candidate={front} label="正面" busy={busy} onRegenerate={() => void (async () => {
           setBusy(true); try { await studioBrowserApi.regenerateCharacter(projectId, "front"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }

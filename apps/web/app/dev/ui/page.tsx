@@ -116,6 +116,22 @@ const FIXTURES: Record<string, ProjectView> = {
     downloadReady: false,
     failed: false,
   },
+  charRegenerating: {
+    // The state the confirm button used to freeze in: both candidates still
+    // present from the previous round, but the run is generating again so the
+    // customer cannot confirm yet.
+    project: { id: "charRegenerating", displayName: "团团", state: "producing" },
+    order: { id: "o8", status: "paid", amountFen: 1 },
+    characterCandidates: {
+      front: { id: "f3", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 1 },
+      side: { id: "s3", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 2 },
+      canConfirm: false,
+    },
+    progress: [],
+    actions: [],
+    downloadReady: false,
+    failed: false,
+  },
   deliveredProgress: {
     project: { id: "deliveredProgress", displayName: "团团", state: "deliverable" },
     order: { id: "o7", status: "paid", amountFen: 1 },
