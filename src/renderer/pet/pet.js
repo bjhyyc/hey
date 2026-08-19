@@ -469,20 +469,17 @@ function syncHoverDurationWithPixelHit(isOpaquePixel, reason, { resetLatch = fal
 
   if (shouldTrackHover && !hoverStartedAt) {
     hoverStartedAt = Date.now();
-    // The latch is per hover session, so arm it where the session begins. It
-    // used to be cleared wherever tracking stopped, which included the hover
-    // action itself starting - the state leaves "default" the moment the clip
-    // plays - so an unmoved cursor fired the action again as soon as the clip
-    // finished. Clearing only on a real pointer exit had the opposite fault: a
-    // latch set earlier could never be released while the cursor stayed on the
-    // pet. Arming at session start gives exactly one action per session.
-    hoverDurationLatch.reset();
     debugRulesLog("hover:pixel-start", { reason });
     return;
   }
 
   if (!shouldTrackHover && (hoverStartedAt || pixelChanged)) {
     hoverStartedAt = 0;
+    // Playing the hover animation is part of the hover session, not the end of
+    // it: the state leaves "default" the moment the action starts, and clearing
+    // the latch there let the same unmoved cursor fire the action again as soon
+    // as the clip finished. Only the pointer actually leaving the pet's opaque
+    // pixels opens a new session.
     if (resetLatch && !nextOpaquePixel) hoverDurationLatch.reset();
     debugRulesLog("hover:pixel-stop", { reason, stillOnPet: nextOpaquePixel });
   }

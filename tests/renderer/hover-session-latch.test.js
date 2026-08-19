@@ -19,14 +19,6 @@ describe("hover session latch", () => {
     source.indexOf("function cancelPixelConfirmation")
   );
 
-  it("arms the latch where the hover session begins", () => {
-    const startBranch = sync.slice(
-      sync.indexOf("if (shouldTrackHover && !hoverStartedAt)"),
-      sync.indexOf("if (!shouldTrackHover")
-    );
-    expect(startBranch).toContain("hoverDurationLatch.reset();");
-  });
-
   it("keeps the latch while the pointer still rests on the pet", () => {
     expect(sync).toContain("if (resetLatch && !nextOpaquePixel) hoverDurationLatch.reset();");
     expect(sync).not.toMatch(/if \(resetLatch\) hoverDurationLatch\.reset\(\);/);
