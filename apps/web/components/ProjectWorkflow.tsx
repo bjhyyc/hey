@@ -84,9 +84,13 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
   if (mode === "delivery") {
     return <section className="workflow-card delivery-card">
       {view.downloadReady ? <>
+      <ol className="instruction-list compact-list">
+        <li><span>1</span>下载 <code>.petpack</code> 文件</li>
+        <li><span>2</span>安装并打开桌宠客户端</li>
+        <li><span>3</span>点击「导入我的 PetPack」，选择刚下载的文件</li>
+      </ol>
       <div className="workflow-notice">
-        <p><strong>接下来三步</strong>：① 下载 <code>.petpack</code> 文件；② 安装并打开桌宠客户端；③ 点击「导入我的 PetPack」选择该文件。</p>
-        <p>下载链接短时有效，过期后回到本页重新点击下载即可，不会额外收费。</p>
+        <p>下载链接短时有效，过期后回到本页重新点击即可，不会额外收费。</p>
       </div>
       <p>PetPack 已完成兼容验证，可以下载。</p><button className="primary-button form-submit" disabled={busy} onClick={() => void (async () => {
         setBusy(true); try { const result = await studioBrowserApi.createDownload(projectId); window.location.assign(result.downloadUrl); } catch (e) { setMessage(e instanceof Error ? e.message : "下载暂不可用"); setBusy(false); }

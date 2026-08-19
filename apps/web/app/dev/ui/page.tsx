@@ -36,6 +36,8 @@ function actions(states: string[]): ProjectView["actions"] {
   });
 }
 
+const MASTER_PREVIEW = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><ellipse cx='210' cy='205' rx='72' ry='58' fill='%23b9c6bd'/><circle cx='210' cy='128' r='46' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>母图预览</text></svg>";
+
 const FIXTURES: Record<string, ProjectView> = {
   midway: {
     project: { id: "midway", displayName: "团团", state: "producing" },
@@ -64,6 +66,55 @@ const FIXTURES: Record<string, ProjectView> = {
     actions: actions(["已完成", "已完成", "已完成", "未通过", "排队中", "排队中", "排队中"]),
     downloadReady: false,
     failed: true,
+  },
+  charGenerating: {
+    project: { id: "charGenerating", displayName: "团团", state: "producing" },
+    order: { id: "o4", status: "paid", amountFen: 1 },
+    characterCandidates: { front: null, side: null, canConfirm: false },
+    progress: [],
+    actions: [],
+    downloadReady: false,
+    failed: false,
+  },
+  charPartial: {
+    project: { id: "charPartial", displayName: "团团", state: "producing" },
+    order: { id: "o5", status: "paid", amountFen: 1 },
+    characterCandidates: {
+      front: { id: "f1", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 2 },
+      side: null,
+      canConfirm: false,
+    },
+    progress: [],
+    actions: [],
+    downloadReady: false,
+    failed: false,
+  },
+  charReady: {
+    project: { id: "charReady", displayName: "团团", state: "producing" },
+    order: { id: "o6", status: "paid", amountFen: 1 },
+    characterCandidates: {
+      front: { id: "f2", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 1 },
+      side: { id: "s2", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0 },
+      canConfirm: true,
+    },
+    progress: [],
+    actions: [],
+    downloadReady: false,
+    failed: false,
+  },
+  deliveredProgress: {
+    project: { id: "deliveredProgress", displayName: "团团", state: "deliverable" },
+    order: { id: "o7", status: "paid", amountFen: 1 },
+    characterCandidates: { front: null, side: null, canConfirm: false },
+    progress: [
+      { id: "p1", label: "照片已接收", state: "completed" },
+      { id: "p2", label: "母图已确认", state: "completed" },
+      { id: "p3", label: "生成七个动作", state: "completed" },
+      { id: "p4", label: "抠图与打包", state: "completed" },
+    ],
+    actions: actions(["已完成", "已完成", "已完成", "已完成", "已完成", "已完成", "已完成"]),
+    downloadReady: true,
+    failed: false,
   },
   ready: {
     project: { id: "ready", displayName: "团团", state: "deliverable" },
@@ -153,7 +204,10 @@ export default function UiGallery() {
       {Object.keys(FIXTURES).map((key) => (
         <section key={key} style={{ display: "grid", gap: "12px" }}>
           <h2>{key}</h2>
-          <ProjectWorkflow mode="progress" projectId={key} />
+          <ProjectWorkflow
+            mode={key.startsWith("char") ? "character" : key === "ready" ? "delivery" : "progress"}
+            projectId={key}
+          />
         </section>
       ))}
     </div>
