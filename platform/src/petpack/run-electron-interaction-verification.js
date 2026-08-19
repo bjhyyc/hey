@@ -672,11 +672,25 @@ async function findOpaqueInteractionPoint(
   throw new InteractionCheckError(check, "No opaque PetPack interaction point was found");
 }
 
-async function triggerStableHover(petWindow, animationId, hoverDelayMs, verificationCursor) {
+async function triggerStableHover(petWindow, animationId, hoverDelayMs, verificationCursor, hoverCooldownMs = 0) {
   const webContents = petWindow.webContents;
   const outside = { x: 2, y: 2 };
   sendMouseMove(petWindow, outside, verificationCursor);
   await delay(100);
+  // Earlier checks leave the cursor resting on the pet while their animations
+  // play out, which is a real hover and legitimately starts the hover rule's
+  // cooldown. Probing inside that window would fail against a pet that is
+  // behaving correctly, so wait the declared cooldown out before measuring.
+  const cooldownMs = Number(hoverCooldownMs) || 0;
+  if (cooldownMs > 0) {
+    const priorTrace = await readTrace(webContents);
+    const lastHoverAt = priorTrace.reduce(
+      (latest, entry) => (entry.animation === animationId && entry.at > latest ? entry.at : latest),
+      0
+    );
+    const remainingMs = lastHoverAt ? cooldownMs - (Date.now() - lastHoverAt) : 0;
+    if (remainingMs > 0) await delay(Math.min(remainingMs + 250, cooldownMs + 250));
+  }
   const stablePoint = await findStableClientOpaquePoint(webContents);
   const points = [stablePoint, ...(await getSpritePoints(webContents))].filter(Boolean);
   for (const point of points) {
@@ -756,7 +770,8 @@ async function runInteractionChecks({ app, petWindow, panelWindow, behavior, run
     petWindow,
     actions["hover-attention"].id,
     behavior.timing.hoverDelayMs,
-    verificationCursor
+    verificationCursor,
+    behavior.timing.hoverCooldownMs
   );
   const hoverBaseline = stableHover.hoverStartedAt;
   const hoverEntry = stableHover.entry;
@@ -770,6 +785,11 @@ async function runInteractionChecks({ app, petWindow, panelWindow, behavior, run
     actions.idle.id,
     actions["hover-attention"].durationMs + 4000
   );
+  // Leave and re-enter the pet so a fresh hover session begins: the cooldown,
+  // not the session, is what must keep the action from firing again.
+  sendMouseMove(petWindow, outside, verificationCursor);
+  await delay(150);
+  sendMouseMove(petWindow, stableHover.point, verificationCursor);
   await delay(behavior.timing.hoverDelayMs + 700);
   const hoverTrace = await readTrace(webContents);
   const hoverStarts = hoverTrace.filter(
@@ -778,7 +798,7 @@ async function runInteractionChecks({ app, petWindow, panelWindow, behavior, run
   assertCheck(
     hoverStarts.length === 1,
     "hoverTwoSecondsOnceWithCooldown",
-    "Hover action repeated without a new opaque hover session"
+    `Hover action repeated inside its ${behavior.timing.hoverCooldownMs}ms cooldown`
   );
   checks.hoverTwoSecondsOnceWithCooldown = true;
 
