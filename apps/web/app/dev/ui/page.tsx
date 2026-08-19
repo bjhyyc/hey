@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PhotoSlots } from "@/components/PhotoSlots";
 import { PhotoUploadWorkflow } from "@/components/PhotoUploadWorkflow";
+import { ProjectList } from "@/components/ProjectList";
 import { ProjectWorkflow } from "@/components/ProjectWorkflow";
 import { emptyPhotoSlots, type PhotoFileSlots } from "@/lib/photo-slots";
 import type { ProjectView } from "@/lib/studio-browser-api";
@@ -35,6 +36,19 @@ function actions(states: string[]): ProjectView["actions"] {
     };
   });
 }
+
+const LIST_ITEMS = [
+  { project: { id: "a", displayName: "团团", state: "deliverable", updatedAt: "2026-08-19T04:29:00Z" },
+    order: { status: "paid" }, productionState: "deliverable", downloadReady: true, failed: false, nextStep: "delivery" },
+  { project: { id: "b", displayName: "毛毛", state: "video_generating", updatedAt: "2026-08-19T03:10:00Z" },
+    order: { status: "paid" }, productionState: "video_generating", downloadReady: false, failed: false, nextStep: "progress" },
+  { project: { id: "c", displayName: "橘子", state: "awaiting_photos", updatedAt: "2026-08-18T21:02:00Z" },
+    order: { status: "paid" }, productionState: "awaiting_photos", downloadReady: false, failed: false, nextStep: "photos" },
+  { project: { id: "d", displayName: "小黑", state: "awaiting_confirmation", updatedAt: "2026-08-18T20:41:00Z" },
+    order: { status: "paid" }, productionState: "awaiting_confirmation", downloadReady: false, failed: false, nextStep: "character" },
+  { project: { id: "e", displayName: "豆豆", state: "failed", updatedAt: "2026-08-18T19:15:00Z" },
+    order: { status: "paid" }, productionState: "failed", downloadReady: false, failed: true, nextStep: "progress" },
+];
 
 const MASTER_PREVIEW = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><ellipse cx='210' cy='205' rx='72' ry='58' fill='%23b9c6bd'/><circle cx='210' cy='128' r='46' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>母图预览</text></svg>";
 
@@ -143,6 +157,12 @@ if (typeof window !== "undefined") {
   const real = window.__galleryRealFetch;
   window.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (/\/api\/studio\/projects$/.test(url)) {
+      return new Response(JSON.stringify({ items: LIST_ITEMS }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     const match = /\/api\/studio\/projects\/([^/?]+)$/.exec(url);
     const fixture = match ? FIXTURES[match[1]] : null;
     if (!fixture) return real(input, init);
@@ -193,6 +213,10 @@ export default function UiGallery() {
         <h1>状态画廊</h1>
         <p>真实项目跑不出来的中间状态在这里用假数据渲染，用于统一各页样式。</p>
       </header>
+      <section style={{ display: "grid", gap: "12px" }}>
+        <h2>projects · 列表五态</h2>
+        <ProjectList />
+      </section>
       <section style={{ display: "grid", gap: "12px" }}>
         <h2>photos · 空态</h2>
         <PhotoUploadWorkflow projectId="gallery" />

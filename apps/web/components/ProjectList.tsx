@@ -41,6 +41,19 @@ function statusLabel(item: ProjectSummary) {
   return STATE_LABELS[state] || "制作中";
 }
 
+// Emerald means "ready for you", amber means "we need you", plain means
+// "we are working"; danger stays for the states that need a human.
+const WAITING_ON_CUSTOMER = new Set([
+  "未完成付款", "等待上传照片", "等待确认形象", "草稿",
+]);
+
+function statusTone(label: string, failed: boolean) {
+  if (failed || label === "需要处理") return "is-danger";
+  if (label === "可下载") return "is-ready";
+  if (WAITING_ON_CUSTOMER.has(label)) return "is-waiting";
+  return "is-working";
+}
+
 function pad(value: number) {
   return String(value).padStart(2, "0");
 }
@@ -79,7 +92,10 @@ export function ProjectList() {
           <small>{updatedLabel(item.project.updatedAt)}</small>
         </span>
         <span className="project-card-side">
-          <span className={"status-pill" + (item.failed ? " status-error" : "")}>{statusLabel(item)}</span>
+          {(() => {
+            const label = statusLabel(item);
+            return <span className={"status-pill " + statusTone(label, item.failed)}>{label}</span>;
+          })()}
           <small className="project-card-hint">{route.hint} →</small>
         </span>
       </Link>
