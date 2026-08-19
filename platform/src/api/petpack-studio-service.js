@@ -586,6 +586,27 @@ class PetPackStudioService {
         disposition: "inline"
       });
       signedCandidates[view] = { ...candidate, view, previewUrl: preview.url };
+
+      // Sign every earlier attempt too, so a customer out of regenerations can
+      // still pick whichever version turned out best rather than the last one.
+      if (typeof this.repository.listCharacterCandidates === "function") {
+        const history = await this.repository.listCharacterCandidates(bundle.project.id, view);
+        const signedHistory = [];
+        for (const attempt of history) {
+          if (typeof attempt.objectKey !== "string" || !attempt.objectKey.startsWith("private/")) continue;
+          const grant = await this.objectStore.createDownloadGrant({
+            objectKey: attempt.objectKey,
+            disposition: "inline"
+          });
+          signedHistory.push({
+            id: attempt.id,
+            generationAttempt: attempt.generationAttempt,
+            previewUrl: grant.url,
+            isCurrent: attempt.id === candidate.id
+          });
+        }
+        signedCandidates[view].attempts = signedHistory;
+      }
     }
     const actions = run && typeof this.repository.listActionProgress === "function"
       ? await this.repository.listActionProgress(run.id)

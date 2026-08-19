@@ -16,6 +16,15 @@ export type CharacterCandidate = {
   previewUrl: string;
   canRegenerate: boolean;
   remainingRegenerations: number;
+  // Every version generated for this view; empty until there is a choice.
+  attempts: CharacterAttempt[];
+};
+
+export type CharacterAttempt = {
+  id: string;
+  generationAttempt: number;
+  previewUrl: string;
+  isCurrent: boolean;
 };
 
 export type ProjectView = {

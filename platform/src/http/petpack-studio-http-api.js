@@ -521,7 +521,15 @@ function serializeProjectView(value) {
     view: safeString(candidate.view, { maxLength: 16 }),
     previewUrl: safeString(candidate.previewUrl, { maxLength: 4096 }),
     canRegenerate: safeBoolean(candidate.canRegenerate),
-    remainingRegenerations: safeInteger(candidate.remainingRegenerations)
+    remainingRegenerations: safeInteger(candidate.remainingRegenerations),
+    attempts: Array.isArray(candidate.attempts)
+      ? candidate.attempts.slice(0, 8).map((attempt) => compactObject({
+          id: safeString(attempt.id, { maxLength: 256 }),
+          generationAttempt: safeInteger(attempt.generationAttempt),
+          previewUrl: safeString(attempt.previewUrl, { maxLength: 4096 }),
+          isCurrent: safeBoolean(attempt.isCurrent)
+        }))
+      : []
   }) : null;
   return {
     project: value?.project ? compactObject({

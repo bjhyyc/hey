@@ -4,16 +4,45 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { studioBrowserApi, type ProjectView } from "@/lib/studio-browser-api";
 
-function Candidate({ candidate, label, onRegenerate, busy }: {
+function Candidate({ candidate, label, onRegenerate, busy, selectedId, onSelect }: {
   candidate: ProjectView["characterCandidates"]["front"];
   label: string;
   onRegenerate: () => void;
   busy: boolean;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
 }) {
+  const attempts = candidate?.attempts ?? [];
+  const chosen = attempts.find((attempt) => attempt.id === selectedId) ?? null;
+  const previewUrl = chosen?.previewUrl ?? candidate?.previewUrl;
   return <article className="candidate-card">
     <div className="candidate-preview">
-      {candidate?.previewUrl ? <img alt={`${label}母图`} src={candidate.previewUrl} /> : <span>正在生成 {label}</span>}
+      {previewUrl ? <img alt={`${label}母图`} src={previewUrl} /> : <span>正在生成 {label}</span>}
     </div>
+    {/* Regenerating replaces the picture on screen but keeps every earlier
+        version on record, so once there is more than one, let the customer
+        keep whichever is best rather than whichever came last. */}
+    {attempts.length > 1 ? (
+      <div className="candidate-attempts" role="radiogroup" aria-label={`选择${label}母图版本`}>
+        {attempts.map((attempt) => {
+          const active = (selectedId ?? candidate?.id) === attempt.id;
+          return (
+            <button
+              aria-checked={active}
+              className={active ? "is-active" : undefined}
+              disabled={busy}
+              key={attempt.id}
+              onClick={() => onSelect(attempt.id)}
+              role="radio"
+              type="button"
+            >
+              <img alt={`${label}第 ${attempt.generationAttempt} 版`} src={attempt.previewUrl} />
+              <span>第 {attempt.generationAttempt} 版</span>
+            </button>
+          );
+        })}
+      </div>
+    ) : null}
     <footer><span><strong>{label}</strong><small>{candidate ? `还可重生成 ${candidate.remainingRegenerations} 次` : "请稍候"}</small></span>
       <button disabled={!candidate?.canRegenerate || busy} onClick={onRegenerate} type="button">重新生成</button></footer>
   </article>;
@@ -23,6 +52,9 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
   const [view, setView] = useState<ProjectView | null>(null);
   const [message, setMessage] = useState("正在读取项目…");
   const [busy, setBusy] = useState(false);
+  // Which version of each master the customer wants; null means the latest.
+  const [chosenFront, setChosenFront] = useState<string | null>(null);
+  const [chosenSide, setChosenSide] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -75,18 +107,18 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
         ? <p className="regenerating-note">正在重新生成，通常 1~2 分钟；完成后这里会自动更新。</p>
         : null}
       <div className="candidate-grid">
-        <Candidate candidate={front} label="正面" busy={busy} onRegenerate={() => void (async () => {
-          setBusy(true); try { await studioBrowserApi.regenerateCharacter(projectId, "front"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }
+        <Candidate candidate={front} label="正面" busy={busy} selectedId={chosenFront} onSelect={setChosenFront} onRegenerate={() => void (async () => {
+          setBusy(true); setChosenFront(null); try { await studioBrowserApi.regenerateCharacter(projectId, "front"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }
         })()} />
-        <Candidate candidate={side} label="侧面" busy={busy} onRegenerate={() => void (async () => {
-          setBusy(true); try { await studioBrowserApi.regenerateCharacter(projectId, "side"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }
+        <Candidate candidate={side} label="侧面" busy={busy} selectedId={chosenSide} onSelect={setChosenSide} onRegenerate={() => void (async () => {
+          setBusy(true); setChosenSide(null); try { await studioBrowserApi.regenerateCharacter(projectId, "side"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }
         })()} />
       </div>
       <button className="primary-button form-submit" disabled={!canConfirm || !front || !side || busy} onClick={() => void (async () => {
         if (!front || !side) return;
         setBusy(true);
         try {
-          await studioBrowserApi.confirmCharacter(projectId, front.id, side.id);
+          await studioBrowserApi.confirmCharacter(projectId, chosenFront ?? front.id, chosenSide ?? side.id);
           window.location.assign(`/projects/${encodeURIComponent(projectId)}/progress`);
         } catch (error) { setMessage(error instanceof Error ? error.message : "确认失败"); setBusy(false); }
       })()} type="button">{busy ? "正在确认…" : "就用这个形象，开始制作"}</button>

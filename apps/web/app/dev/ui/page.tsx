@@ -94,7 +94,7 @@ const FIXTURES: Record<string, ProjectView> = {
     project: { id: "charPartial", displayName: "团团", state: "producing" },
     order: { id: "o5", status: "paid", amountFen: 1 },
     characterCandidates: {
-      front: { id: "f1", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 2 },
+      front: { id: "f1", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 2, attempts: [] },
       side: null,
       canConfirm: false,
     },
@@ -107,8 +107,8 @@ const FIXTURES: Record<string, ProjectView> = {
     project: { id: "charReady", displayName: "团团", state: "producing" },
     order: { id: "o6", status: "paid", amountFen: 1 },
     characterCandidates: {
-      front: { id: "f2", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 1 },
-      side: { id: "s2", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0 },
+      front: { id: "f2", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 1, attempts: [] },
+      side: { id: "s2", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0, attempts: [] },
       canConfirm: true,
     },
     progress: [],
@@ -123,9 +123,35 @@ const FIXTURES: Record<string, ProjectView> = {
     project: { id: "charRegenerating", displayName: "团团", state: "producing" },
     order: { id: "o8", status: "paid", amountFen: 1 },
     characterCandidates: {
-      front: { id: "f3", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 1 },
-      side: { id: "s3", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 2 },
+      front: { id: "f3", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 1, attempts: [] },
+      side: { id: "s3", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 2, attempts: [] },
       canConfirm: false,
+    },
+    progress: [],
+    actions: [],
+    downloadReady: false,
+    failed: false,
+  },
+  charChoose: {
+    // Regenerations spent, three versions on record: the customer should be
+    // able to keep the best one rather than whichever came last.
+    project: { id: "charChoose", displayName: "团团", state: "producing" },
+    order: { id: "o9", status: "paid", amountFen: 1 },
+    characterCandidates: {
+      front: {
+        id: "f-v3", view: "front", previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e0dee6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 3 版</text></svg>",
+        canRegenerate: false, remainingRegenerations: 0,
+        attempts: [
+          { id: "f-v1", generationAttempt: 1, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e6dfd6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 1 版</text></svg>", isCurrent: false },
+          { id: "f-v2", generationAttempt: 2, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 2 版</text></svg>", isCurrent: false },
+          { id: "f-v3", generationAttempt: 3, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e0dee6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 3 版</text></svg>", isCurrent: true }
+        ]
+      },
+      side: {
+        id: "s-v1", view: "side", previewUrl: MASTER_PREVIEW,
+        canRegenerate: true, remainingRegenerations: 2, attempts: []
+      },
+      canConfirm: true,
     },
     progress: [],
     actions: [],

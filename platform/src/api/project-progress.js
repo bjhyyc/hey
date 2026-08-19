@@ -109,12 +109,15 @@ function createUserProjectView({ project, order, run, characterCandidates, deliv
     if (!candidate) return null;
     const used = Number(run?.[`${view}UserRegenerationsUsed`] || 0);
     const remainingRegenerations = Math.max(0, MAX_USER_REGENERATIONS_PER_VIEW - used);
+    const attempts = Array.isArray(candidate.attempts) ? candidate.attempts : [];
     return {
       id: candidate.id,
       view,
       previewUrl: candidate.previewUrl,
       canRegenerate: paidAndConfirming && remainingRegenerations > 0,
-      remainingRegenerations
+      remainingRegenerations,
+      // Only worth offering a choice once there is more than one version.
+      attempts: attempts.length > 1 ? attempts : []
     };
   };
   const front = candidateFor("front");

@@ -1806,6 +1806,41 @@ class PostgresPetPackStudioRepository {
     });
   }
 
+  /**
+   * Every regeneration inserts a new candidate rather than replacing the last,
+   * so the earlier attempts are still here. Listing them lets a customer who
+   * has spent their regenerations keep whichever version was actually best,
+   * instead of being held to the one that happened to come last.
+   */
+  async listCharacterCandidates(projectId, view) {
+    const safeProjectId = requiredString(projectId, "Project ID");
+    if (!["front", "side"].includes(view)) throw new Error("Character candidate view must be front or side");
+    return this._transaction(async (tx) => rows(await tx.query(
+      `SELECT candidate.id, candidate.project_id, candidate.qa_status, candidate.confirmed_at,
+              candidate.kind, candidate.generation_attempt, asset.object_key
+         FROM image_candidate candidate
+         JOIN production_run run
+           ON run.id = candidate.run_id
+          AND run.project_id = candidate.project_id
+          AND run.order_id = candidate.order_id
+         JOIN master_image_generation generation
+           ON generation.image_candidate_id = candidate.id
+          AND generation.run_id = run.id
+          AND generation.kind = $2
+          AND generation.status = 'qa_passed'
+         JOIN media_asset asset
+           ON asset.id = candidate.media_asset_id
+          AND asset.id = generation.normalized_media_asset_id
+        WHERE candidate.project_id = $1
+          AND candidate.kind = $2
+          AND candidate.qa_status = 'passed'
+          AND asset.kind = ($2 || '_master')::media_kind
+          AND asset.deleted_at IS NULL
+        ORDER BY candidate.generation_attempt ASC`,
+      [safeProjectId, view]
+    )).map((row) => ({ ...mapCharacterCandidate(row), generationAttempt: Number(row.generation_attempt) })));
+  }
+
   async getCharacterCandidate(projectId, view, characterMasterRevisionId) {
     const safeProjectId = requiredString(projectId, "Project ID");
     if (!["front", "side"].includes(view)) throw new Error("Character candidate view must be front or side");
@@ -1823,14 +1858,14 @@ class PostgresPetPackStudioRepository {
              ON run.id = candidate.run_id
             AND run.project_id = candidate.project_id
             AND run.order_id = candidate.order_id
-            AND candidate.generation_attempt = run.${attemptColumn}
+            AND ($3::uuid IS NOT NULL OR candidate.generation_attempt = run.${attemptColumn})
            JOIN master_image_generation generation
              ON generation.image_candidate_id = candidate.id
             AND generation.run_id = run.id
             AND generation.project_id = run.project_id
             AND generation.order_id = run.order_id
             AND generation.kind = $2
-            AND generation.generation_attempt = run.${attemptColumn}
+            AND ($3::uuid IS NOT NULL OR generation.generation_attempt = run.${attemptColumn})
             AND generation.status = 'qa_passed'
            JOIN media_asset asset
              ON asset.id = candidate.media_asset_id
