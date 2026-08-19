@@ -2192,9 +2192,88 @@ class PostgresPetPackStudioRepository {
       return this._paymentResult(tx, resultingOrder, locked.project_id);
     });
   }
+
+  // ---- photo pre-check -----------------------------------------------------
+
+  async createPhotoPrecheck({ userId, species, fingerprint, photoSha256s, verdicts, passed, modelId, promptVersion } = {}) {
+    const id = this.idFactory();
+    return this._transaction(async (tx) => {
+      const inserted = rows(await tx.query(
+        `INSERT INTO photo_precheck
+           (id, user_id, species, fingerprint, photo_sha256s, verdicts, passed, model_id, prompt_version)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9)
+         ON CONFLICT (fingerprint) DO UPDATE SET fingerprint = photo_precheck.fingerprint
+         RETURNING id, user_id, species, fingerprint, photo_sha256s, verdicts, passed,
+                   model_id, prompt_version, created_at`,
+        [
+          id, requiredString(userId, "User ID"), assertPetSpecies(species),
+          requiredString(fingerprint, "Precheck fingerprint"),
+          JSON.stringify(photoSha256s), JSON.stringify(verdicts),
+          Boolean(passed), requiredString(modelId, "Precheck model ID"),
+          requiredString(promptVersion, "Precheck prompt version")
+        ]
+      ));
+      return mapPhotoPrecheck(inserted[0]);
+    });
+  }
+
+  async findPhotoPrecheckByFingerprint(fingerprint) {
+    return this._transaction(async (tx) => {
+      const found = rows(await tx.query(
+        `SELECT id, user_id, species, fingerprint, photo_sha256s, verdicts, passed,
+                model_id, prompt_version, created_at
+           FROM photo_precheck WHERE fingerprint = $1`,
+        [requiredString(fingerprint, "Precheck fingerprint")]
+      ));
+      return found.length > 0 ? mapPhotoPrecheck(found[0]) : null;
+    });
+  }
+
+  async getPhotoPrecheck(id) {
+    return this._transaction(async (tx) => {
+      const found = rows(await tx.query(
+        `SELECT id, user_id, species, fingerprint, photo_sha256s, verdicts, passed,
+                model_id, prompt_version, created_at
+           FROM photo_precheck WHERE id = $1`,
+        [requiredString(id, "Precheck ID")]
+      ));
+      return found.length > 0 ? mapPhotoPrecheck(found[0]) : null;
+    });
+  }
+
+  async countRecentPhotoPrechecks({ userId, windowHours = 24 } = {}) {
+    const window = Number(windowHours);
+    if (!Number.isFinite(window) || window <= 0 || window > 168) {
+      throw new Error("Precheck quota window must be 1-168 hours");
+    }
+    return this._transaction(async (tx) => {
+      const counted = rows(await tx.query(
+        `SELECT count(*)::int AS n FROM photo_precheck
+          WHERE user_id = $1 AND created_at > now() - ($2 || ' hours')::interval`,
+        [requiredString(userId, "User ID"), String(window)]
+      ));
+      return counted[0].n;
+    });
+  }
+}
+
+function mapPhotoPrecheck(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    species: row.species,
+    fingerprint: row.fingerprint,
+    photoSha256s: Array.isArray(row.photo_sha256s) ? row.photo_sha256s : [],
+    verdicts: row.verdicts || null,
+    passed: Boolean(row.passed),
+    modelId: row.model_id,
+    promptVersion: row.prompt_version,
+    createdAt: row.created_at
+  };
 }
 
 module.exports = {
+  mapPhotoPrecheck,
   ADMIN_OPERATIONS_DEFAULT_LIMIT,
   ADMIN_OPERATIONS_MAX_LIMIT,
   ADMIN_OPERATION_STATUSES,

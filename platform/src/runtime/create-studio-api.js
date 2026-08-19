@@ -3,6 +3,7 @@ const { AdminImagePromptService } = require("../api/admin-image-prompt-service")
 const { AdminOperationsService } = require("../api/admin-operations-service");
 const { AdminPromptService } = require("../api/admin-prompt-service");
 const { PetPackStudioService } = require("../api/petpack-studio-service");
+const { createPhotoPrecheckVisionClient } = require("../providers/photo-precheck-vision-client");
 const { createCloudBasePhoneAuth } = require("../auth/create-cloudbase-phone-auth");
 const { loadModelRegistry } = require("../config/model-registry");
 const { createPetPackStudioHttpApi } = require("../http/petpack-studio-http-api");
@@ -54,6 +55,11 @@ function loadStudioApiRuntimeConfig(environment = process.env) {
     generationSalesEnabled: production
       ? environment.PETPACK_GENERATION_SALES_ENABLED === "true"
       : environment.PETPACK_GENERATION_SALES_ENABLED !== "false",
+    photoPrecheckEnforced: environment.PETPACK_PHOTO_PRECHECK_ENFORCED === "true",
+    precheckDailyLimit: (() => {
+      const limit = Number(environment.PETPACK_PRECHECK_DAILY_LIMIT);
+      return Number.isSafeInteger(limit) && limit >= 1 && limit <= 100 ? limit : 8;
+    })(),
     internalBearerToken
   });
 }
@@ -159,6 +165,7 @@ async function createStudioApiRuntime({
   objectDriver,
   objectStore,
   paymentProvider,
+  precheckVisionClient,
   kaipayClient,
   notificationProtocol,
   service,
@@ -209,12 +216,20 @@ async function createStudioApiRuntime({
       orderStore: runtimeRepository,
       logger
     });
+    const runtimePrecheckVisionClient = precheckVisionClient || createPhotoPrecheckVisionClient({
+      registry: runtimeModelRegistry,
+      fetchImpl,
+      logger
+    });
     const runtimeService = service || new PetPackStudioService({
       repository: runtimeRepository,
       paymentProvider: runtimePaymentProvider,
       objectStore: runtimeObjectStore,
       workflow: runtimeWorkflow,
       checkoutEnabled: config.generationSalesEnabled,
+      precheckVisionClient: runtimePrecheckVisionClient,
+      photoPrecheckEnforced: config.photoPrecheckEnforced,
+      precheckDailyLimit: config.precheckDailyLimit,
       logger
     });
     const runtimeControlsRepository = controlsRepository || new PostgresProductionControlsRepository({

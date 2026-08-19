@@ -11,6 +11,8 @@ const {
   resolveDownloadTtlSeconds
 } = require("../storage/private-object-store");
 const { createUserProjectSummary, createUserProjectView } = require("./project-progress");
+const { assertPetSpecies } = require("../domain/action-catalog");
+const crypto = require("node:crypto");
 
 const SOURCE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -25,7 +27,8 @@ function requireRepository(repository) {
     "getReservedSourcePhoto", "acceptSourcePhoto", "getRunByProject",
     "getSourcePhotoRevision",
     "getCharacterCandidate", "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload",
-    "markOrderPaymentState"
+    "markOrderPaymentState",
+    "createPhotoPrecheck", "findPhotoPrecheckByFingerprint", "getPhotoPrecheck", "countRecentPhotoPrechecks"
   ];
   const missing = methods.filter((method) => !repository || typeof repository[method] !== "function");
   if (missing.length > 0) throw new Error(`PetPack Studio repository is incomplete: ${missing.join(", ")}`);
@@ -80,6 +83,78 @@ function resolveDeliveryDownloadTtlSeconds({ expiresAt, now = Date.now(), storag
   return Math.min(configuredTtl, remainingSeconds);
 }
 
+const PRECHECK_MAX_DATA_URL_BYTES = 1536 * 1024;
+const PRECHECK_TTL_HOURS = 24;
+const PRECHECK_VIEW_LABELS = Object.freeze({ front: "正面", side45: "侧面" });
+
+function precheckFingerprint(species, photoSha256s) {
+  const sorted = [...photoSha256s].sort();
+  return crypto.createHash("sha256").update(`${species}:${sorted.join(",")}`).digest("hex");
+}
+
+function ensurePrecheckPhotoSet(photos) {
+  if (!Array.isArray(photos) || photos.length < 3 || photos.length > 4) {
+    throw new Error("预检需要 3 到 4 张照片");
+  }
+  return photos.map((photo, index) => {
+    const ordinal = Number(photo && photo.ordinal);
+    if (ordinal !== index + 1) throw new Error("预检照片序号必须为 1..N");
+    if (typeof photo.originalSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(photo.originalSha256)) {
+      throw new Error(`第 ${ordinal} 张照片缺少校验和`);
+    }
+    if (typeof photo.dataUrl !== "string" ||
+        !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(photo.dataUrl)) {
+      throw new Error(`第 ${ordinal} 张照片预览格式无效`);
+    }
+    if (photo.dataUrl.length > PRECHECK_MAX_DATA_URL_BYTES) {
+      throw new Error(`第 ${ordinal} 张照片预览过大`);
+    }
+    return { ordinal, originalSha256: photo.originalSha256.toLowerCase(), dataUrl: photo.dataUrl };
+  });
+}
+
+// Deterministic verdicts from the model report: slots 1-2 must be usable front
+// full-body shots, slot 3 (and 4 when present) usable 45-degree side shots, and
+// every photo must show the same animal. Framing faults reject rather than warn
+// - weak references cost the customer a weak result, so they are worth a
+// re-shoot before any money changes hands.
+function derivePrecheckVerdicts(report, photoCount) {
+  const byOrdinal = new Map(
+    (Array.isArray(report.photos) ? report.photos : [])
+      .filter((entry) => Number.isInteger(entry?.ordinal))
+      .map((entry) => [entry.ordinal, entry])
+  );
+  const verdicts = [];
+  for (let ordinal = 1; ordinal <= photoCount; ordinal += 1) {
+    const expectedView = ordinal <= 2 ? "front" : "side45";
+    const judged = byOrdinal.get(ordinal);
+    const reasons = [];
+    if (!judged) {
+      reasons.push("未能识别这张照片");
+    } else {
+      if (!judged.pet_present) reasons.push("画面里没有真实宠物");
+      else {
+        if (!judged.species_match) reasons.push("宠物种类与所选不符");
+        if (!judged.single_animal) reasons.push("画面里有多只动物");
+        if (!judged.full_body) reasons.push("需要完整全身（含四肢和尾巴）");
+        if (judged.view !== expectedView) {
+          reasons.push(`需要${PRECHECK_VIEW_LABELS[expectedView]}角度`);
+        }
+        if (!judged.sharp) reasons.push("画面不够清晰");
+        if (!judged.unobstructed) reasons.push("主体遮挡过多");
+      }
+      if (reasons.length > 0 && judged.issue) reasons.push(judged.issue);
+    }
+    verdicts.push({ ordinal, ok: reasons.length === 0, reasons });
+  }
+  const samePet = report.same_animal === true;
+  const setReasons = samePet
+    ? []
+    : ["这几张照片看起来不是同一只宠物"];
+  const passed = samePet && verdicts.every((verdict) => verdict.ok);
+  return { verdicts, samePet, passed, setReasons };
+}
+
 /**
  * API service used by HTTP route handlers. It returns normal-user-safe DTOs;
  * prompts, provider credentials, raw provider output, QA internals, and object
@@ -92,6 +167,9 @@ class PetPackStudioService {
     objectStore,
     workflow,
     checkoutEnabled = true,
+    precheckVisionClient = null,
+    photoPrecheckEnforced = false,
+    precheckDailyLimit = 8,
     logger = console
   } = {}) {
     this.repository = requireRepository(repository);
@@ -110,15 +188,111 @@ class PetPackStudioService {
     this.workflow = workflow;
     if (typeof checkoutEnabled !== "boolean") throw new Error("Checkout admission must be a boolean");
     this.checkoutEnabled = checkoutEnabled;
+    if (typeof photoPrecheckEnforced !== "boolean") throw new Error("Photo precheck enforcement must be a boolean");
+    if (photoPrecheckEnforced && (!precheckVisionClient || !precheckVisionClient.configured)) {
+      throw new Error("Photo precheck enforcement requires a configured vision client");
+    }
+    if (!Number.isSafeInteger(precheckDailyLimit) || precheckDailyLimit < 1 || precheckDailyLimit > 100) {
+      throw new Error("Precheck daily limit must be 1-100");
+    }
+    this.precheckVisionClient = precheckVisionClient;
+    this.photoPrecheckEnforced = photoPrecheckEnforced;
+    this.precheckDailyLimit = precheckDailyLimit;
     this.logger = logger;
   }
 
-  async createCheckout({ actor, planCode, displayName, paymentMethod, paymentChannel, idempotencyKey, species }) {
+  /**
+   * Judges a candidate photo set BEFORE payment. Identical sets are served from
+   * the stored verdict without a model call and without consuming quota.
+   */
+  async photoPrecheck({ actor, species, photos }) {
+    const user = requireActor(actor);
+    if (!this.precheckVisionClient || !this.precheckVisionClient.configured) {
+      const error = new Error("照片预检暂不可用，请稍后重试");
+      error.code = "precheck_unavailable";
+      throw error;
+    }
+    const safeSpecies = assertPetSpecies(species);
+    const photoSet = ensurePrecheckPhotoSet(photos);
+    const fingerprint = precheckFingerprint(safeSpecies, photoSet.map((photo) => photo.originalSha256));
+
+    const cached = await this.repository.findPhotoPrecheckByFingerprint(fingerprint);
+    if (cached && cached.promptVersion === this.precheckVisionClient.promptVersion) {
+      this.logger.info?.("petpack.precheck.cache_hit", { userId: user.id, precheckId: cached.id, passed: cached.passed });
+      return this._precheckResponse(cached, { remainingToday: null });
+    }
+
+    const used = await this.repository.countRecentPhotoPrechecks({ userId: user.id });
+    if (used >= this.precheckDailyLimit) {
+      const error = new Error("今日预检次数已用完，请明天再试");
+      error.code = "precheck_quota_exhausted";
+      throw error;
+    }
+
+    const requestId = crypto.randomUUID();
+    const report = await this.precheckVisionClient.judgePhotoSet({ species: safeSpecies, photos: photoSet, requestId });
+    const { verdicts, samePet, passed, setReasons } = derivePrecheckVerdicts(report, photoSet.length);
+    const stored = await this.repository.createPhotoPrecheck({
+      userId: user.id,
+      species: safeSpecies,
+      fingerprint,
+      photoSha256s: photoSet.map((photo) => photo.originalSha256),
+      verdicts: { verdicts, samePet, setReasons },
+      passed,
+      modelId: this.precheckVisionClient.modelId,
+      promptVersion: this.precheckVisionClient.promptVersion
+    });
+    this.logger.info?.("petpack.precheck.judged", {
+      userId: user.id, precheckId: stored.id, passed, samePet,
+      failedSlots: verdicts.filter((verdict) => !verdict.ok).map((verdict) => verdict.ordinal)
+    });
+    return this._precheckResponse(stored, { remainingToday: this.precheckDailyLimit - used - 1 });
+  }
+
+  _precheckResponse(row, { remainingToday }) {
+    const payload = row.verdicts && Array.isArray(row.verdicts.verdicts)
+      ? row.verdicts
+      : { verdicts: [], samePet: false, setReasons: [] };
+    return {
+      precheckId: row.id,
+      passed: row.passed,
+      samePet: payload.samePet,
+      verdicts: payload.verdicts,
+      setReasons: Array.isArray(payload.setReasons) ? payload.setReasons : [],
+      remainingToday
+    };
+  }
+
+  async _requirePassingPrecheck({ userId, species, precheckId }) {
+    if (typeof precheckId !== "string" || !precheckId.trim()) {
+      const error = new Error("需要先通过照片预检才能下单");
+      error.code = "precheck_required";
+      throw error;
+    }
+    const row = await this.repository.getPhotoPrecheck(precheckId.trim());
+    const ageMs = row ? Date.now() - new Date(row.createdAt).getTime() : Infinity;
+    if (!row || row.userId !== userId || !row.passed || row.species !== species ||
+        !(ageMs >= 0 && ageMs <= PRECHECK_TTL_HOURS * 3600 * 1000)) {
+      const error = new Error("需要先通过照片预检才能下单");
+      error.code = "precheck_required";
+      throw error;
+    }
+    return row;
+  }
+
+  async createCheckout({ actor, planCode, displayName, paymentMethod, paymentChannel, idempotencyKey, species, precheckId }) {
     const user = requireActor(actor);
     if (!this.checkoutEnabled) {
       const error = new Error("New PetPack orders are temporarily disabled");
       error.code = "generation_sales_disabled";
       throw error;
+    }
+    if (this.photoPrecheckEnforced) {
+      await this._requirePassingPrecheck({
+        userId: user.id,
+        species: assertPetSpecies(species),
+        precheckId
+      });
     }
     const order = await this.repository.createProjectOrder({
       userId: user.id,
@@ -181,6 +355,7 @@ class PetPackStudioService {
   }
 
   async createSourcePhotoUploadGrants({ actor, projectId, files }) {
+    const user = requireActor(actor);
     const bundle = await this.repository.getProjectBundle(requiredString(projectId, "Project ID"));
     requireProjectOwner(actor, bundle.project);
     ensurePaid(bundle);
@@ -189,6 +364,18 @@ class PetPackStudioService {
       throw new Error("Photo upload is not available at this stage");
     }
     const normalizedFiles = ensureSourcePhotoSet(files);
+    if (this.photoPrecheckEnforced) {
+      const fingerprint = precheckFingerprint(
+        bundle.order.species,
+        normalizedFiles.map((file) => file.sha256)
+      );
+      const precheck = await this.repository.findPhotoPrecheckByFingerprint(fingerprint);
+      if (!precheck || !precheck.passed || precheck.userId !== user.id) {
+        const error = new Error("这组照片尚未通过预检，请先在首页完成预检");
+        error.code = "precheck_required";
+        throw error;
+      }
+    }
     const grants = [];
     for (const file of normalizedFiles) {
       const objectKey = createProjectObjectKey({

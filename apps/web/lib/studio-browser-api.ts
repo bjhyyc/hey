@@ -66,7 +66,7 @@ export const studioBrowserApi = {
       ["projects", projectId, "payment-status"],
       { method: "POST", body: JSON.stringify({}) },
     ),
-  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; paymentChannel: KaipayPaymentChannel; idempotencyKey: string; species: PetSpecies }) =>
+  createCheckout: (input: { planCode: string; displayName: string; paymentMethod: string; paymentChannel: KaipayPaymentChannel; idempotencyKey: string; species: PetSpecies; precheckId?: string }) =>
     browserStudioRequest<{
       project: { id: string };
       order: { id: string; status: string; amountFen?: number };

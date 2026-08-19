@@ -234,7 +234,7 @@ function parsePhotoUploadGrantsBody(body) {
 
 function parseCheckoutBody(body) {
   const required = ["planCode", "displayName", "paymentMethod", "paymentChannel", "idempotencyKey"];
-  assertExactKeys(body, { allowed: [...required, "species"], required });
+  assertExactKeys(body, { allowed: [...required, "species", "precheckId"], required });
   const paymentChannel = requireString(body.paymentChannel, { maxLength: 16 }).toUpperCase();
   if (!["ALIPAY", "WXPAY"].includes(paymentChannel)) throw badRequest("支付渠道无效");
   // The web bundle deploys on its own schedule, so a checkout from a build that
@@ -248,8 +248,35 @@ function parseCheckoutBody(body) {
     paymentMethod: requireString(body.paymentMethod, { maxLength: 16 }),
     paymentChannel,
     idempotencyKey: requireString(body.idempotencyKey, { maxLength: 256 }),
-    species
+    species,
+    ...(body.precheckId === undefined ? {} : { precheckId: requireString(body.precheckId, { maxLength: 64 }) })
   };
+}
+
+// Downscaled data URLs make this the one deliberately large request body.
+const PRECHECK_MAX_JSON_BYTES = 8 * 1024 * 1024;
+
+function parsePhotoPrecheckBody(body) {
+  assertExactKeys(body, { allowed: ["species", "photos"], required: ["species", "photos"] });
+  const species = requireString(body.species, { maxLength: 8 });
+  if (!PET_SPECIES.includes(species)) throw badRequest("宠物种类无效");
+  if (!Array.isArray(body.photos) || body.photos.length < 3 || body.photos.length > 4) {
+    throw badRequest("预检需要 3 到 4 张照片");
+  }
+  const photos = body.photos.map((photo, index) => {
+    assertExactKeys(photo, {
+      allowed: ["ordinal", "originalSha256", "dataUrl"],
+      required: ["ordinal", "originalSha256", "dataUrl"]
+    });
+    const ordinal = Number(photo.ordinal);
+    if (ordinal !== index + 1) throw badRequest("预检照片序号无效");
+    return {
+      ordinal,
+      originalSha256: requireString(photo.originalSha256, { maxLength: 64 }),
+      dataUrl: requireString(photo.dataUrl, { maxLength: 2 * 1024 * 1024 })
+    };
+  });
+  return { species, photos };
 }
 
 function parsePhotoConfirmationBody(body) {
@@ -835,6 +862,15 @@ function mapError(error) {
   if (error?.code === "generation_sales_disabled") {
     return { status: 503, code: "generation_sales_disabled", message: "新订单暂未开放，请稍后再试" };
   }
+  if (error?.code === "precheck_quota_exhausted") {
+    return { status: 429, code: "precheck_quota_exhausted", message: error.message };
+  }
+  if (error?.code === "precheck_unavailable" || error?.code === "precheck_provider_error") {
+    return { status: 503, code: error.code, message: error.message };
+  }
+  if (error?.code === "precheck_required") {
+    return { status: 409, code: "precheck_required", message: error.message };
+  }
   if (error?.code === "character_regeneration_limit_reached") {
     return { status: 409, code: "character_regeneration_limit_reached", message: "该视角的重新生成次数已用完" };
   }
@@ -890,6 +926,7 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
   }
 
   if (normalService && method === "POST" && is("api", "checkout")) return { id: "checkout", requiresActor: true };
+  if (normalService && method === "POST" && is("api", "photo-precheck")) return { id: "photo_precheck", requiresActor: true };
   if (normalService && method === "GET" && is("api", "projects")) return { id: "project_list", requiresActor: true };
   if (normalService && method === "POST" && projectPrefix && segments.length === 4 && segments[2] && segments[3] === "payment-status") {
     return { id: "payment_status", requiresActor: true, projectId: requirePathParameter(segments[2], "项目 ID") };
@@ -1025,6 +1062,31 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
       case "checkout": {
         const body = parseCheckoutBody(decodeJsonObject(request.body, { maxJsonBytes }));
         return { status: 201, body: serializeCheckout(await normalService.createCheckout({ actor, ...body })) };
+      }
+      case "photo_precheck": {
+        const body = parsePhotoPrecheckBody(decodeJsonObject(request.body, { maxJsonBytes: PRECHECK_MAX_JSON_BYTES }));
+        const result = await normalService.photoPrecheck({ actor, ...body });
+        return {
+          status: 200,
+          body: compactObject({
+            precheckId: safeString(result.precheckId, { maxLength: 64 }),
+            passed: safeBoolean(result.passed),
+            samePet: safeBoolean(result.samePet),
+            verdicts: Array.isArray(result.verdicts)
+              ? result.verdicts.map((verdict) => compactObject({
+                  ordinal: safeInteger(verdict.ordinal),
+                  ok: safeBoolean(verdict.ok),
+                  reasons: Array.isArray(verdict.reasons)
+                    ? verdict.reasons.map((reason) => safeString(reason, { maxLength: 200 })).filter(Boolean)
+                    : []
+                }))
+              : [],
+            setReasons: Array.isArray(result.setReasons)
+              ? result.setReasons.map((reason) => safeString(reason, { maxLength: 200 })).filter(Boolean)
+              : [],
+            remainingToday: result.remainingToday === null ? undefined : safeInteger(result.remainingToday)
+          })
+        };
       }
       case "project_list": {
         assertNoBody(request);

@@ -84,13 +84,18 @@ describe("Electron interaction runner contract", () => {
         return { x: 7, y: 11 };
       }
     };
-    const cursor = createVerificationCursor(screen);
+    // Chromium reports a synthetic event's screen position from the real
+    // pointer, so the cursor must actually move it; a purely bookkeeping cursor
+    // leaves every hover probe sampling wherever the pointer already sat.
+    const warps = [];
+    const cursor = createVerificationCursor(screen, (x, y) => warps.push({ x, y }));
     expect(cursor.read()).toEqual({ x: 7, y: 11 });
     expect(cursor.set({ getBounds: () => ({ x: -120, y: 45 }) }, { x: 30, y: 55 })).toEqual({
       x: -90,
       y: 100
     });
     expect(cursor.read()).toEqual({ x: -90, y: 100 });
+    expect(warps).toEqual([{ x: -90, y: 100 }]);
     expect(screen.getCursorScreenPoint()).toEqual({ x: 7, y: 11 });
   });
 

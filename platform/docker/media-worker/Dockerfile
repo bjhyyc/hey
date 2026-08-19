@@ -134,6 +134,7 @@ RUN apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https
     libxss1 \
     xauth \
     xvfb \
+    xdotool \
   && rm -rf /var/lib/apt/lists/*
 
 # Build tooling is intentionally absent from the production runtime. The
