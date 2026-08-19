@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const PROTOCOL_VERSION = "petpack-electron-interaction/v1";
 const MAX_PACKAGE_BYTES = 320 * 1024 * 1024;
@@ -43,9 +44,28 @@ class InteractionCheckError extends Error {
   }
 }
 
-function createVerificationCursor(screen) {
+// Chromium fills a synthetic event's screenX/screenY from the real X pointer
+// rather than from sendInputEvent's globalX/globalY, and the pinned client
+// derives its hover hit test from that screen position. Faking the cursor is
+// therefore not enough: the pointer itself has to move, or every probe samples
+// whichever pixel the idle pointer happens to sit on.
+function warpSystemPointer(x, y) {
+  const result = spawnSync("/usr/bin/xdotool", ["mousemove", String(x), String(y)], {
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: 5000
+  });
+  if (result.error) throw new Error(`Verification pointer warp failed: ${result.error.message}`);
+  if (result.status !== 0) {
+    throw new Error(`Verification pointer warp exited ${result.status}: ${String(result.stderr || "").trim()}`);
+  }
+}
+
+function createVerificationCursor(screen, warpPointer = warpSystemPointer) {
   if (!screen || typeof screen.getCursorScreenPoint !== "function") {
     throw new Error("Electron interaction runner requires the native screen cursor API");
+  }
+  if (typeof warpPointer !== "function") {
+    throw new Error("Electron interaction runner requires a pointer warp implementation");
   }
   const initial = screen.getCursorScreenPoint();
   let point = {
@@ -64,6 +84,7 @@ function createVerificationCursor(screen) {
         throw new Error("Electron interaction cursor point is invalid");
       }
       point = { x: bounds.x + x, y: bounds.y + y };
+      warpPointer(point.x, point.y);
       return { ...point };
     },
     read() {
@@ -526,6 +547,22 @@ async function readRuntime(webContents) {
   );
 }
 
+// The verifier trace is a state sampler keyed on the animation, its state and
+// the two duration timers, so a single play emits another entry every time one
+// of those timers moves. Counting raw entries reads ordinary bookkeeping as a
+// repeated action, so count transitions into the animation instead.
+function countAnimationStarts(trace, animationId, afterAt) {
+  let starts = 0;
+  let previousAnimation = null;
+  for (const entry of trace) {
+    if (entry.animation === animationId && previousAnimation !== animationId && entry.at >= afterAt) {
+      starts += 1;
+    }
+    previousAnimation = entry.animation;
+  }
+  return starts;
+}
+
 async function readTrace(webContents) {
   return webContents.executeJavaScript(
     `window.__petpackInteractionVerifier ? window.__petpackInteractionVerifier.trace.slice() : []`,
@@ -630,6 +667,7 @@ function sendMouseMove(petWindow, point, verificationCursor) {
     movementX: 0,
     movementY: 0
   });
+  return cursor;
 }
 
 function sendClick(petWindow, point, button, clickCount, verificationCursor) {
@@ -701,12 +739,32 @@ async function triggerStableHover(petWindow, animationId, hoverDelayMs, verifica
       const state = await readRuntime(webContents);
       return Number(state?.timers?.hoverStartedAt) > 0 ? Number(state.timers.hoverStartedAt) : 0;
     }, { timeoutMs: 700, intervalMs: 35, message: "Stable hover candidate was transparent" }).catch(() => 0);
-    if (!hoverStartedAt) continue;
+    if (!hoverStartedAt) {
+      const cursor = verificationCursor.read();
+      process.stderr.write(
+        "hover-probe: client " + point.x + "," + point.y +
+        " (screen " + cursor.x + "," + cursor.y + ") did not register as a hover" +
+        String.fromCharCode(10)
+      );
+      continue;
+    }
     const entry = await waitForAnimation(webContents, animationId, {
       afterAt: hoverStartedAt,
       timeoutMs: hoverDelayMs + 1800
     }).catch(() => null);
     if (entry) return { point, hoverStartedAt, entry };
+    const diagnostic = await readRuntime(webContents).catch(() => null);
+    const recent = (await readTrace(webContents).catch(() => []))
+      .filter((traceEntry) => traceEntry.animation === animationId)
+      .slice(-3)
+      .map((traceEntry) => traceEntry.at - Date.now());
+    process.stderr.write(
+      `hover-probe: point ${point.x},${point.y} started at ${hoverStartedAt} but no action; ` +
+      `animation=${diagnostic?.animation} state=${diagnostic?.animationState} ` +
+      `hoverStartedAt=${diagnostic?.timers?.hoverStartedAt} idleStartedAt=${diagnostic?.timers?.idleStartedAt} ` +
+      `recentHoverOffsetsMs=${JSON.stringify(recent)}
+`
+    );
   }
   throw new InteractionCheckError(
     "hoverTwoSecondsOnceWithCooldown",
@@ -792,13 +850,11 @@ async function runInteractionChecks({ app, petWindow, panelWindow, behavior, run
   sendMouseMove(petWindow, stableHover.point, verificationCursor);
   await delay(behavior.timing.hoverDelayMs + 700);
   const hoverTrace = await readTrace(webContents);
-  const hoverStarts = hoverTrace.filter(
-    (entry) => entry.at >= hoverEntry.at && entry.animation === actions["hover-attention"].id
-  );
+  const hoverStarts = countAnimationStarts(hoverTrace, actions["hover-attention"].id, hoverEntry.at);
   assertCheck(
-    hoverStarts.length === 1,
+    hoverStarts === 1,
     "hoverTwoSecondsOnceWithCooldown",
-    `Hover action repeated inside its ${behavior.timing.hoverCooldownMs}ms cooldown`
+    `Hover action ran ${hoverStarts} times inside its ${behavior.timing.hoverCooldownMs}ms cooldown`
   );
   checks.hoverTwoSecondsOnceWithCooldown = true;
 
