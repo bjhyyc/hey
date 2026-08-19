@@ -36,7 +36,9 @@ function goodReport(count = 3) {
       heavy_obstruction: false,
       issue: ""
     })),
-    same_animal: true
+    same_animal: true,
+    appearance_consistent: true,
+    appearance_note: ""
   };
 }
 
@@ -45,7 +47,7 @@ function buildService({ report = goodReport(), enforced = false, stored = new Ma
   const visionClient = {
     configured: true,
     modelId: "test-vision-model",
-    promptVersion: "pet-photo-precheck/v2",
+    promptVersion: "pet-photo-precheck/v3",
     judgePhotoSet: judgeSpy
   };
   const repository = {
@@ -165,6 +167,29 @@ describe("photo precheck service", () => {
       actor: ACTOR, projectId: "project-1", files
     }).then(() => null, (error) => error);
     expect(outcome?.code).not.toBe("precheck_required");
+  });
+
+  it("warns without blocking when the photos come from different periods", async () => {
+    // The owner's own case: the same dog before and after a haircut. Identity
+    // holds, so the set passes - but generation blends the references, and the
+    // result did not look like the dog they live with. They are entitled to
+    // proceed; they are not entitled to be surprised by it after paying.
+    const report = goodReport();
+    report.appearance_consistent = false;
+    report.appearance_note = "两张毛发较长，一张刚剃过";
+    const { service } = buildService({ report });
+    const result = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(result.passed).toBe(true);
+    expect(result.setWarnings.join("")).toContain("同一时期");
+    expect(result.setWarnings.join("")).toContain("刚剃过");
+    expect(result.setReasons).toEqual([]);
+  });
+
+  it("says nothing about periods when the photos agree", async () => {
+    const { service } = buildService();
+    const result = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(result.passed).toBe(true);
+    expect(result.setWarnings).toEqual([]);
   });
 
   it("fails when the photos are not the same animal", async () => {

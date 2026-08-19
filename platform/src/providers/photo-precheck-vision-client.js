@@ -1,11 +1,11 @@
 "use strict";
 
-const PROMPT_VERSION = "pet-photo-precheck/v2";
+const PROMPT_VERSION = "pet-photo-precheck/v3";
 
 const RESPONSE_SCHEMA = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["photos", "same_animal"],
+  required: ["photos", "same_animal", "appearance_consistent", "appearance_note"],
   properties: {
     photos: {
       type: "array",
@@ -32,7 +32,9 @@ const RESPONSE_SCHEMA = Object.freeze({
         }
       }
     },
-    same_animal: { type: "boolean" }
+    same_animal: { type: "boolean" },
+    appearance_consistent: { type: "boolean" },
+    appearance_note: { type: "string" }
   }
 });
 
@@ -62,6 +64,12 @@ function buildInstruction(species, photoCount) {
     "",
     "照片按提交顺序编号 ordinal=1..N。",
     "same_animal：所有照片里的宠物是否为同一只（花色、体型、品种特征一致）。",
+    "appearance_consistent：这几张是否呈现同一时期、同一造型的样子。",
+    "  生成时会把多张参考融合，因此不同时期的照片（毛发长短或造型明显不同、",
+    "  剃毛与未剃毛、幼年与成年、胖瘦差异明显）会得到一个折中的形象，与宠物",
+    "  平时的样子有出入。若存在这类差异填 false。",
+    "appearance_note：若 appearance_consistent 为 false，一句中文说明差异在哪",
+    "  （例如「两张毛发较长，一张刚剃过」）；一致则填空字符串。",
     "严格输出 JSON。"
   ].join("\n");
 }

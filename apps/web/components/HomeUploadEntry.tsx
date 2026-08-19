@@ -65,6 +65,9 @@ export function HomeUploadEntry() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [precheckVerdicts, setPrecheckVerdicts] = useState<PrecheckVerdict[] | null>(null);
+  // A set-level warning must be seen before the customer pays, and the old flow
+  // navigated away the moment the check passed. Hold here until they decide.
+  const [pendingWarnings, setPendingWarnings] = useState<string[] | null>(null);
   const count = selectedPhotoCount(photos);
   const ready = photosReady(photos);
 
@@ -119,6 +122,8 @@ export function HomeUploadEntry() {
       }
       await persist(next);
       setPhotos(next);
+      setPendingWarnings(null);
+      setPrecheckVerdicts(null);
       setMessage(photoSelectionMessage(next));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法保存照片");
@@ -199,6 +204,11 @@ export function HomeUploadEntry() {
         photoSha256s: result.photoSha256s,
         checkedAt: Date.now(),
       });
+      if (result.setWarnings?.length && !pendingWarnings) {
+        setPendingWarnings(result.setWarnings);
+        setMessage("");
+        return;
+      }
       router.push("/projects/new");
     } catch (error) {
       const text = error instanceof Error ? error.message : "预检失败，请稍后重试";
@@ -256,7 +266,7 @@ export function HomeUploadEntry() {
           ) : null}
           <span className="home-upload-copy-text">
             <strong>{count > 0 ? `已选择 ${count} 张照片` : "上传 2 张正面照 + 1~2 张侧面照"}</strong>
-            <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面照必选，侧面照至少一张")}</small>
+            <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面照必选，侧面照至少一张；请选同一时期、最像它平时的样子")}</small>
             <span className="home-upload-slot-guide" aria-label="照片槽位要求">
               {PHOTO_SLOT_DEFINITIONS.map((slot, index) => (
                 <i className={photos[index] ? "is-filled" : ""} key={slot.id}>
@@ -264,6 +274,11 @@ export function HomeUploadEntry() {
                 </i>
               ))}
             </span>
+            {pendingWarnings ? (
+              <span className="home-precheck-setwarn">
+                {pendingWarnings.map((warning, index) => <i key={index}>{warning}</i>)}
+              </span>
+            ) : null}
             {precheckVerdicts ? (
               <span className="home-precheck-verdicts" aria-label="预检结果">
                 {precheckVerdicts.map((verdict) => {
@@ -319,7 +334,7 @@ export function HomeUploadEntry() {
             </span>
             <button className="home-upload-action" disabled={!ready || busy} onClick={() => void startMaking()} type="button">
               <svg className="home-spark-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8c.8 4.7 2.5 6.4 7.2 7.2-4.7.8-6.4 2.5-7.2 7.2-.8-4.7-2.5-6.4-7.2-7.2 4.7-.8 6.4-2.5 7.2-7.2Z" /><path d="M19.1 15.4c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z" /></svg>
-              <span>{busy ? "预检中…" : "开始制作"}</span>
+              <span>{busy ? "预检中…" : pendingWarnings ? "仍用这组继续" : "开始制作"}</span>
             </button>
           </span>
         </div>

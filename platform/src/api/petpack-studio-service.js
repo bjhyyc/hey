@@ -167,8 +167,23 @@ function derivePrecheckVerdicts(report, photoCount) {
   const setReasons = samePet
     ? []
     : ["这几张照片看起来不是同一只宠物"];
+  // Photographs from different periods are still the same animal, so the
+  // identity check passes them - but generation blends every reference, so a
+  // pre-haircut and a post-haircut photo average into a pet the owner does not
+  // recognise. That is a trade-off the customer is entitled to make, and one
+  // they cannot unmake after paying, so warn rather than refuse.
+  const setWarnings = [];
+  if (samePet && report.appearance_consistent === false) {
+    const note = typeof report.appearance_note === "string" ? report.appearance_note.trim() : "";
+    setWarnings.push(
+      "这几张看起来不是同一时期的样子" +
+      (note ? `（${note}）` : "") +
+      "；生成时会融合所有参考图，成品可能和它平时的样子有出入。" +
+      "建议换成同一时期、你最熟悉的那个样子。"
+    );
+  }
   const passed = samePet && verdicts.every((verdict) => verdict.ok);
-  return { verdicts, samePet, passed, setReasons };
+  return { verdicts, samePet, passed, setReasons, setWarnings };
 }
 
 /**
@@ -247,13 +262,13 @@ class PetPackStudioService {
 
     const requestId = crypto.randomUUID();
     const report = await this.precheckVisionClient.judgePhotoSet({ species: safeSpecies, photos: photoSet, requestId });
-    const { verdicts, samePet, passed, setReasons } = derivePrecheckVerdicts(report, photoSet.length);
+    const { verdicts, samePet, passed, setReasons, setWarnings } = derivePrecheckVerdicts(report, photoSet.length);
     const stored = await this.repository.createPhotoPrecheck({
       userId: user.id,
       species: safeSpecies,
       fingerprint,
       photoSha256s: photoSet.map((photo) => photo.originalSha256),
-      verdicts: { verdicts, samePet, setReasons },
+      verdicts: { verdicts, samePet, setReasons, setWarnings },
       passed,
       modelId: this.precheckVisionClient.modelId,
       promptVersion: this.precheckVisionClient.promptVersion
@@ -268,13 +283,14 @@ class PetPackStudioService {
   _precheckResponse(row, { remainingToday }) {
     const payload = row.verdicts && Array.isArray(row.verdicts.verdicts)
       ? row.verdicts
-      : { verdicts: [], samePet: false, setReasons: [] };
+      : { verdicts: [], samePet: false, setReasons: [], setWarnings: [] };
     return {
       precheckId: row.id,
       passed: row.passed,
       samePet: payload.samePet,
       verdicts: payload.verdicts,
       setReasons: Array.isArray(payload.setReasons) ? payload.setReasons : [],
+      setWarnings: Array.isArray(payload.setWarnings) ? payload.setWarnings : [],
       remainingToday
     };
   }

@@ -16,6 +16,9 @@ export type PrecheckResult = {
   samePet: boolean;
   verdicts: PrecheckVerdict[];
   setReasons: string[];
+  // Advice about the set as a whole that does not block the order - most often
+  // photographs taken at different times, which generation would blend.
+  setWarnings: string[];
   remainingToday?: number;
 };
 

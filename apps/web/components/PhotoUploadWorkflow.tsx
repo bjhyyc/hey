@@ -50,8 +50,13 @@ export function PhotoUploadWorkflow({ projectId }: { projectId: string }) {
 
   return <section className="workflow-card">
     <div className="workflow-notice">
-      <p><strong>照片质量在很大程度上决定成品质量</strong>，请认真挑选：光线清楚、五官看得清、没有其他人或宠物入镜。姿势随意，尾巴四肢没入镜没关系。</p>
-      <p>侧面照尽量把身体花色拍全，<strong>花色左右不对称的宠物</strong>（三花、玳瑁、花斑）尤其重要，否则背对镜头的那一侧只能靠猜。</p>
+      <p><strong>选同一时期、你最熟悉的那个样子</strong>。生成时会把几张照片融合成一个形象，
+        混用不同时期的照片（刚剃过毛和毛长时、幼年和成年、胖瘦差别大）会得到一个折中的样子，
+        和它平时的模样有出入。</p>
+      <p><strong>挑有它标志性特征的那几张</strong>：独特的花色、尾巴的长短和形状、耳朵的姿态——
+        你一眼就能认出它的那些地方，也是别人认出它的地方。</p>
+      <p>其余按常理即可：光线清楚、五官看得清、没有其他人或宠物入镜。姿势随意，尾巴四肢没入镜没关系。
+        侧面照尽量把身体花色拍全，<strong>花色左右不对称的宠物</strong>（三花、玳瑁、花斑）尤其重要。</p>
     </div>
     <PhotoSlots value={photos} onChange={setPhotos} onMessage={setMessage} disabled={busy} />
     <button className="primary-button form-submit" disabled={busy} onClick={() => void upload()} type="button">

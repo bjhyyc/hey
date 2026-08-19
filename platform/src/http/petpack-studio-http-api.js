@@ -1087,6 +1087,9 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
             setReasons: Array.isArray(result.setReasons)
               ? result.setReasons.map((reason) => safeString(reason, { maxLength: 200 })).filter(Boolean)
               : [],
+            setWarnings: Array.isArray(result.setWarnings)
+              ? result.setWarnings.map((warning) => safeString(warning, { maxLength: 300 })).filter(Boolean)
+              : [],
             remainingToday: result.remainingToday === null ? undefined : safeInteger(result.remainingToday)
           })
         };

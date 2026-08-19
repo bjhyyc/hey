@@ -1360,6 +1360,17 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .home-precheck-verdicts i.is-ok { color: var(--emerald); background: var(--emerald-soft); }
 .home-precheck-verdicts i.is-bad { color: var(--danger); background: var(--danger-tint); }
 .home-precheck-verdicts i.is-warn { color: var(--warn); background: var(--warn-tint); }
+.home-precheck-setwarn { display: grid; gap: 6px; margin: 8px 0 2px; }
+.home-precheck-setwarn i {
+  padding: 9px 12px;
+  color: var(--warn);
+  background: var(--warn-tint);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-small);
+  font-style: normal;
+  line-height: 1.6;
+  text-align: left;
+}
 .precheck-state { display: inline-block; margin-left: 8px; font-size: var(--text-small); }
 .precheck-state.is-pass { color: var(--emerald); }
 .precheck-state.is-miss { color: var(--danger); }
