@@ -1,6 +1,6 @@
 "use strict";
 
-const PROMPT_VERSION = "pet-photo-precheck/v1";
+const PROMPT_VERSION = "pet-photo-precheck/v2";
 
 const RESPONSE_SCHEMA = Object.freeze({
   type: "object",
@@ -14,17 +14,20 @@ const RESPONSE_SCHEMA = Object.freeze({
         additionalProperties: false,
         required: [
           "ordinal", "pet_present", "species_match", "single_animal",
-          "full_body", "view", "sharp", "unobstructed", "issue"
+          "face_clear", "coat_clear", "flank_visible", "view", "sharp",
+          "heavy_obstruction", "issue"
         ],
         properties: {
           ordinal: { type: "integer" },
           pet_present: { type: "boolean" },
           species_match: { type: "boolean" },
           single_animal: { type: "boolean" },
-          full_body: { type: "boolean" },
+          face_clear: { type: "boolean" },
+          coat_clear: { type: "boolean" },
+          flank_visible: { type: "boolean" },
           view: { type: "string", enum: ["front", "side45", "back", "other"] },
           sharp: { type: "boolean" },
-          unobstructed: { type: "boolean" },
+          heavy_obstruction: { type: "boolean" },
           issue: { type: "string" }
         }
       }
@@ -42,18 +45,22 @@ function buildInstruction(species, photoCount) {
     `你是宠物照片质检员。用户为一只${speciesLabel(species)}提交了 ${photoCount} 张照片，`,
     "将用于生成这只宠物的动画形象。逐张判断，并整体判断是否为同一只动物。",
     "",
+    "生成只需要两样东西：正面照上的五官与毛色，侧面照上的躯干花色。",
+    "姿势随意（坐卧趴均可）、尾巴或四肢不入镜、轻微出框都不影响生成，不要因此判差。",
+    "",
     "对每张照片输出：",
     "- pet_present：画面里有没有真实的宠物（玩具、贴纸、图画、人都算没有）",
     `- species_match：宠物是否为${speciesLabel(species)}`,
     "- single_animal：画面里是否只有一只动物",
-    "- full_body：是否全身可见（含四肢和尾巴大部分；轻微出框可接受）",
-    "- view：front（正面朝向镜头）/ side45（侧面或约45度侧向）/ back（背面）/ other",
-    "- sharp：主体是否清晰（明显模糊、噪点严重、过暗过曝算不清晰）",
-    "- unobstructed：主体是否基本无遮挡（衣物大面积包裹、家具遮挡大半算遮挡）",
-    "- issue：一句简短中文说明问题；没有问题填空字符串",
+    "- face_clear：五官（双眼、鼻、嘴）是否清晰可辨（侧脸只见一眼、背对镜头、脸部糊掉算不可辨）",
+    "- coat_clear：毛发质感与花色特征是否看得清",
+    "- flank_visible：躯干侧面（肩到臀）的花色是否可见（正对镜头只见胸腹算不可见）",
+    "- view：front（面朝镜头）/ side45（侧面或约45度）/ back（背面）/ other",
+    "- sharp：画面是否清晰（明显模糊、噪点严重、过暗过曝算不清晰）",
+    "- heavy_obstruction：主体是否被大面积遮挡（挡住脸或大半个身体；手轻搭、项圈不算）",
+    "- issue：一句简短中文说明最主要的问题；没有问题填空字符串",
     "",
-    "照片按提交顺序编号 ordinal=1..N。第 1、2 张应为正面全身照，第 3、4 张应为侧面（约45度）全身照。",
-    "view 按画面实际判断，不要因为期望角度而迁就。",
+    "照片按提交顺序编号 ordinal=1..N。",
     "same_animal：所有照片里的宠物是否为同一只（花色、体型、品种特征一致）。",
     "严格输出 JSON。"
   ].join("\n");

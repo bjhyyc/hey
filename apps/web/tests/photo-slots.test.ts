@@ -23,11 +23,11 @@ describe("photo slot contract", () => {
 
     const slots = emptyPhotoSlots();
     expect(photosReady(slots)).toBe(false);
-    expect(photoSelectionMessage(slots)).toBe("请上传第 1 张正面全身照");
+    expect(photoSelectionMessage(slots)).toBe("请上传第 1 张正面照");
     slots[0] = photo("front-1.jpg");
-    expect(photoSelectionMessage(slots)).toBe("还差第 2 张正面全身照");
+    expect(photoSelectionMessage(slots)).toBe("还差第 2 张正面照");
     slots[1] = photo("front-2.jpg");
-    expect(photoSelectionMessage(slots)).toBe("还差 1 张 45° 全身照");
+    expect(photoSelectionMessage(slots)).toBe("还差 1 张侧面照");
     slots[2] = photo("angle.jpg");
     expect(photosReady(slots)).toBe(true);
     expect(photoSelectionMessage(slots)).toContain("可以开始制作");

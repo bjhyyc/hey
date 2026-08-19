@@ -21,29 +21,29 @@ export const PHOTO_SLOT_DEFINITIONS: readonly PhotoSlotDefinition[] = [
   {
     id: "front-primary",
     label: "正面 1",
-    title: "第 1 张正面全身照",
-    hint: "清晰正面，宠物全身完整",
+    title: "第 1 张正面照",
+    hint: "看清五官和毛色，坐着趴着都行",
     required: true,
   },
   {
     id: "front-secondary",
     label: "正面 2",
-    title: "第 2 张正面全身照",
-    hint: "换一张正面照，宠物全身完整",
+    title: "第 2 张正面照",
+    hint: "换一张正面，光线角度不同更好",
     required: true,
   },
   {
     id: "three-quarter-primary",
-    label: "45° 1",
-    title: "第 1 张 45° 全身照",
-    hint: "约 45°，尽量把花色拍全",
+    label: "侧面 1",
+    title: "第 1 张侧面照",
+    hint: "看得到身体侧面花色即可",
     required: true,
   },
   {
     id: "three-quarter-secondary",
-    label: "45° 2",
-    title: "第 2 张 45° 全身照",
-    hint: "可选，花色不对称的宠物建议补另一侧",
+    label: "侧面 2",
+    title: "第 2 张侧面照",
+    hint: "可选，花色左右不对称的宠物建议补另一侧",
     required: false,
   },
 ] as const;
@@ -71,9 +71,9 @@ export function photosReady(photos: PhotoFileSlots): boolean {
 }
 
 export function photoSelectionMessage(photos: PhotoFileSlots): string {
-  if (!photos[0]) return "请上传第 1 张正面全身照";
-  if (!photos[1]) return "还差第 2 张正面全身照";
-  if (!photos[2]) return "还差 1 张 45° 全身照";
+  if (!photos[0]) return "请上传第 1 张正面照";
+  if (!photos[1]) return "还差第 2 张正面照";
+  if (!photos[2]) return "还差 1 张侧面照";
   if (!photos[3]) return "可以开始制作，也可再补 1 张另一侧 45°";
   return "两张正面照和两张 45° 照已选好";
 }

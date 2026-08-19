@@ -28,10 +28,12 @@ function goodReport(count = 3) {
       pet_present: true,
       species_match: true,
       single_animal: true,
-      full_body: true,
+      face_clear: true,
+      coat_clear: true,
+      flank_visible: index >= 2,
       view: index < 2 ? "front" : "side45",
       sharp: true,
-      unobstructed: true,
+      heavy_obstruction: false,
       issue: ""
     })),
     same_animal: true
@@ -100,14 +102,39 @@ describe("photo precheck service", () => {
   it("fails slots with reasons when the report finds problems", async () => {
     const report = goodReport();
     report.photos[0].pet_present = false;
-    report.photos[2].view = "front";
+    // A side slot is judged on whether the flank pattern is visible, not on
+    // the angle label: a pet lying down can show its flank without reading as
+    // a 45-degree view.
+    report.photos[2].flank_visible = false;
     const { service } = buildService({ report });
     const result = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
     expect(result.passed).toBe(false);
     expect(result.verdicts[0].ok).toBe(false);
     expect(result.verdicts[0].reasons.join("")).toContain("没有真实宠物");
     expect(result.verdicts[2].ok).toBe(false);
-    expect(result.verdicts[2].reasons.join("")).toContain("侧面");
+    expect(result.verdicts[2].reasons.join("")).toContain("身体侧面花色");
+  });
+
+  it("accepts a pet whose tail and legs are out of frame", async () => {
+    // The first delivered order looked exactly like this: a sitting front
+    // shot, a cropped lying shot, a sleeping side shot. It produced a good
+    // pack, so framing must not reject.
+    const report = goodReport();
+    report.photos[1].view = "other";
+    report.photos[2].view = "other";
+    const { service } = buildService({ report });
+    const result = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(result.passed).toBe(true);
+    expect(result.verdicts[1].warnings.join("")).toContain("侧面照");
+  });
+
+  it("still rejects a front slot whose face cannot be read", async () => {
+    const report = goodReport();
+    report.photos[0].face_clear = false;
+    const { service } = buildService({ report });
+    const result = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(result.passed).toBe(false);
+    expect(result.verdicts[0].reasons.join("")).toContain("五官清晰");
   });
 
   it("fails when the photos are not the same animal", async () => {

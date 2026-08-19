@@ -5,6 +5,9 @@ export type PrecheckVerdict = {
   ordinal: number;
   ok: boolean;
   reasons: string[];
+  // Framing advice that does not block: generation tolerates it, the customer
+  // should simply know.
+  warnings: string[];
 };
 
 export type PrecheckResult = {

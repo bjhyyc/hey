@@ -118,6 +118,13 @@ function ensurePrecheckPhotoSet(photos) {
 // every photo must show the same animal. Framing faults reject rather than warn
 // - weak references cost the customer a weak result, so they are worth a
 // re-shoot before any money changes hands.
+// Deterministic verdicts from the model report. Calibrated against reality:
+// the first delivered order's photos were a sitting front shot, a lying
+// cropped shot with a hand in frame, and a sleeping side shot, and they made a
+// good pack - so pose, tails and full bodies are none of the gate's business.
+// Generation needs exactly two things: the face and coat from the front slots,
+// the flank pattern from the side slots. Only what breaks those rejects; every
+// framing nicety is a warning the customer may ignore.
 function derivePrecheckVerdicts(report, photoCount) {
   const byOrdinal = new Map(
     (Array.isArray(report.photos) ? report.photos : [])
@@ -126,26 +133,29 @@ function derivePrecheckVerdicts(report, photoCount) {
   );
   const verdicts = [];
   for (let ordinal = 1; ordinal <= photoCount; ordinal += 1) {
-    const expectedView = ordinal <= 2 ? "front" : "side45";
+    const isFrontSlot = ordinal <= 2;
     const judged = byOrdinal.get(ordinal);
     const reasons = [];
+    const warnings = [];
     if (!judged) {
       reasons.push("未能识别这张照片");
+    } else if (!judged.pet_present) {
+      reasons.push("画面里没有真实宠物");
     } else {
-      if (!judged.pet_present) reasons.push("画面里没有真实宠物");
-      else {
-        if (!judged.species_match) reasons.push("宠物种类与所选不符");
-        if (!judged.single_animal) reasons.push("画面里有多只动物");
-        if (!judged.full_body) reasons.push("需要完整全身（含四肢和尾巴）");
-        if (judged.view !== expectedView) {
-          reasons.push(`需要${PRECHECK_VIEW_LABELS[expectedView]}角度`);
-        }
-        if (!judged.sharp) reasons.push("画面不够清晰");
-        if (!judged.unobstructed) reasons.push("主体遮挡过多");
+      if (!judged.species_match) reasons.push("宠物种类与所选不符");
+      if (!judged.single_animal) reasons.push("画面里有多只动物");
+      if (!judged.sharp) reasons.push("画面不够清晰");
+      if (judged.heavy_obstruction) reasons.push("主体遮挡过多");
+      if (!judged.coat_clear) reasons.push("毛发和花色看不清");
+      if (isFrontSlot) {
+        if (!judged.face_clear) reasons.push("需要五官清晰的正面照");
+        else if (judged.view !== "front") warnings.push("更像侧面照，正面效果可能打折");
+      } else if (!judged.flank_visible) {
+        reasons.push("需要能看到身体侧面花色的照片");
       }
       if (reasons.length > 0 && judged.issue) reasons.push(judged.issue);
     }
-    verdicts.push({ ordinal, ok: reasons.length === 0, reasons });
+    verdicts.push({ ordinal, ok: reasons.length === 0, reasons, warnings });
   }
   const samePet = report.same_animal === true;
   const setReasons = samePet

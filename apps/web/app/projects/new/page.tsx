@@ -5,7 +5,7 @@ import { PageShell } from "@/components/PageShell";
 
 export default function NewProjectPage() {
   return <PageShell>
-    <PageIntro title="制作独属于你的桌宠">上传 2 张正面全身照和 1~2 张 45° 全身照，其余自动完成。</PageIntro>
+    <PageIntro title="制作独属于你的桌宠">上传 2 张正面照和 1~2 张侧面照，其余自动完成。</PageIntro>
     <section className="plan-card">
       <div>
         <h2>一个素材包，包含 7 个视频</h2>

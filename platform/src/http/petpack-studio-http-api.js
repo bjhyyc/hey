@@ -1078,6 +1078,9 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
                   ok: safeBoolean(verdict.ok),
                   reasons: Array.isArray(verdict.reasons)
                     ? verdict.reasons.map((reason) => safeString(reason, { maxLength: 200 })).filter(Boolean)
+                    : [],
+                  warnings: Array.isArray(verdict.warnings)
+                    ? verdict.warnings.map((warning) => safeString(warning, { maxLength: 200 })).filter(Boolean)
                     : []
                 }))
               : [],

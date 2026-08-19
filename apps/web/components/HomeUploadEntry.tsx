@@ -214,7 +214,7 @@ export function HomeUploadEntry() {
         <p className="home-promise"><span>把思念带回桌面</span></p>
         <section
           className="home-upload"
-          aria-label="上传两张正面全身照和一至两张四十五度全身照并开始制作"
+          aria-label="上传两张正面照和一至两张侧面照并开始制作"
         >
         <div className={`home-upload-copy${count > 0 ? " has-photos" : ""}`}>
           {count > 0 ? (
@@ -254,7 +254,7 @@ export function HomeUploadEntry() {
           ) : null}
           <span className="home-upload-copy-text">
             <strong>{count > 0 ? `已选择 ${count} 张照片` : "上传 2 张正面照 + 1~2 张 45° 照"}</strong>
-            <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面全身照必选，45°全身照至少一张")}</small>
+            <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面照必选，侧面照至少一张")}</small>
             <span className="home-upload-slot-guide" aria-label="照片槽位要求">
               {PHOTO_SLOT_DEFINITIONS.map((slot, index) => (
                 <i className={photos[index] ? "is-filled" : ""} key={slot.id}>
@@ -266,9 +266,9 @@ export function HomeUploadEntry() {
               <span className="home-precheck-verdicts" aria-label="预检结果">
                 {precheckVerdicts.map((verdict) => {
                   const label = PHOTO_SLOT_DEFINITIONS[verdict.ordinal - 1]?.label ?? `第 ${verdict.ordinal} 张`;
-                  return verdict.ok
-                    ? <i className="is-ok" key={verdict.ordinal}>{label} ✓</i>
-                    : <i className="is-bad" key={verdict.ordinal}>{label} ✕ {verdict.reasons.join("；")}</i>;
+                  if (!verdict.ok) return <i className="is-bad" key={verdict.ordinal}>{label} ✕ {verdict.reasons.join("；")}</i>;
+                  if (verdict.warnings?.length) return <i className="is-warn" key={verdict.ordinal}>{label} ! {verdict.warnings.join("；")}</i>;
+                  return <i className="is-ok" key={verdict.ordinal}>{label} ✓</i>;
                 })}
               </span>
             ) : null}
