@@ -253,7 +253,7 @@ export function HomeUploadEntry() {
             </span>
           ) : null}
           <span className="home-upload-copy-text">
-            <strong>{count > 0 ? `已选择 ${count} 张照片` : "上传 2 张正面照 + 1~2 张 45° 照"}</strong>
+            <strong>{count > 0 ? `已选择 ${count} 张照片` : "上传 2 张正面照 + 1~2 张侧面照"}</strong>
             <small>{message || (count > 0 ? photos.filter(Boolean).map((file) => file?.name).join(" · ") : "两张正面照必选，侧面照至少一张")}</small>
             <span className="home-upload-slot-guide" aria-label="照片槽位要求">
               {PHOTO_SLOT_DEFINITIONS.map((slot, index) => (

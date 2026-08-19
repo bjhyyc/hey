@@ -60,15 +60,18 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
   if (mode === "character") {
     const { front, side, canConfirm } = view.characterCandidates;
     return <section className="workflow-card">
+      {/* At this step the photographs are already in; advice about how to
+          shoot them only creates doubt the customer cannot act on. Tell them
+          what to look at, and what each control does. */}
       <div className="workflow-notice">
-        <p><strong>母图决定成品质量</strong>，而母图取决于你上传的照片。七个动作和睡姿都会照着这两张母图生成，请认真确认。</p>
-        <p>45° 照片尽量把花色拍全，<strong>花色左右不对称的宠物</strong>（三花、玳瑁、花斑）尤其重要，否则背对镜头的那一侧只能靠猜。</p>
+        <p><strong>看这两张像不像你的宠物</strong>：五官、毛色、花色位置。七个动作都会照着它们生成。</p>
+        <p>不满意可以单独重新生成某一张，次数用完前都可以反复看；满意后点下方按钮开始制作。</p>
       </div>
       <div className="candidate-grid">
         <Candidate candidate={front} label="正面" busy={busy} onRegenerate={() => void (async () => {
           setBusy(true); try { await studioBrowserApi.regenerateCharacter(projectId, "front"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }
         })()} />
-        <Candidate candidate={side} label="45°" busy={busy} onRegenerate={() => void (async () => {
+        <Candidate candidate={side} label="侧面" busy={busy} onRegenerate={() => void (async () => {
           setBusy(true); try { await studioBrowserApi.regenerateCharacter(projectId, "side"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "重生成失败"); } finally { setBusy(false); }
         })()} />
       </div>
@@ -80,7 +83,7 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
           window.location.assign(`/projects/${encodeURIComponent(projectId)}/progress`);
         } catch (error) { setMessage(error instanceof Error ? error.message : "确认失败"); setBusy(false); }
       })()} type="button">{busy ? "正在确认…" : "确认形象，开始制作"}</button>
-      <p className="form-message">{message || "两张母图分别确认；睡姿和七个动作会自动生成"}</p>
+      <p className="form-message">{message || "确认后开始生成七个动作，中途无法更换形象"}</p>
     </section>;
   }
   if (mode === "delivery") {

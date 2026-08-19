@@ -13,13 +13,13 @@ async function sha256(file: File) {
 
 export function PhotoUploadWorkflow({ projectId }: { projectId: string }) {
   const [photos, setPhotos] = useState<PhotoFileSlots>(emptyPhotoSlots);
-  const [message, setMessage] = useState("请准备两张正面照和至少一张 45° 照");
+  const [message, setMessage] = useState("请准备两张正面照和至少一张侧面照");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { loadHomePhotoDraft().then((draft) => draft && setPhotos(draft.photos)).catch(() => undefined); }, []);
 
   async function upload() {
-    if (!photosReady(photos)) return setMessage("还需要两张正面照和至少一张 45° 照");
+    if (!photosReady(photos)) return setMessage("还需要两张正面照和至少一张侧面照");
     setBusy(true);
     try {
       const selected = photos.filter((file): file is File => Boolean(file));
@@ -51,7 +51,7 @@ export function PhotoUploadWorkflow({ projectId }: { projectId: string }) {
   return <section className="workflow-card">
     <div className="workflow-notice">
       <p><strong>照片质量在很大程度上决定成品质量</strong>，请认真挑选：光线清楚、五官看得清、没有其他人或宠物入镜。姿势随意，尾巴四肢没入镜没关系。</p>
-      <p>45° 照片尽量把花色拍全，<strong>花色左右不对称的宠物</strong>（三花、玳瑁、花斑）尤其重要，否则背对镜头的那一侧只能靠猜。</p>
+      <p>侧面照尽量把身体花色拍全，<strong>花色左右不对称的宠物</strong>（三花、玳瑁、花斑）尤其重要，否则背对镜头的那一侧只能靠猜。</p>
     </div>
     <PhotoSlots value={photos} onChange={setPhotos} onMessage={setMessage} disabled={busy} />
     <button className="primary-button form-submit" disabled={busy} onClick={() => void upload()} type="button">
