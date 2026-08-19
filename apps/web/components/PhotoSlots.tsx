@@ -6,6 +6,7 @@ import {
   PHOTO_ACCEPT_ATTRIBUTE,
   PHOTO_SLOT_DEFINITIONS,
   type PhotoFileSlots,
+  normalizePhotoFile,
   validatePhotoFile,
 } from "@/lib/photo-slots";
 
@@ -44,8 +45,11 @@ export function PhotoSlots({
     if (error) return onMessage?.(error);
     setBusy(true);
     try {
+      // Bring an oversized camera photo inside the processor's decode limit
+      // before it is fingerprinted or uploaded.
+      const normalized = await normalizePhotoFile(file);
       const next = [...value] as PhotoFileSlots;
-      next[index] = file;
+      next[index] = normalized;
       if (await hasDuplicatePhotos(next.filter((item): item is File => Boolean(item)))) {
         onMessage?.("不能上传重复照片");
         return;

@@ -16,6 +16,7 @@ import {
   availablePhotoSlotIndexes,
   emptyPhotoSlots,
   hasDuplicatePhotos,
+  normalizePhotoFile,
   PHOTO_ACCEPT_ATTRIBUTE,
   PHOTO_SLOT_DEFINITIONS,
   photoSelectionMessage,
@@ -107,8 +108,9 @@ export function HomeUploadEntry() {
     if (validation) return setMessage(validation);
     setBusy(true);
     try {
+      const normalized = await Promise.all(selected.map(normalizePhotoFile));
       const next = [...photos] as PhotoFileSlots;
-      selected.forEach((file, index) => {
+      normalized.forEach((file, index) => {
         next[available[index]] = file;
       });
       if (await hasDuplicatePhotos(next.filter((file): file is File => Boolean(file)))) {

@@ -87,6 +87,47 @@ export function validatePhotoFile(file: File): string | null {
   return null;
 }
 
+// The master-image processor refuses any reference whose decoded edge exceeds
+// 4096px, and a modern phone camera clears that easily. Nothing upstream used
+// to look at pixel dimensions - only at the 20MB file size - so an oversized
+// photograph sailed through selection, through the pre-check, through payment,
+// and then killed master generation with three dead retries on a paid order.
+// Bring the file inside the limit here, before it becomes anything else, so the
+// pre-check and the upload both see the same bytes.
+const MAX_UPLOAD_EDGE = 4000;
+const NORMALIZED_JPEG_QUALITY = 0.92;
+
+export async function normalizePhotoFile(file: File): Promise<File> {
+  if (typeof createImageBitmap !== "function") return file;
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return file;
+  }
+  try {
+    const longestEdge = Math.max(bitmap.width, bitmap.height);
+    if (longestEdge <= MAX_UPLOAD_EDGE) return file;
+    const scale = MAX_UPLOAD_EDGE / longestEdge;
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((result) => resolve(result), "image/jpeg", NORMALIZED_JPEG_QUALITY);
+    });
+    if (!blob) return file;
+    const name = file.name.replace(/\.[^.]+$/, "") + ".jpg";
+    return new File([blob], name, { type: "image/jpeg", lastModified: file.lastModified });
+  } finally {
+    bitmap.close();
+  }
+}
+
 export async function fingerprintPhoto(file: File): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return Array.from(new Uint8Array(digest), (byte) =>
