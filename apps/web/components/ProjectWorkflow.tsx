@@ -4,6 +4,40 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { studioBrowserApi, type ProjectView } from "@/lib/studio-browser-api";
 
+/**
+ * The master is what the customer is being asked to approve, and the card shows
+ * it at a size chosen for the page rather than for judging a face. Opening it
+ * full screen - and again at double size - is how they check the markings
+ * before spending a regeneration or committing the order.
+ */
+function MasterLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const [magnified, setMagnified] = useState(false);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const previousOverflow = document.body.style.overflow;
+    window.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <div aria-label={alt} aria-modal="true" className="master-lightbox" onClick={onClose} role="dialog">
+      <div
+        className={magnified ? "master-lightbox-frame is-magnified" : "master-lightbox-frame"}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <img alt={alt} onClick={() => setMagnified((value) => !value)} src={src} />
+      </div>
+      <button aria-label="关闭" className="master-lightbox-close" onClick={onClose} type="button">✕</button>
+      <p className="master-lightbox-hint">{magnified ? "点击图片缩小 · Esc 关闭" : "点击图片放大 · Esc 关闭"}</p>
+    </div>
+  );
+}
+
 function Candidate({ candidate, label, onRegenerate, busy, selectedId, onSelect }: {
   candidate: ProjectView["characterCandidates"]["front"];
   label: string;
@@ -12,13 +46,26 @@ function Candidate({ candidate, label, onRegenerate, busy, selectedId, onSelect 
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
+  const [zoomed, setZoomed] = useState(false);
   const attempts = candidate?.attempts ?? [];
   const chosen = attempts.find((attempt) => attempt.id === selectedId) ?? null;
   const previewUrl = chosen?.previewUrl ?? candidate?.previewUrl;
   return <article className="candidate-card">
     <div className="candidate-preview">
-      {previewUrl ? <img alt={`${label}母图`} src={previewUrl} /> : <span>正在生成 {label}</span>}
+      {previewUrl ? (
+        <button
+          aria-label={`放大查看${label}母图`}
+          className="candidate-preview-open"
+          onClick={() => setZoomed(true)}
+          type="button"
+        >
+          <img alt={`${label}母图`} src={previewUrl} />
+        </button>
+      ) : <span>正在生成 {label}</span>}
     </div>
+    {zoomed && previewUrl
+      ? <MasterLightbox alt={`${label}母图`} onClose={() => setZoomed(false)} src={previewUrl} />
+      : null}
     {/* Regenerating replaces the picture on screen but keeps every earlier
         version on record, so once there is more than one, let the customer
         keep whichever is best rather than whichever came last. */}

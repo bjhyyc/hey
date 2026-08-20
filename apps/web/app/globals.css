@@ -547,6 +547,88 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   font-size: var(--text-small);
 }
 .candidate-preview img { width: 100%; height: 100%; min-height: 280px; display: block; object-fit: contain; }
+.candidate-preview-open {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  display: block;
+  background: none;
+  border: 0;
+  cursor: zoom-in;
+}
+
+/* Full-screen inspection. The scrim is its own dark ground in both themes, so
+   the artwork is judged against neutral surroundings rather than the page. */
+.master-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(12, 11, 10, .82);
+  backdrop-filter: blur(2px);
+}
+.master-lightbox-frame {
+  width: min(100%, 1100px);
+  max-height: 100%;
+  overflow: auto;
+  border-radius: var(--radius-md);
+}
+/* A 480p master is smaller than the space a full screen gives it, so fitting
+   means filling that space, not sitting in the middle at its own size - the
+   point of opening it is to see the markings larger than the card showed them. */
+.master-lightbox-frame img {
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 128px);
+  display: block;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  cursor: zoom-in;
+}
+.master-lightbox-frame.is-magnified {
+  max-width: 100%;
+  cursor: grab;
+}
+.master-lightbox-frame.is-magnified img {
+  max-width: none;
+  max-height: none;
+  width: 200%;
+  cursor: zoom-out;
+}
+.master-lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  color: #fcfaf7;
+  background: rgba(252, 250, 247, .12);
+  border: 1px solid rgba(252, 250, 247, .24);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-small);
+  line-height: 1;
+  cursor: pointer;
+}
+.master-lightbox-close:hover { background: rgba(252, 250, 247, .2); }
+.master-lightbox-hint {
+  position: absolute;
+  bottom: 24px;
+  margin: 0;
+  color: rgba(252, 250, 247, .68);
+  font-size: var(--text-micro);
+}
+/* On a phone the scrim's padding is most of the width it has to give, so it
+   yields nearly all of it to the artwork. */
+@media (max-width: 640px) {
+  .master-lightbox { padding: 12px; }
+  .master-lightbox-frame img { max-height: calc(100vh - 104px); }
+  .master-lightbox-close { top: 12px; right: 12px; width: 36px; height: 36px; }
+  .master-lightbox-hint { bottom: 14px; }
+}
+
 /* Version picker. Small enough to read as a choice below the artwork rather
    than as a second gallery competing with it. */
 /* Three fixed slots, so a version card is the same size whether the owner
