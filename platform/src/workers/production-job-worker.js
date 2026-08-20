@@ -5,7 +5,7 @@ const { isPostgresInfrastructureError } = require("../persistence/postgres-datab
 const { CHARACTER_CANVAS_V1, createDevelopmentQaPolicy, requireQaPolicy } = require("../qa/character-canvas-v1");
 const { validateProductionEvidenceBindings } = require("../qa/production-evidence-provenance");
 const { OBJECT_CLASSES, createProjectObjectKey, normalizeSha256 } = require("../storage/private-object-store");
-const { JOB_NAMES, createWorkflowJob } = require("../workflow/production-workflow");
+const { JOB_NAMES, MEDIA_PROCESSING_QUEUE_ATTEMPTS, createWorkflowJob } = require("../workflow/production-workflow");
 
 const VIDEO_TASK_STATUS = Object.freeze({
   PENDING: "pending",
@@ -474,7 +474,7 @@ class ProductionJobWorker {
       name: JOB_NAMES.PROCESS_VIDEO_ACTION,
       claim,
       inputRevision: `${artifact.sha256}:process`,
-      attempts: 3
+      attempts: MEDIA_PROCESSING_QUEUE_ATTEMPTS
     });
     await this.repository.completeVideoPollSuccess({
       jobId: input.jobId,

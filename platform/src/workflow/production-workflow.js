@@ -28,6 +28,16 @@ const JOB_NAMES = Object.freeze({
   VALIDATE_PACKAGE: "petpack.validate-package",
   DELIVERY_READY: "petpack.prepare-delivery"
 });
+// Media processing gets three attempts at the artefact itself - a video the
+// processor cannot normalise, or one that fails its endpoint checks. Failures
+// of the machinery around it draw on a separate budget, because ffmpeg falling
+// over under load says nothing about the video. The queue has to be able to
+// redeliver for both, so its ceiling is the sum of the two.
+const MEDIA_PROCESSING_ARTEFACT_ATTEMPTS = 3;
+const MEDIA_PROCESSING_TRANSIENT_ATTEMPTS = 6;
+const MEDIA_PROCESSING_QUEUE_ATTEMPTS =
+  MEDIA_PROCESSING_ARTEFACT_ATTEMPTS + MEDIA_PROCESSING_TRANSIENT_ATTEMPTS;
+
 const PACKAGE_RUN_LEVEL_JOB_NAMES = new Set([
   JOB_NAMES.PROCESS_MEDIA,
   JOB_NAMES.BUILD_PACKAGE,
@@ -474,6 +484,9 @@ class ProductionWorkflow {
 
 module.exports = {
   JOB_NAMES,
+  MEDIA_PROCESSING_ARTEFACT_ATTEMPTS,
+  MEDIA_PROCESSING_QUEUE_ATTEMPTS,
+  MEDIA_PROCESSING_TRANSIENT_ATTEMPTS,
   PACKAGE_RUN_LEVEL_JOB_NAMES,
   ProductionWorkflow,
   createDedupeKey,

@@ -4,7 +4,11 @@ const { assertActionId } = require("../domain/action-catalog");
 const { PROVIDER_OPERATIONS } = require("../domain/provider-cost-accounting");
 const { PRODUCTION_STATES } = require("../domain/production-state-machine");
 const { assertPositiveByteSize, assertPrivateObjectKey, normalizeSha256 } = require("../storage/private-object-store");
-const { JOB_NAMES } = require("../workflow/production-workflow");
+const {
+  JOB_NAMES,
+  MEDIA_PROCESSING_ARTEFACT_ATTEMPTS,
+  MEDIA_PROCESSING_TRANSIENT_ATTEMPTS
+} = require("../workflow/production-workflow");
 const { recordUsageAttempt, recordUsageOutcome } = require("./provider-usage-ledger");
 
 function requireDatabase(database) {
@@ -59,6 +63,19 @@ function parseJsonObject(value, label) {
   }
   return parsed;
 }
+
+// Failures of the machinery rather than of the artefact. ffmpeg falling over
+// under load says nothing about the video it was handed, so these do not spend
+// the three attempts an action gets to prove its media is usable; they draw on
+// a separate budget instead.
+const TRANSIENT_PROCESSING_ERROR_CODES = Object.freeze(new Set([
+  "endpoint_decoder_failed",
+  "endpoint_decoder_start_failed",
+  "endpoint_decoder_timeout",
+  "endpoint_decoder_output_too_large",
+  "endpoint_decoder_frame_count_mismatch",
+  "master_decoder_frame_size_mismatch"
+]));
 
 function normalizeErrorCode(value, fallback) {
   if (typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(value)) return value.toLowerCase();
@@ -1437,7 +1454,8 @@ class PostgresProductionWorkerRepository {
       const tx = requireQuery(transaction);
       const row = oneRow(await tx.query(
         `SELECT execution.id, execution.run_id, execution.action_id,
-                execution.attempts, execution.max_attempts, action.state AS action_state
+                execution.attempts, execution.max_attempts, execution.transient_attempts,
+                action.state AS action_state
            FROM production_job_execution execution
            JOIN generation_action action
              ON action.run_id = execution.run_id
@@ -1459,14 +1477,23 @@ class PostgresProductionWorkerRepository {
         );
         return { status: "succeeded", exhausted: false };
       }
-      const exhausted = Number(row.attempts) >= Number(row.max_attempts);
+      // A transient failure hands the attempt back, so long as the separate
+      // budget for them has something left. Once that budget is gone the
+      // failure counts like any other and the action can die honestly.
+      const refundable = TRANSIENT_PROCESSING_ERROR_CODES.has(safeErrorCode) &&
+        Number(row.transient_attempts) < MEDIA_PROCESSING_TRANSIENT_ATTEMPTS;
+      const attemptsAfter = refundable ? Math.max(0, Number(row.attempts) - 1) : Number(row.attempts);
+      // max_attempts is the queue's redelivery ceiling and covers both budgets;
+      // what kills the action is spending its attempts at the artefact.
+      const exhausted = attemptsAfter >= MEDIA_PROCESSING_ARTEFACT_ATTEMPTS;
       const nextStatus = exhausted ? "dead" : "retryable";
       await tx.query(
         `UPDATE production_job_execution
             SET status = $3, lease_token = NULL, lease_owner = NULL, leased_until = NULL,
-                last_error_code = $4, updated_at = now()
+                last_error_code = $4, attempts = $5,
+                transient_attempts = transient_attempts + $6, updated_at = now()
           WHERE job_id = $1 AND lease_token = $2::uuid AND status = 'leased'`,
-        [safeJobId, safeLeaseToken, nextStatus, safeErrorCode]
+        [safeJobId, safeLeaseToken, nextStatus, safeErrorCode, attemptsAfter, refundable ? 1 : 0]
       );
       if (exhausted && row.action_state === "succeeded") {
         await tx.query(
@@ -1479,9 +1506,10 @@ class PostgresProductionWorkerRepository {
         runId: row.run_id,
         actionId: row.action_id,
         status: nextStatus,
-        errorCode: safeErrorCode
+        errorCode: safeErrorCode,
+        attemptRefunded: refundable
       });
-      return { status: nextStatus, exhausted };
+      return { status: nextStatus, exhausted, attemptRefunded: refundable };
     });
   }
 
