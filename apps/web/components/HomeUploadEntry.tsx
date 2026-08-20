@@ -65,9 +65,10 @@ export function HomeUploadEntry() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [precheckVerdicts, setPrecheckVerdicts] = useState<PrecheckVerdict[] | null>(null);
-  // A set-level warning must be seen before the customer pays, and the old flow
-  // navigated away the moment the check passed. Hold here until they decide.
-  const [pendingWarnings, setPendingWarnings] = useState<string[] | null>(null);
+  // Anything the pre-check has to say must be readable before the customer pays.
+  // Holding only for set-level warnings still let a per-photo one flash past on
+  // the way to checkout, which is no warning at all.
+  const [heldNotices, setHeldNotices] = useState<string[] | null>(null);
   const count = selectedPhotoCount(photos);
   const ready = photosReady(photos);
 
@@ -93,6 +94,13 @@ export function HomeUploadEntry() {
     setPreviews(urls);
     return () => urls.forEach((url) => url && window.URL.revokeObjectURL(url));
   }, [photos]);
+
+  // A different set has not been judged yet: whatever was on screen belongs to
+  // the photographs that are gone, and the next verdict has to be read afresh.
+  useEffect(() => {
+    setHeldNotices(null);
+    setPrecheckVerdicts(null);
+  }, [photos, species]);
 
   async function persist(next: PhotoFileSlots, nextSpecies = species) {
     if (next.some(Boolean)) await saveHomePhotoDraft(next, nextSpecies);
@@ -122,8 +130,6 @@ export function HomeUploadEntry() {
       }
       await persist(next);
       setPhotos(next);
-      setPendingWarnings(null);
-      setPrecheckVerdicts(null);
       setMessage(photoSelectionMessage(next));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法保存照片");
@@ -204,9 +210,16 @@ export function HomeUploadEntry() {
         photoSha256s: result.photoSha256s,
         checkedAt: Date.now(),
       });
-      if (result.setWarnings?.length && !pendingWarnings) {
-        setPendingWarnings(result.setWarnings);
-        setMessage("");
+      const notices = [
+        ...(result.setWarnings ?? []),
+        ...result.verdicts.flatMap((verdict) => {
+          const label = PHOTO_SLOT_DEFINITIONS[verdict.ordinal - 1]?.label ?? `第 ${verdict.ordinal} 张`;
+          return (verdict.warnings ?? []).map((warning) => `${label}：${warning}`);
+        })
+      ];
+      if (notices.length > 0 && !heldNotices) {
+        setHeldNotices(notices);
+        setMessage("这组照片可以用，但有几点想先让你知道");
         return;
       }
       router.push("/projects/new");
@@ -274,9 +287,9 @@ export function HomeUploadEntry() {
                 </i>
               ))}
             </span>
-            {pendingWarnings ? (
+            {heldNotices ? (
               <span className="home-precheck-setwarn">
-                {pendingWarnings.map((warning, index) => <i key={index}>{warning}</i>)}
+                {heldNotices.map((notice, index) => <i key={index}>{notice}</i>)}
               </span>
             ) : null}
             {precheckVerdicts ? (
@@ -334,7 +347,7 @@ export function HomeUploadEntry() {
             </span>
             <button className="home-upload-action" disabled={!ready || busy} onClick={() => void startMaking()} type="button">
               <svg className="home-spark-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8c.8 4.7 2.5 6.4 7.2 7.2-4.7.8-6.4 2.5-7.2 7.2-.8-4.7-2.5-6.4-7.2-7.2 4.7-.8 6.4-2.5 7.2-7.2Z" /><path d="M19.1 15.4c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z" /></svg>
-              <span>{busy ? "预检中…" : pendingWarnings ? "仍用这组继续" : "开始制作"}</span>
+              <span>{busy ? "预检中…" : heldNotices ? "仍用这组继续" : "开始制作"}</span>
             </button>
           </span>
         </div>
