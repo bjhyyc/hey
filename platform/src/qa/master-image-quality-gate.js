@@ -4,7 +4,7 @@ const {
   validateCanvasFrame
 } = require("./character-canvas-v1");
 const { validateMasterAppearanceInspection } = require("./appearance-lock-v1");
-const { validateChromaSubjectInspection } = require("./chroma-subject-integrity");
+const { MASTER_STILL_THRESHOLDS, validateChromaSubjectInspection } = require("./chroma-subject-integrity");
 const { validateProductionEvidenceReport } = require("./production-evidence-provenance");
 
 const MASTER_IMAGE_QA_CONTRACT_VERSION = "petpack-master-image-qa/v2";
@@ -101,7 +101,8 @@ function validateMasterImage({
   if (!content.ok) errors.push(...content.errors);
   const chromaIntegrity = validateChromaSubjectInspection(contentInspection?.chromaIntegrity, {
     production,
-    expectedFrameCount: 1
+    expectedFrameCount: 1,
+    thresholds: MASTER_STILL_THRESHOLDS
   });
   if (!chromaIntegrity.ok) errors.push(...chromaIntegrity.errors);
   const productionEvidence = validateProductionEvidenceReport({

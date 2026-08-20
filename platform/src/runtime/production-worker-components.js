@@ -230,7 +230,7 @@ const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   // outcomes, so the version moves with the semantics.
   // 1.3.0 recalibrated the roll motion envelope from the first real order's
   // accepted takes; roll outcomes are not comparable across it.
-  version: "hey-production-qa/1.3.0",
+  version: "hey-production-qa/1.4.0",
   // Composition margins recalibrated to the user-approved large framing:
   // the subject may approach the canvas edges; genuine clipping remains
   // guarded by the chroma transparent-border gate.

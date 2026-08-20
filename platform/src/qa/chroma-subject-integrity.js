@@ -2,11 +2,25 @@
 
 const CHROMA_SUBJECT_INTEGRITY_CONTRACT_VERSION = "petpack-chroma-subject-integrity/v1";
 
+// The enclosed ceiling is measured, not guessed: re-running this metric over
+// all 35 masters the platform has produced puts every one of them at or below
+// 0.0492, and the eleven that failed quality at or below 0.0095 - none of them
+// was actually torn. 0.12 leaves that population untouched while a subject
+// with an eighth of its area punched out is unmistakably a broken cutout.
+//
+// A still master is judged on holes punched through the subject, never on how
+// deep its silhouette gaps are: a dog photographed head-on with its legs apart
+// puts a tenth of every row's span between the legs, and the row-span measure
+// cannot tell that from a torn cutout. Motion keeps the span measure, where a
+// silhouette warping between frames is the thing actually being watched.
+const MASTER_STILL_THRESHOLDS = Object.freeze({ maximumRowSpanHoleRatio: 1 });
+
 const DEFAULT_THRESHOLDS = Object.freeze({
   minimumForegroundRatio: 0.01,
   maximumForegroundRatio: 0.6,
   minimumTransparentBorderRatio: 0.95,
   maximumRowSpanHoleRatio: 0.12,
+  maximumEnclosedHoleRatio: 0.12,
   minimumLargestComponentRatio: 0.97,
   maximumSignificantComponentCount: 1,
   maximumForegroundGreenSpillRatio: 0.08,
@@ -36,6 +50,7 @@ function normalizeThresholds(overrides = {}) {
     "maximumForegroundRatio",
     "minimumTransparentBorderRatio",
     "maximumRowSpanHoleRatio",
+    "maximumEnclosedHoleRatio",
     "minimumLargestComponentRatio",
     "maximumForegroundGreenSpillRatio"
   ]) {
@@ -97,6 +112,47 @@ function analyzeComponents(mask, width, height, significantComponentPixels) {
     if (pixels > largestComponentPixels) largestComponentPixels = pixels;
   }
   return { componentCount, significantComponentCount, largestComponentPixels };
+}
+
+/**
+ * Transparent pixels the background cannot reach - genuine holes punched
+ * through the subject. Flood-filling the background inward from the canvas
+ * border is what separates them from the gaps a silhouette legitimately has:
+ * the space between four legs, or between an ear and the head, opens onto the
+ * background and is therefore not a hole at all.
+ */
+function measureEnclosedHoles(mask, width, height) {
+  const outside = new Uint8Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  let tail = 0;
+  const push = (index) => {
+    if (mask[index] !== 0 || outside[index] !== 0) return;
+    outside[index] = 1;
+    queue[tail] = index;
+    tail += 1;
+  };
+  for (let x = 0; x < width; x += 1) {
+    push(x);
+    push((height - 1) * width + x);
+  }
+  for (let y = 0; y < height; y += 1) {
+    push(y * width);
+    push(y * width + width - 1);
+  }
+  for (let head = 0; head < tail; head += 1) {
+    const current = queue[head];
+    const x = current % width;
+    const y = (current - x) / width;
+    if (x > 0) push(current - 1);
+    if (x + 1 < width) push(current + 1);
+    if (y > 0) push(current - width);
+    if (y + 1 < height) push(current + width);
+  }
+  let enclosedHolePixels = 0;
+  for (let index = 0; index < mask.length; index += 1) {
+    if (mask[index] === 0 && outside[index] === 0) enclosedHolePixels += 1;
+  }
+  return enclosedHolePixels;
 }
 
 function analyzeChromaSubjectFrame(bytes, { width, height, thresholds: thresholdOverrides } = {}) {
@@ -168,6 +224,7 @@ function analyzeChromaSubjectFrame(bytes, { width, height, thresholds: threshold
     }
   }
 
+  const enclosedHolePixels = measureEnclosedHoles(mask, normalizedWidth, normalizedHeight);
   const components = analyzeComponents(mask, normalizedWidth, normalizedHeight, thresholds.significantComponentPixels);
   const boundingBox = foregroundPixels === 0
     ? null
@@ -178,6 +235,7 @@ function analyzeChromaSubjectFrame(bytes, { width, height, thresholds: threshold
     foregroundRatio: foregroundPixels / pixelCount,
     transparentBorderRatio: transparentBorderPixels / Math.max(1, borderPixels),
     rowSpanHoleRatio: rowSpanHolePixels / Math.max(1, rowSpanPixels),
+    enclosedHoleRatio: enclosedHolePixels / Math.max(1, foregroundPixels + enclosedHolePixels),
     largestComponentRatio: components.largestComponentPixels / Math.max(1, foregroundPixels),
     significantComponentCount: components.significantComponentCount,
     componentCount: components.componentCount,
@@ -195,6 +253,7 @@ function evaluateChromaSubjectIntegrity(metrics, thresholdOverrides) {
     "foregroundRatio",
     "transparentBorderRatio",
     "rowSpanHoleRatio",
+    "enclosedHoleRatio",
     "largestComponentRatio",
     "foregroundGreenSpillRatio"
   ]) {
@@ -215,7 +274,8 @@ function evaluateChromaSubjectIntegrity(metrics, thresholdOverrides) {
   if (metrics.foregroundRatio < thresholds.minimumForegroundRatio) errors.push("subject_foreground_too_small");
   if (metrics.foregroundRatio > thresholds.maximumForegroundRatio) errors.push("subject_foreground_too_large");
   if (metrics.transparentBorderRatio < thresholds.minimumTransparentBorderRatio) errors.push("subject_touches_canvas_border");
-  if (metrics.rowSpanHoleRatio > thresholds.maximumRowSpanHoleRatio) errors.push("subject_internal_holes_detected");
+  if (metrics.enclosedHoleRatio > thresholds.maximumEnclosedHoleRatio) errors.push("subject_internal_holes_detected");
+  if (metrics.rowSpanHoleRatio > thresholds.maximumRowSpanHoleRatio) errors.push("subject_silhouette_span_gaps");
   if (metrics.largestComponentRatio < thresholds.minimumLargestComponentRatio) errors.push("subject_fragmented");
   if (metrics.significantComponentCount > thresholds.maximumSignificantComponentCount) errors.push("subject_multiple_components");
   if (metrics.foregroundGreenSpillRatio > thresholds.maximumForegroundGreenSpillRatio) errors.push("subject_green_spill_detected");
@@ -278,6 +338,7 @@ function validateChromaSubjectInspection(inspection, {
 module.exports = {
   CHROMA_SUBJECT_INTEGRITY_CONTRACT_VERSION,
   DEFAULT_THRESHOLDS,
+  MASTER_STILL_THRESHOLDS,
   analyzeChromaSubjectFrame,
   evaluateChromaSubjectIntegrity,
   normalizeThresholds,

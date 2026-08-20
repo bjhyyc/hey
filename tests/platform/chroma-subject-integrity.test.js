@@ -44,6 +44,35 @@ describe("chroma subject integrity", () => {
     expect(result.errors).toContain("subject_internal_holes_detected");
   });
 
+  // A dog photographed head-on puts a tenth of every row's span between its
+  // legs. The row-span measure counted that as a hole and rejected three
+  // regenerations in a row of a paid order, so what counts as a hole is now
+  // whatever the background cannot reach.
+  it("does not mistake the gap between a subject's legs for a hole", () => {
+    const target = frame();
+    paint(target, 30, 18, 90, 45);
+    paint(target, 34, 45, 46, 66);
+    paint(target, 74, 45, 86, 66);
+    const metrics = analyzeChromaSubjectFrame(target.bytes, target);
+
+    expect(metrics.rowSpanHoleRatio).toBeGreaterThan(0.2);
+    expect(metrics.enclosedHoleRatio).toBe(0);
+    expect(evaluateChromaSubjectIntegrity(metrics, { maximumRowSpanHoleRatio: 1 }))
+      .toMatchObject({ ok: true, errors: [] });
+  });
+
+  it("still rejects a cutout torn through the middle of the subject", () => {
+    const target = frame();
+    paint(target, 20, 18, 100, 65);
+    paint(target, 46, 32, 74, 52, [0, 0, 0, 0]);
+    const metrics = analyzeChromaSubjectFrame(target.bytes, target);
+
+    expect(metrics.enclosedHoleRatio).toBeGreaterThan(0.12);
+    const result = evaluateChromaSubjectIntegrity(metrics, { maximumRowSpanHoleRatio: 1 });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("subject_internal_holes_detected");
+  });
+
   it("rejects a subject split into multiple large components", () => {
     const target = frame();
     paint(target, 18, 20, 50, 62);
@@ -77,6 +106,7 @@ describe("chroma subject integrity", () => {
       foregroundRatio: Number.NaN,
       transparentBorderRatio: 1,
       rowSpanHoleRatio: 0,
+      enclosedHoleRatio: 0,
       largestComponentRatio: 1,
       significantComponentCount: 1,
       componentCount: 1,

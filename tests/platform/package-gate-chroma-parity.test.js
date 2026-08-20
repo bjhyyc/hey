@@ -33,6 +33,7 @@ describe("package gate chroma parity", () => {
         componentCount: 1,
         foregroundRatio: 0.08,
         rowSpanHoleRatio,
+        enclosedHoleRatio: 0,
         largestComponentRatio: 1,
         transparentBorderRatio: 1,
         foregroundGreenSpillRatio: 0,
@@ -45,7 +46,7 @@ describe("package gate chroma parity", () => {
     const evidence = evidenceWithHoleRatio(0.19);
     const strict = validateChromaSubjectInspection(evidence, { production: true, expectedFrameCount: 145 });
     expect(strict.ok).toBe(false);
-    expect(strict.errors.join(" ")).toContain("subject_internal_holes_detected");
+    expect(strict.errors.join(" ")).toContain("subject_silhouette_span_gaps");
 
     const motion = resolveActionMotionPolicy(policy, "roll", { production: true });
     expect(motion.ok).toBe(true);

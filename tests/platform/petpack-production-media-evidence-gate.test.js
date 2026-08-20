@@ -58,6 +58,7 @@ function createChromaEvidence(sampledFrameCount = 1) {
       foregroundRatio: 0.2,
       transparentBorderRatio: 1,
       rowSpanHoleRatio: 0,
+      enclosedHoleRatio: 0,
       largestComponentRatio: 1,
       significantComponentCount: 1,
       componentCount: 1,

@@ -270,6 +270,7 @@ function analyzeAlphaFrame(bytes) {
     transparentBorderRatio: transparentBorder / Math.max(1, border),
     foregroundGreenSpillRatio: greenSpill / Math.max(1, spillEligible),
     rowSpanHoleRatio: subjectMetrics.rowSpanHoleRatio,
+    enclosedHoleRatio: subjectMetrics.enclosedHoleRatio,
     largestComponentRatio: subjectMetrics.largestComponentRatio,
     significantComponentCount: subjectMetrics.significantComponentCount
   };
