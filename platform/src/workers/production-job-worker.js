@@ -586,6 +586,15 @@ class ProductionJobWorker {
 
   async _releaseProcessingForRetry(input, claim, error) {
     const code = safeErrorCode(error, "action_media_processing_failed");
+    // The code alone has twice sent an operator digging through a rescue script
+    // to find out what actually broke. The message is ffmpeg and QA text - no
+    // credentials, no signed URLs - so it belongs in the log beside the code.
+    this.logger.error?.("petpack.worker.action_media_processing_error", {
+      runId: input.runId,
+      actionId: input.actionId,
+      errorCode: code,
+      message: String(error && error.message ? error.message : error).slice(0, 500)
+    });
     let releaseError = null;
     try {
       const settled = await this.repository.releaseVideoProcessingForRetry({
