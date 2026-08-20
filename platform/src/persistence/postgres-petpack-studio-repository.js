@@ -1841,6 +1841,11 @@ class PostgresPetPackStudioRepository {
     )).map((row) => ({ ...mapCharacterCandidate(row), generationAttempt: Number(row.generation_attempt) })));
   }
 
+  /**
+   * The master on show is the newest version that actually passed, not whatever
+   * the run attempted last: a regeneration can fail quality, and the customer
+   * must still see the good master they already had.
+   */
   async getCharacterCandidate(projectId, view, characterMasterRevisionId) {
     const safeProjectId = requiredString(projectId, "Project ID");
     if (!["front", "side"].includes(view)) throw new Error("Character candidate view must be front or side");
@@ -1858,14 +1863,14 @@ class PostgresPetPackStudioRepository {
              ON run.id = candidate.run_id
             AND run.project_id = candidate.project_id
             AND run.order_id = candidate.order_id
-            AND ($3::uuid IS NOT NULL OR candidate.generation_attempt = run.${attemptColumn})
+            AND candidate.generation_attempt <= run.${attemptColumn}
            JOIN master_image_generation generation
              ON generation.image_candidate_id = candidate.id
             AND generation.run_id = run.id
             AND generation.project_id = run.project_id
             AND generation.order_id = run.order_id
             AND generation.kind = $2
-            AND ($3::uuid IS NOT NULL OR generation.generation_attempt = run.${attemptColumn})
+            AND generation.generation_attempt = candidate.generation_attempt
             AND generation.status = 'qa_passed'
            JOIN media_asset asset
              ON asset.id = candidate.media_asset_id
@@ -1889,7 +1894,7 @@ class PostgresPetPackStudioRepository {
              AND qa.policy_version = generation.processing_policy_version
              AND qa.processor_version = generation.processor_version
              AND ($3::uuid IS NULL OR candidate.id = $3::uuid)
-          ORDER BY candidate.created_at DESC
+          ORDER BY candidate.generation_attempt DESC, candidate.created_at DESC
           LIMIT 1`,
         [safeProjectId, view, selectedId]
       ));

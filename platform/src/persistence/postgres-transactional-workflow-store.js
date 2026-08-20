@@ -336,6 +336,32 @@ class PostgresTransactionalWorkflowStore {
   }
 
   /**
+   * How many quality-approved masters this run holds for a view. A failed
+   * regeneration asks this before deciding whether the order can fall back to
+   * a version the customer already saw, or has nothing to fall back to.
+   */
+  async countApprovedCharacterCandidates({ runId, view } = {}) {
+    if (!["front", "side"].includes(view)) throw new Error("Character candidate view must be front or side");
+    const result = await this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      return tx.query(
+        `SELECT count(*)::int AS approved
+           FROM image_candidate candidate
+           JOIN master_image_generation generation
+             ON generation.image_candidate_id = candidate.id
+            AND generation.run_id = candidate.run_id
+            AND generation.kind = $2
+            AND generation.status = 'qa_passed'
+          WHERE candidate.run_id = $1
+            AND candidate.kind = $2
+            AND candidate.qa_status = 'passed'`,
+        [requireId(runId, "Run ID"), view]
+      );
+    });
+    return result && result.rows.length === 1 ? Number(result.rows[0].approved) : 0;
+  }
+
+  /**
    * Regeneration keeps every earlier version on record, and an owner who spends
    * their regenerations may well prefer the first one, so any attempt up to the
    * run's current count may be confirmed - the generation and QA rows are keyed

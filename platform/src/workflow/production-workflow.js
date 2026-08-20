@@ -252,6 +252,19 @@ class ProductionWorkflow {
       });
       return this._saveAndQueue(run, retried, job);
     }
+    // Retries are spent. If the run already holds an approved master for this
+    // view, the customer keeps it and returns to confirmation - a regeneration
+    // they asked for must never cost them the order. Only a view that never
+    // produced anything approvable fails the run.
+    if (await this._hasApprovedCharacterMaster(run, safeView)) {
+      const restored = transitionProductionRun(run, "characterRegenerationAbandoned", { view: safeView });
+      this.logger.warn?.("petpack.workflow.character_regeneration_abandoned", {
+        runId: run.id,
+        view: safeView,
+        qaRetries: retries
+      });
+      return this._saveAndQueue(run, restored);
+    }
     const failed = {
       ...transitionProductionRun(run, "failed"),
       failureCode: `${safeView}_master_qa_failed`
@@ -262,6 +275,12 @@ class ProductionWorkflow {
       qaRetries: retries
     });
     return this._saveAndQueue(run, failed);
+  }
+
+  async _hasApprovedCharacterMaster(run, view) {
+    if (typeof this.runStore.countApprovedCharacterCandidates !== "function") return false;
+    const approved = await this.runStore.countApprovedCharacterCandidates({ runId: run.id, view });
+    return Number(approved || 0) > 0;
   }
 
   async confirmCharacterMasters({ run, frontMasterRevisionId, sideMasterRevisionId }) {

@@ -138,6 +138,20 @@ function transitionProductionRun(run, event, payload = {}) {
       [characterField(view, "QaRetries")]: Number(run[characterField(view, "QaRetries")] || 0) + 1
     };
   }
+  // A regeneration that cannot pass quality must not destroy a paid order that
+  // already has an approved master: the run returns to confirmation with the
+  // version the customer could already see, and the spent regeneration - which
+  // produced nothing usable - is handed back.
+  if (event === "characterRegenerationAbandoned") {
+    if (run.state !== PRODUCTION_STATES.AWAKE_GENERATING) throw new Error(`Cannot apply ${event} while production state is ${run.state}`);
+    const view = assertCharacterMasterView(payload.view);
+    return {
+      ...run,
+      state: PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION,
+      [characterField(view, "QaRetries")]: 0,
+      [characterField(view, "UserRegenerationsUsed")]: Math.max(0, Number(run[characterField(view, "UserRegenerationsUsed")] || 0) - 1)
+    };
+  }
   if (event === "characterMasterGenerated") {
     if (run.state !== PRODUCTION_STATES.AWAKE_GENERATING) throw new Error(`Cannot apply ${event} while production state is ${run.state}`);
     const view = assertCharacterMasterView(payload.view);
