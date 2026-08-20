@@ -442,6 +442,19 @@ class PetpackPipelineWorker {
 
   async _failProductionMediaEvidence(input, claim, error) {
     const code = safeErrorCode(error, "production_evidence_provenance_invalid");
+    // The code on its own says a package was refused but not which binding
+    // disagreed, and finding out has meant reproducing the gate by hand more
+    // than once. The message names versions and checksums, nothing secret.
+    this.logger.error?.("petpack.worker.production_media_evidence_error", {
+      runId: input.runId,
+      errorCode: code,
+      message: String(error && error.message ? error.message : error).slice(0, 500),
+      // The provenance error carries the list of bindings that disagreed; the
+      // summary message alone names none of them.
+      ...(Array.isArray(error?.errors) && error.errors.length > 0
+        ? { bindings: error.errors.slice(0, 12).map((entry) => String(entry).slice(0, 160)) }
+        : {})
+    });
     try {
       await this.repository.failMediaSnapshotEvidence({
         jobId: input.jobId,
