@@ -1376,8 +1376,17 @@ function createProductionQaPolicyProvider() {
     contractVersion: QA_POLICY_PROVIDER_CONTRACT_VERSION,
     evidenceClass: EVIDENCE_CLASS,
     async getPolicy({ version } = {}) {
+      // A run freezes its policy version so its evidence stays attributable, so
+      // publishing a new one strands every run already in flight. That is the
+      // intended contract, but the refusal used to surface as a generic
+      // processing failure that spent the action's whole retry budget three
+      // times over and killed a paid order. The code says what happened, and
+      // the worker knows not to retry into it.
       if (version && version !== QA_POLICY_VERSION) {
-        throw new Error("Requested frozen production QA policy version is unavailable");
+        throw Object.assign(
+          new Error(`Run is frozen to QA policy ${version}; this worker serves ${QA_POLICY_VERSION}`),
+          { code: "qa_policy_version_stranded" }
+        );
       }
       return PRODUCTION_QA_POLICY;
     }

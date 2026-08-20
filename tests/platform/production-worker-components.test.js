@@ -157,7 +157,12 @@ describe("production worker components", () => {
     expect(policy).toBe(PRODUCTION_QA_POLICY);
     expect(policy.name).not.toBe("development-only");
     expect(policy.signature).toMatch(/^[a-f0-9]{64}$/);
-    await expect(provider.getPolicy({ version: "some-other-policy/9" })).rejects.toThrow(/unavailable/);
+    // A run frozen to a retired policy is refused by name, and with a code the
+    // worker recognises, so a version bump cannot quietly kill it.
+    await expect(provider.getPolicy({ version: "some-other-policy/9" }))
+      .rejects.toThrow(/frozen to QA policy some-other-policy\/9/);
+    await expect(provider.getPolicy({ version: "some-other-policy/9" }))
+      .rejects.toMatchObject({ code: "qa_policy_version_stranded" });
     expect(provider.productionMetadata.calibrationDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(Object.isFrozen(provider)).toBe(true);
   });

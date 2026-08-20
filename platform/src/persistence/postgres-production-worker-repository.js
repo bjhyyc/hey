@@ -74,7 +74,12 @@ const TRANSIENT_PROCESSING_ERROR_CODES = Object.freeze(new Set([
   "endpoint_decoder_timeout",
   "endpoint_decoder_output_too_large",
   "endpoint_decoder_frame_count_mismatch",
-  "master_decoder_frame_size_mismatch"
+  "master_decoder_frame_size_mismatch",
+  // Not transient in the same sense - a run frozen to a retired QA policy needs
+  // an operator, not another try - but it must not spend the action's budget
+  // either: a version bump would otherwise kill every run already in flight
+  // three attempts after it shipped.
+  "qa_policy_version_stranded"
 ]));
 
 function normalizeErrorCode(value, fallback) {
@@ -237,13 +242,23 @@ class PostgresProductionWorkerRepository {
     this.logger = logger;
   }
 
+  /**
+   * Scheduling the same job twice must not duplicate it, which is what the
+   * conflict clause is for - but only while the first copy is still waiting to
+   * be delivered. A conflict with a job that has already been dispatched means
+   * this schedule reached nobody: an action's QA regeneration was once logged
+   * as scheduled, silently swallowed against a key spent earlier in the same
+   * run, and the paid order sat queued with nothing on its way. That case is
+   * refused rather than committed.
+   */
   async _insertDelayedOutbox(tx, job, delaySeconds) {
     const delay = normalizeDelaySeconds(delaySeconds);
-    await tx.query(
+    const inserted = rows(await tx.query(
       `INSERT INTO outbox_job
         (id, aggregate_type, aggregate_id, job_name, payload, dedupe_key, status, available_at)
        VALUES ($1, 'production_run', $2, $3, $4::jsonb, $5, 'pending', now() + ($6 * interval '1 second'))
-       ON CONFLICT (dedupe_key) DO NOTHING`,
+       ON CONFLICT (dedupe_key) DO NOTHING
+       RETURNING id`,
       [
         this.idFactory(),
         job.data.runId,
@@ -252,6 +267,22 @@ class PostgresProductionWorkerRepository {
         job.dedupeKey,
         delay
       ]
+    ));
+    if (inserted.length === 1) return;
+    const existing = oneRow(await tx.query(
+      "SELECT status FROM outbox_job WHERE dedupe_key = $1",
+      [job.dedupeKey]
+    ), "Outbox conflict resolved to no row");
+    if (existing.status === "pending") return;
+    this.logger.error?.("petpack.persistence.outbox_schedule_swallowed", {
+      runId: job.data.runId,
+      actionId: job.data.actionId || null,
+      jobName: job.name,
+      existingStatus: existing.status
+    });
+    throw Object.assign(
+      new Error(`Workflow job ${job.name} collided with a ${existing.status} schedule and would never be delivered`),
+      { code: "outbox_schedule_collision" }
     );
   }
 
@@ -362,10 +393,15 @@ class PostgresProductionWorkerRepository {
       const previousAttempts = Number(row.attempts);
       if (!Number.isSafeInteger(previousAttempts) || previousAttempts < 0) throw new Error("Video execution attempt count is invalid");
       if (previousAttempts >= claim.maxAttempts) {
+        // The count starts after every delivery this action has ever spent, so
+        // a fresh execution can be born already exhausted and die without ever
+        // calling the provider. That used to be recorded as a bare 'dead' row
+        // with no reason on it, which reads like a crash rather than a budget.
         await tx.query(
           `UPDATE production_job_execution
               SET status = 'dead', lease_token = NULL, lease_owner = NULL,
-                  leased_until = NULL, updated_at = now()
+                  leased_until = NULL, last_error_code = 'video_generation_budget_exhausted',
+                  updated_at = now()
             WHERE id = $1`,
           [row.execution_id]
         );
@@ -374,6 +410,12 @@ class PostgresProductionWorkerRepository {
             WHERE run_id = $1 AND action_id = $2 AND provider_task_id IS NULL`,
           [claim.runId, claim.actionId]
         );
+        this.logger.error?.("petpack.persistence.video_generation_budget_exhausted", {
+          runId: claim.runId,
+          actionId: claim.actionId,
+          deliveriesSpent: previousAttempts,
+          budget: claim.maxAttempts
+        });
         return { outcome: "dead", runId: claim.runId, actionId: claim.actionId };
       }
 
@@ -964,7 +1006,8 @@ class PostgresProductionWorkerRepository {
         await tx.query(
           `UPDATE production_job_execution
               SET status = 'dead', lease_token = NULL, lease_owner = NULL,
-                  leased_until = NULL, updated_at = now()
+                  leased_until = NULL, last_error_code = 'action_processing_budget_exhausted',
+                  updated_at = now()
             WHERE id = $1`,
           [row.execution_id]
         );

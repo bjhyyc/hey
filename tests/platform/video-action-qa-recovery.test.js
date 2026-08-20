@@ -108,7 +108,10 @@ describe("rejected action QA payload", () => {
     const inserted = [];
     const tx = {
       query: vi.fn(async (text, params) => {
-        if (String(text).includes("INSERT INTO outbox_job")) inserted.push({ text, params });
+        if (String(text).includes("INSERT INTO outbox_job")) {
+          inserted.push({ text, params });
+          return { rows: [{ id: "00000000-0000-4000-8000-000000000001" }] };
+        }
         return { rows: [] };
       })
     };
@@ -127,6 +130,54 @@ describe("rejected action QA payload", () => {
     await expect(repository._insertDelayedOutbox(tx, job, 0)).resolves.toBeUndefined();
     expect(inserted).toHaveLength(1);
     expect(inserted[0].params).toContain(0);
+  });
+
+  // The regeneration of a rejected action was once scheduled against a dedupe
+  // key the same run had already spent; the insert was swallowed, the action
+  // sat queued, and nothing was ever delivered.
+  it("refuses a schedule that collides with a job already dispatched", async () => {
+    const { PostgresProductionWorkerRepository } = workerRepositoryModule;
+    const tx = {
+      query: vi.fn(async (text) => (String(text).includes("INSERT INTO outbox_job")
+        ? { rows: [] }
+        : { rows: [{ status: "sent" }] }))
+    };
+    const repository = new PostgresProductionWorkerRepository({
+      database: { transaction: async (run) => run(tx) },
+      idFactory: () => "00000000-0000-4000-8000-000000000000",
+      logger: { info() {}, warn() {}, error() {} }
+    });
+    const job = {
+      name: "petpack.generate-video-action",
+      dedupeKey: "petpack:already-spent",
+      data: { runId: "run-1", actionId: "roll" },
+      options: { attempts: 3 }
+    };
+
+    await expect(repository._insertDelayedOutbox(tx, job, 0))
+      .rejects.toMatchObject({ code: "outbox_schedule_collision" });
+  });
+
+  it("lets a schedule stand when its earlier copy is still waiting", async () => {
+    const { PostgresProductionWorkerRepository } = workerRepositoryModule;
+    const tx = {
+      query: vi.fn(async (text) => (String(text).includes("INSERT INTO outbox_job")
+        ? { rows: [] }
+        : { rows: [{ status: "pending" }] }))
+    };
+    const repository = new PostgresProductionWorkerRepository({
+      database: { transaction: async (run) => run(tx) },
+      idFactory: () => "00000000-0000-4000-8000-000000000000",
+      logger: { info() {}, warn() {}, error() {} }
+    });
+    const job = {
+      name: "petpack.generate-video-action",
+      dedupeKey: "petpack:still-waiting",
+      data: { runId: "run-1", actionId: "roll" },
+      options: { attempts: 3 }
+    };
+
+    await expect(repository._insertDelayedOutbox(tx, job, 0)).resolves.toBeUndefined();
   });
 
   it("still refuses a delay that is negative or beyond the cap", async () => {
