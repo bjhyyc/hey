@@ -147,9 +147,15 @@ const FIXTURES: Record<string, ProjectView> = {
           { id: "f-v3", generationAttempt: 3, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e0dee6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 3 版</text></svg>", isCurrent: true }
         ]
       },
+      // Two versions beside the three above, so the slots can be seen holding
+      // their size rather than stretching to fill the row.
       side: {
-        id: "s-v1", view: "side", previewUrl: MASTER_PREVIEW,
-        canRegenerate: true, remainingRegenerations: 2, attempts: []
+        id: "s-v2", view: "side", previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 2 版</text></svg>",
+        canRegenerate: true, remainingRegenerations: 1,
+        attempts: [
+          { id: "s-v1", generationAttempt: 1, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e6dfd6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 1 版</text></svg>", isCurrent: false },
+          { id: "s-v2", generationAttempt: 2, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 2 版</text></svg>", isCurrent: true }
+        ]
       },
       canConfirm: true,
     },
