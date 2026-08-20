@@ -35,6 +35,9 @@ export type ProjectView = {
     side: CharacterCandidate | null;
     canConfirm: boolean;
   };
+  // The run's own state, so the page can tell a master being regenerated apart
+  // from a run that is long past the character step.
+  productionState?: string | null;
   progress: Array<{ id?: string; label?: string; state?: string }>;
   actions: Array<{
     actionId: string;

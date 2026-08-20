@@ -130,6 +130,11 @@ function createUserProjectView({ project, order, run, characterCandidates, deliv
       side,
       canConfirm: paidAndConfirming && Boolean(front && side)
     },
+    // The page needs to tell "a master is being regenerated" apart from "this
+    // run is long past the character step": both leave canConfirm false, and
+    // without the run's own state the character page told an owner whose videos
+    // were already generating that a master was still coming.
+    productionState: run && run.state ? run.state : null,
     progress: getProgressStepState(run && run.state),
     actions: createActionProgress(actions),
     downloadReady: Boolean(delivery && delivery.status === "ready"),

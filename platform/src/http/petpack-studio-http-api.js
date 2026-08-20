@@ -548,6 +548,7 @@ function serializeProjectView(value) {
       side: serializeCandidate(candidates.side),
       canConfirm: safeBoolean(candidates.canConfirm)
     },
+    productionState: safeString(value?.productionState, { maxLength: 64 }),
     progress: Array.isArray(value?.progress) ? value.progress.map((step) => compactObject({
       id: safeString(step?.id, { maxLength: 128 }),
       label: safeString(step?.label, { maxLength: 256 }),

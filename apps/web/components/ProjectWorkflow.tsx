@@ -150,7 +150,7 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
         <p><strong>看这两张像不像你的宠物</strong>：五官、毛色、花色位置。七个动作都会照着它们生成。</p>
         <p>AI 是依据你的照片重新绘制，会尽量贴近，但不是照片复刻。不满意可以单独重新生成某一张。</p>
       </div>
-      {front && side && !canConfirm
+      {front && side && !canConfirm && view.productionState === "awake_generating"
         ? <p className="regenerating-note">正在重新生成，通常 1~2 分钟；完成后这里会自动更新。</p>
         : null}
       <div className="candidate-grid">

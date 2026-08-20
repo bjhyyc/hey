@@ -127,6 +127,23 @@ const FIXTURES: Record<string, ProjectView> = {
       side: { id: "s3", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 2, attempts: [] },
       canConfirm: false,
     },
+    productionState: "awake_generating",
+    progress: [],
+    actions: [],
+    downloadReady: false,
+    failed: false,
+  },
+  charPastConfirmation: {
+    // Long past the character step: canConfirm is false here too, and the page
+    // used to tell the owner a master was still being regenerated.
+    project: { id: "charPastConfirmation", displayName: "团团", state: "producing" },
+    order: { id: "o10", status: "paid", amountFen: 1 },
+    characterCandidates: {
+      front: { id: "f4", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0, attempts: [] },
+      side: { id: "s4", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0, attempts: [] },
+      canConfirm: false,
+    },
+    productionState: "video_generating",
     progress: [],
     actions: [],
     downloadReady: false,
@@ -159,6 +176,7 @@ const FIXTURES: Record<string, ProjectView> = {
       },
       canConfirm: true,
     },
+    productionState: "awaiting_character_confirmation",
     progress: [],
     actions: [],
     downloadReady: false,
