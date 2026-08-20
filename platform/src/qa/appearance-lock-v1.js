@@ -222,8 +222,22 @@ function validateVideoAppearanceInspection(inspection, { sampledFrameCount, poli
   const coatColorMinScore = score(inspection.coatColorMinScore, "Video appearance.coatColorMinScore", errors);
   const markingTopologyMinScore = score(inspection.markingTopologyMinScore, "Video appearance.markingTopologyMinScore", errors);
   const severeIdentityThreshold = Number(policy.minSevereVideoIdentityScore);
+  // Identity drift is a clip that has lost the pet, not a clip with one bad
+  // frame: a rolling dog turns its face away, and among rolls this platform
+  // delivered the worst single frame ran as low as 0.027. What the gate reads
+  // is how much of the clip sits below the bar; the worst frame only warns.
+  const severeFrameRatioCeiling = Number(policy.maxSevereVideoIdentityFrameRatio);
+  const severeFrameRatio = score(
+    inspection.faceIdentityBelowSevereFrameRatio,
+    "Video appearance.faceIdentityBelowSevereFrameRatio",
+    errors
+  );
+  if (Number.isFinite(severeFrameRatio) && Number.isFinite(severeFrameRatioCeiling) &&
+      severeFrameRatio > severeFrameRatioCeiling) {
+    errors.push("Video appearance.faceIdentityBelowSevereFrameRatio indicates severe identity drift");
+  }
   if (Number.isFinite(faceIdentityMinScore) && faceIdentityMinScore < severeIdentityThreshold) {
-    errors.push("Video appearance.faceIdentityMinScore indicates severe identity drift");
+    warnings.push("Video appearance.faceIdentityMinScore dips below the severe threshold on its worst frame");
   } else if (Number.isFinite(faceIdentityMinScore) && faceIdentityMinScore < thresholds.face) {
     warnings.push("Video appearance.faceIdentityMinScore is below the preferred threshold");
   }
@@ -258,8 +272,19 @@ function validateVideoAppearanceInspection(inspection, { sampledFrameCount, poli
           : null;
         const regionColor = score(evidence.coatColorMinScore, `Video appearance region ${region}.coatColorMinScore`, errors);
         const regionMarkings = score(evidence.markingTopologyMinScore, `Video appearance region ${region}.markingTopologyMinScore`, errors);
+        if (region === "head") {
+          const regionSevereRatio = score(
+            evidence.faceIdentityBelowSevereFrameRatio,
+            `Video appearance region ${region}.faceIdentityBelowSevereFrameRatio`,
+            errors
+          );
+          if (Number.isFinite(regionSevereRatio) && Number.isFinite(severeFrameRatioCeiling) &&
+              regionSevereRatio > severeFrameRatioCeiling) {
+            errors.push(`Video appearance region ${region}.faceIdentityBelowSevereFrameRatio indicates severe identity drift`);
+          }
+        }
         if (region === "head" && Number.isFinite(regionFace) && regionFace < severeIdentityThreshold) {
-          errors.push(`Video appearance region ${region}.faceIdentityMinScore indicates severe identity drift`);
+          warnings.push(`Video appearance region ${region}.faceIdentityMinScore dips below the severe threshold on its worst frame`);
         } else if (region === "head" && Number.isFinite(regionFace) && regionFace < thresholds.face) {
           warnings.push(`Video appearance region ${region}.faceIdentityMinScore is below the preferred threshold`);
         }

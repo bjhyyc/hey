@@ -135,7 +135,7 @@ function videoAppearance(sampledFrameCount) {
   const regions = Object.fromEntries(["head", "torso", "legs", "tail"].map((region) => [region, {
     visibleFrameCount: sampledFrameCount,
     evaluatedFrameCount: sampledFrameCount,
-    ...(region === "head" ? { faceIdentityMinScore: 1 } : {}),
+    ...(region === "head" ? { faceIdentityMinScore: 1, faceIdentityBelowSevereFrameRatio: 0 } : {}),
     coatColorMinScore: 1,
     markingTopologyMinScore: 1,
     leftRightPlacementPreserved: true
@@ -152,6 +152,7 @@ function videoAppearance(sampledFrameCount) {
     severeIdentityDriftDetected: false,
     sampledFrameCount,
     faceIdentityMinScore: 1,
+    faceIdentityBelowSevereFrameRatio: 0,
     coatColorMinScore: 1,
     markingTopologyMinScore: 1,
     regions,

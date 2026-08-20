@@ -109,6 +109,9 @@ const PRODUCTION_CALIBRATION = deepFreeze({
     // closing; a stray component below this pixel count is keying noise, a
     // genuine second subject at 480p is thousands of pixels.
     chromaThresholds: { significantComponentPixels: 400 },
+    // The score below which a single frame has lost the pet's face. The gate
+    // reads how much of a clip sits under it, not how far the worst frame dips.
+    minSevereVideoIdentityScore: 0.2,
     photoReferenceCenterMargin: 0.15,
     photoReferenceWindowMargin: 0.05,
     photoReferenceBackgroundDistance: 100,
@@ -230,7 +233,7 @@ const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   // outcomes, so the version moves with the semantics.
   // 1.3.0 recalibrated the roll motion envelope from the first real order's
   // accepted takes; roll outcomes are not comparable across it.
-  version: "hey-production-qa/1.4.0",
+  version: "hey-production-qa/1.5.0",
   // Composition margins recalibrated to the user-approved large framing:
   // the subject may approach the canvas edges; genuine clipping remains
   // guarded by the chroma transparent-border gate.
@@ -244,7 +247,11 @@ const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   maxGroundJitterPx: 14,
   maxRelativeFrameScaleJitter: 0.12,
   minIdentityScore: 0.3,
-  minSevereVideoIdentityScore: 0.2,
+  minSevereVideoIdentityScore: PRODUCTION_CALIBRATION.appearance.minSevereVideoIdentityScore,
+  // Measured over every roll the platform has produced: clips that were
+  // delivered kept at most 3.9% of their frames below the severe score, while
+  // the three that had genuinely lost the pet ran 13.7% to 25.5%.
+  maxSevereVideoIdentityFrameRatio: 0.08,
   minFaceIdentityScore: 0.25,
   minCoatColorScore: 0.3,
   minMarkingTopologyScore: 0.25,
@@ -1031,6 +1038,7 @@ function createProductionMattingService({ ffmpegPath }) {
         coatColorMinScore: 1,
         markingTopologyMinScore: 1,
         faceIdentityMinScore: 1,
+        faceIdentityBelowSevereFrames: 0,
         leftRightPreserved: true
       }]));
       let coatColorMinScore = 1;
@@ -1038,6 +1046,15 @@ function createProductionMattingService({ ffmpegPath }) {
       let faceIdentityMinScore = 1;
       let identityMinScore = 1;
       let asymmetryPreserved = true;
+      // A rolling dog turns its face away for a frame or two and the single
+      // worst frame says nothing: measured over every roll this platform has
+      // produced, clips that were delivered dipped as low as 0.027 while
+      // holding above the bar for 96% of their frames. How much of the clip
+      // sits below the bar is what separates them from a clip that has genuinely
+      // lost the pet.
+      let faceIdentityScoredFrames = 0;
+      let faceIdentityBelowSevereFrames = 0;
+      const severeFaceIdentityScore = Number(appearance.minSevereVideoIdentityScore);
 
       const decodedFrameCount = await streamDecodedFrames({
         executable: ffmpegPath,
@@ -1087,6 +1104,8 @@ function createProductionMattingService({ ffmpegPath }) {
             coatColorMinScore = 0;
             markingTopologyMinScore = 0;
             faceIdentityMinScore = 0;
+            faceIdentityScoredFrames += 1;
+            faceIdentityBelowSevereFrames += 1;
             allSingleSubject = false;
             previousMask = Buffer.from(frameBytesBuffer);
             return;
@@ -1110,6 +1129,8 @@ function createProductionMattingService({ ffmpegPath }) {
           coatColorMinScore = Math.min(coatColorMinScore, best.scores.coatColorScore);
           markingTopologyMinScore = Math.min(markingTopologyMinScore, best.scores.markingTopologyScore);
           faceIdentityMinScore = Math.min(faceIdentityMinScore, best.scores.faceIdentityScore);
+          faceIdentityScoredFrames += 1;
+          if (best.scores.faceIdentityScore < severeFaceIdentityScore) faceIdentityBelowSevereFrames += 1;
           identityMinScore = Math.min(identityMinScore, best.scores.identityScore);
           if (!best.scores.leftRightPlacementPreserved) asymmetryPreserved = false;
           for (const region of regionNames) {
@@ -1121,6 +1142,7 @@ function createProductionMattingService({ ffmpegPath }) {
             aggregate.markingTopologyMinScore = Math.min(aggregate.markingTopologyMinScore, best.scores.markingTopologyScore);
             if (region === "head") {
               aggregate.faceIdentityMinScore = Math.min(aggregate.faceIdentityMinScore, best.scores.faceIdentityScore);
+              if (best.scores.faceIdentityScore < severeFaceIdentityScore) aggregate.faceIdentityBelowSevereFrames += 1;
             }
             if (!best.scores.leftRightPlacementPreserved) aggregate.leftRightPreserved = false;
           }
@@ -1285,7 +1307,12 @@ function createProductionMattingService({ ffmpegPath }) {
           visibleFrameCount: aggregate.visibleFrameCount,
           evaluatedFrameCount: aggregate.visibleFrameCount,
           ...(region === "head"
-            ? { faceIdentityMinScore: aggregate.visibleFrameCount > 0 ? aggregate.faceIdentityMinScore : 0 }
+            ? {
+                faceIdentityMinScore: aggregate.visibleFrameCount > 0 ? aggregate.faceIdentityMinScore : 0,
+                faceIdentityBelowSevereFrameRatio: aggregate.visibleFrameCount > 0
+                  ? aggregate.faceIdentityBelowSevereFrames / aggregate.visibleFrameCount
+                  : 1
+              }
             : {}),
           coatColorMinScore: aggregate.visibleFrameCount > 0 ? aggregate.coatColorMinScore : 0,
           markingTopologyMinScore: aggregate.visibleFrameCount > 0 ? aggregate.markingTopologyMinScore : 0,
@@ -1304,6 +1331,9 @@ function createProductionMattingService({ ffmpegPath }) {
         severeIdentityDriftDetected: !identityConsistent,
         sampledFrameCount: decodedFrameCount,
         faceIdentityMinScore,
+        faceIdentityBelowSevereFrameRatio: faceIdentityScoredFrames > 0
+          ? faceIdentityBelowSevereFrames / faceIdentityScoredFrames
+          : 1,
         coatColorMinScore,
         markingTopologyMinScore,
         regions,
