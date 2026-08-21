@@ -6,6 +6,7 @@ const {
   assertCharacterMasterView,
   PRODUCTION_STATES,
   adminGrantCharacterRegeneration,
+  adminQaOverrideProductionRun,
   adminRerunProductionRun,
   canAdvanceFromVideoGeneration,
   completeVideoAction,
@@ -550,6 +551,119 @@ class ProductionWorkflow {
       runId: run.id,
       stage: "action",
       actionId,
+      previousFailureCode: run.failureCode || null
+    });
+    return committed;
+  }
+
+  /**
+   * Administrator force-pass of a rejected front/side master. Pure promotion:
+   * the QA failure already persisted the normalized candidate, so no
+   * generation happens - the image reappears on the customer's confirmation
+   * list and the customer confirms it themselves. A front override before the
+   * side view ever generated also starts the side generation.
+   */
+  async adminOverrideCharacterMaster({ run, view, generationId, override, failedFromState }) {
+    const safeView = assertCharacterMasterView(view);
+    if (typeof this.runStore.commitAdminMasterQaOverride !== "function") {
+      throw new Error("The production run store does not support administrator QA overrides");
+    }
+    const next = adminQaOverrideProductionRun(run, { stage: `${safeView}_master`, failedFromState });
+    const committed = await this.runStore.commitAdminMasterQaOverride({
+      previousRun: run,
+      run: next.run,
+      view: safeView,
+      generationId,
+      override,
+      sideJobFactory: next.needsSideGeneration
+        ? (frontCandidateId) => createWorkflowJob({
+            name: JOB_NAMES.GENERATE_SIDE,
+            run: next.run,
+            inputRevision: `${requiredId(frontCandidateId, "Front candidate ID")}:side-${next.run.sideGenerationAttempts}`,
+            attempts: this.modelRegistry.modelArk.image.maxRetries + 1
+          })
+        : null
+    });
+    this.logger.warn?.("petpack.workflow.admin_qa_override_committed", {
+      runId: run.id,
+      stage: `${safeView}_master`,
+      generationId,
+      needsSideGeneration: next.needsSideGeneration,
+      previousFailureCode: run.failureCode || null
+    });
+    return committed;
+  }
+
+  /**
+   * Administrator force-pass of a rejected sleeping master. The customer never
+   * picks the sleeping master, so the administrator's choice is final: the
+   * store promotes and binds it, then the run resumes the prompt gate. If a
+   * prompt is unpublished the run stays recoverable at awaiting_prompt_gate -
+   * the caller reads the returned state to see which of the two happened.
+   */
+  async adminOverrideSleepMaster({ run, generationId, override, failedFromState }) {
+    if (typeof this.runStore.commitAdminSleepQaOverride !== "function") {
+      throw new Error("The production run store does not support administrator QA overrides");
+    }
+    const next = adminQaOverrideProductionRun(run, { stage: "sleep_master", failedFromState });
+    const committed = await this.runStore.commitAdminSleepQaOverride({
+      previousRun: run,
+      run: next.run,
+      generationId,
+      override
+    });
+    this.logger.warn?.("petpack.workflow.admin_qa_override_committed", {
+      runId: run.id,
+      stage: "sleep_master",
+      generationId,
+      previousFailureCode: run.failureCode || null
+    });
+    try {
+      return await this.resumeAwaitingPromptGate({ run: committed });
+    } catch (error) {
+      // The override itself is committed and the run is recoverable at the
+      // prompt gate; say why the release could not happen instead of failing
+      // the disposal that already succeeded.
+      this.logger.error?.("petpack.workflow.admin_override_prompt_gate_holding", {
+        runId: committed.id,
+        errorName: error && error.name ? error.name : "Error",
+        errorMessage: error && error.message ? error.message : ""
+      });
+      return committed;
+    }
+  }
+
+  /**
+   * Administrator force-pass of one rejected provider video: the chosen source
+   * re-enters media processing with a durable override marker; matting,
+   * normalization, and QA all run, the verdict is recorded, but it does not
+   * block. The marker is consumed by exactly one processing pass.
+   */
+  async adminOverrideVideoAction({ run, actionId, sourceAssetId, override, failedFromState }) {
+    assertActionId(actionId);
+    if (typeof this.runStore.commitAdminActionQaOverride !== "function") {
+      throw new Error("The production run store does not support administrator QA overrides");
+    }
+    const next = adminQaOverrideProductionRun(run, { stage: "action", failedFromState });
+    const committed = await this.runStore.commitAdminActionQaOverride({
+      previousRun: run,
+      run: next.run,
+      actionId,
+      sourceAssetId,
+      override,
+      jobFactory: (retryCount) => createWorkflowJob({
+        name: JOB_NAMES.PROCESS_VIDEO_ACTION,
+        run: next.run,
+        inputRevision: `${actionId}:admin-override:${sourceAssetId}:${retryCount}`,
+        actionId,
+        attempts: MEDIA_PROCESSING_QUEUE_ATTEMPTS
+      })
+    });
+    this.logger.warn?.("petpack.workflow.admin_qa_override_committed", {
+      runId: run.id,
+      stage: "action",
+      actionId,
+      sourceAssetId,
       previousFailureCode: run.failureCode || null
     });
     return committed;

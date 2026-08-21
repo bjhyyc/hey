@@ -1716,6 +1716,27 @@ class PostgresPetPackStudioRepository {
         [runId]
       )) : [];
 
+      // Every provider video QA ever rejected for this run, newest verdict per
+      // video, so an administrator can watch them and force-pass the best one.
+      const rejectedVideos = runId ? rows(await tx.query(
+        `SELECT DISTINCT ON (asset.id)
+                rejection.action_id, rejection.report AS qa_report,
+                rejection.created_at AS rejected_at,
+                asset.id AS asset_id, asset.object_key
+           FROM qa_report rejection
+           JOIN media_asset asset
+             ON asset.id = rejection.source_media_asset_id
+            AND asset.kind = 'provider_output'
+            AND asset.deleted_at IS NULL
+          WHERE rejection.run_id = $1
+            AND rejection.subject_kind = 'video'
+            AND rejection.status = 'failed'
+            AND rejection.action_id IS NOT NULL
+          ORDER BY asset.id, rejection.created_at DESC
+          LIMIT 40`,
+        [runId]
+      )) : [];
+
       const timeline = rows(await tx.query(
         `SELECT source, at, label, detail FROM (
            SELECT 'run'::text AS source, event.created_at AS at,
@@ -1818,6 +1839,14 @@ class PostgresPetPackStudioRepository {
           // Server-only: the rejected provider video, for administrator review.
           objectKey: action.provider_output_object_key || null,
           updatedAt: isoTimestampOrNull(action.updated_at)
+        })),
+        rejectedActionVideos: rejectedVideos.map((video) => ({
+          actionId: video.action_id,
+          assetId: video.asset_id,
+          qaReport: video.qa_report || null,
+          rejectedAt: isoTimestampOrNull(video.rejected_at),
+          // Server-only: the service converts this to a short-lived grant.
+          objectKey: video.object_key
         })),
         delivery: row.delivery_id ? {
           id: row.delivery_id,

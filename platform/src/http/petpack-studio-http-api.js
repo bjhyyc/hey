@@ -25,6 +25,7 @@ const HTTP_API_ROUTES = Object.freeze({
   ADMIN_ORDERS_SEARCH: "GET /api/admin/orders",
   ADMIN_ORDER_DETAIL: "GET /api/admin/orders/:orderId",
   ADMIN_ORDER_RERUN: "POST /api/admin/orders/:orderId/rerun",
+  ADMIN_ORDER_QA_OVERRIDE: "POST /api/admin/orders/:orderId/qa-override",
   ADMIN_ORDER_DELIVERY_REISSUE: "POST /api/admin/orders/:orderId/delivery/reissue",
   ADMIN_RETENTION_PLAN: "GET /api/admin/retention/plan",
   ADMIN_IMAGE_PROMPT_HISTORY: "GET /api/admin/image-prompts/:kind/history",
@@ -387,6 +388,15 @@ function parseAdminRerunBody(body) {
   const stage = requireString(body.stage, { maxLength: 64 });
   if (!ADMIN_RERUN_STAGE_PATTERN.test(stage)) throw badRequest("重跑环节无效");
   return { stage, reason: requireString(body.reason, { maxLength: 200 }) };
+}
+
+function parseAdminQaOverrideBody(body) {
+  assertExactKeys(body, { allowed: ["stage", "candidateId", "reason"] });
+  const stage = requireString(body.stage, { maxLength: 64 });
+  if (!ADMIN_RERUN_STAGE_PATTERN.test(stage)) throw badRequest("放行环节无效");
+  const candidateId = requireString(body.candidateId, { maxLength: 64 });
+  if (!ADMIN_UUID_PATTERN.test(candidateId)) throw badRequest("候选 ID 必须是 UUID");
+  return { stage, candidateId, reason: requireString(body.reason, { maxLength: 200 }) };
 }
 
 function parseAdminDisposalReasonBody(body) {
@@ -754,6 +764,13 @@ function serializeAdminOrderDetail(value) {
       qa: serializeAdminQaSummary(action?.qa) || undefined,
       previewUrl: safeString(action?.previewUrl, { maxLength: 4096 }),
       updatedAt: safeString(action?.updatedAt, { maxLength: 64 })
+    })) : [],
+    rejectedActionVideos: Array.isArray(value?.rejectedActionVideos) ? value.rejectedActionVideos.map((video) => compactObject({
+      actionId: safeString(video?.actionId, { maxLength: 128 }),
+      assetId: safeString(video?.assetId, { maxLength: 64 }),
+      qa: serializeAdminQaSummary(video?.qa) || undefined,
+      rejectedAt: safeString(video?.rejectedAt, { maxLength: 64 }),
+      previewUrl: safeString(video?.previewUrl, { maxLength: 4096 })
     })) : [],
     delivery: value?.delivery ? compactObject({
       status: safeString(value.delivery.status, { maxLength: 32 }),
@@ -1155,6 +1172,9 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
     if (method === "POST" && segments.length === 5 && segments[4] === "rerun" && typeof adminOrdersService.rerunStage === "function") {
       return { id: "admin_order_rerun", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
     }
+    if (method === "POST" && segments.length === 5 && segments[4] === "qa-override" && typeof adminOrdersService.qaOverrideStage === "function") {
+      return { id: "admin_order_qa_override", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
+    }
     if (method === "POST" && segments.length === 6 && segments[4] === "delivery" && segments[5] === "reissue" && typeof adminOrdersService.reissueDelivery === "function") {
       return { id: "admin_order_delivery_reissue", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
     }
@@ -1358,6 +1378,11 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
       case "admin_order_rerun": {
         const body = parseAdminRerunBody(decodeJsonObject(request.body, { maxJsonBytes }));
         const result = await adminOrdersService.rerunStage({ actor, orderId: route.orderId, ...body });
+        return { status: 202, body: serializeAdminRescueOutcome(result) };
+      }
+      case "admin_order_qa_override": {
+        const body = parseAdminQaOverrideBody(decodeJsonObject(request.body, { maxJsonBytes }));
+        const result = await adminOrdersService.qaOverrideStage({ actor, orderId: route.orderId, ...body });
         return { status: 202, body: serializeAdminRescueOutcome(result) };
       }
       case "admin_order_delivery_reissue": {

@@ -167,8 +167,11 @@ function OrderDetailPanel({
     setBusy(true);
     setOutcome("");
     perform(reason)
-      .then(() => {
-        setOutcome("已执行。状态稍后刷新，生成需要几分钟。");
+      .then((result) => {
+        const state = (result as { run?: { state?: string } } | null)?.run?.state;
+        setOutcome(state === "awaiting_prompt_gate"
+          ? "已放行，但七条动作提示词未全部发布；发布齐后运行会自动继续。"
+          : "已执行。状态稍后刷新，生成需要几分钟。");
         setPendingDisposal(null);
         load();
         onChanged();
@@ -184,6 +187,24 @@ function OrderDetailPanel({
   const run = detail.run;
   const rescue = detail.rescue;
   const failedMasters = detail.masters.filter((attempt) => attempt.status !== "qa_passed");
+  // A rejected candidate can be force-passed only for the stage the run died
+  // in; the server re-validates, this only decides which buttons render.
+  const overridableMasterStage = (kind?: string): string | null => {
+    if (run?.state !== "failed") return null;
+    if ((kind === "front" || kind === "side") && detail.failedFromState === "awake_generating") return `${kind}_master`;
+    if (kind === "sleep" && detail.failedFromState === "sleep_generating") return "sleep_master";
+    return null;
+  };
+  const videoOverridesEnabled = run?.state === "failed" && detail.failedFromState === "video_generating";
+  const failedActionIds = new Set(detail.actions.filter((action) => action.state === "failed").map((action) => action.actionId));
+  const overridableVideos = videoOverridesEnabled
+    ? detail.rejectedActionVideos.filter((video) => video.actionId && failedActionIds.has(video.actionId))
+    : [];
+  const parseOverrideDisposal = (value: string) => {
+    const rest = value.slice("override:".length);
+    const separator = rest.lastIndexOf(":");
+    return { stage: rest.slice(0, separator), candidateId: rest.slice(separator + 1) };
+  };
 
   return (
     <section className="workflow-card console-detail">
@@ -235,7 +256,7 @@ function OrderDetailPanel({
               </button>
             ))}
           </div>
-          {pendingDisposal && pendingDisposal !== "reissue" ? (
+          {pendingDisposal && pendingDisposal !== "reissue" && !pendingDisposal.startsWith("override:") ? (
             <DisposalForm
               busy={busy}
               onCancel={() => setPendingDisposal(null)}
@@ -286,20 +307,69 @@ function OrderDetailPanel({
         <div className="console-media">
           <h3>母图尝试（共 {detail.masters.length} 张，未通过 {failedMasters.length} 张）</h3>
           <div className="console-media-grid">
-            {detail.masters.map((attempt) => (
-              <figure className={attempt.status === "qa_passed" ? "" : "is-failed"} key={attempt.id}>
-                {attempt.previewUrl
-                  ? <img alt={`${attempt.kind} #${attempt.generationAttempt}`} src={attempt.previewUrl} />
-                  : <span className="console-media-missing">素材不可用</span>}
-                <figcaption>
-                  {attempt.kind === "front" ? "正面" : attempt.kind === "side" ? "45°" : "睡姿"}
-                  {" "}#{attempt.generationAttempt} · {attempt.status}
-                  {attempt.qa?.reasons?.length ? <small>{attempt.qa.reasons.join("；")}</small> : null}
-                </figcaption>
-              </figure>
+            {detail.masters.map((attempt) => {
+              const overrideStage = attempt.status === "qa_failed" ? overridableMasterStage(attempt.kind) : null;
+              return (
+                <figure className={attempt.status === "qa_passed" ? "" : "is-failed"} key={attempt.id}>
+                  {attempt.previewUrl
+                    ? <img alt={`${attempt.kind} #${attempt.generationAttempt}`} src={attempt.previewUrl} />
+                    : <span className="console-media-missing">素材不可用</span>}
+                  <figcaption>
+                    {attempt.kind === "front" ? "正面" : attempt.kind === "side" ? "45°" : "睡姿"}
+                    {" "}#{attempt.generationAttempt} · {attempt.status}
+                    {attempt.qa?.reasons?.length ? <small>{attempt.qa.reasons.join("；")}</small> : null}
+                  </figcaption>
+                  {overrideStage && attempt.id ? (
+                    <button
+                      className="ghost-button console-override-button"
+                      disabled={busy}
+                      onClick={() => setPendingDisposal(`override:${overrideStage}:${attempt.id}`)}
+                      type="button"
+                    >
+                      人工放行此张
+                    </button>
+                  ) : null}
+                </figure>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {overridableVideos.length > 0 ? (
+        <div className="console-media">
+          <h3>被拒视频（可人工放行）</h3>
+          <p className="form-message">放行后该视频重新进入抠图与打包；质检照常测量并记录，但不再拦截。</p>
+          <div className="console-rejected-videos">
+            {overridableVideos.map((video) => (
+              <article key={video.assetId}>
+                <strong>{ACTION_LABELS[video.actionId || ""] || video.actionId} · {timeLabel(video.rejectedAt)}</strong>
+                {video.previewUrl ? <video controls preload="metadata" src={video.previewUrl} /> : <span className="console-media-missing">素材不可用</span>}
+                {video.qa?.reasons?.length ? <small>{video.qa.reasons.join("；")}</small> : null}
+                <button
+                  className="ghost-button console-override-button"
+                  disabled={busy || !video.assetId}
+                  onClick={() => setPendingDisposal(`override:action:${video.actionId}:${video.assetId}`)}
+                  type="button"
+                >
+                  人工放行此条
+                </button>
+              </article>
             ))}
           </div>
         </div>
+      ) : null}
+
+      {pendingDisposal?.startsWith("override:") ? (
+        <DisposalForm
+          busy={busy}
+          onCancel={() => setPendingDisposal(null)}
+          onSubmit={runDisposal((reason) => {
+            const { stage, candidateId } = parseOverrideDisposal(pendingDisposal);
+            return studioAdminApi.qaOverride(orderId, stage, candidateId, reason);
+          })}
+          title={`人工放行：${stageLabel(parseOverrideDisposal(pendingDisposal).stage)}（质检记录保留，不再拦截）`}
+        />
       ) : null}
 
       <div className="console-actions-table">

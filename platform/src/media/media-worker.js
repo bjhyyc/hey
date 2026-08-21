@@ -98,7 +98,8 @@ class MediaWorker {
     requestedDuration,
     referenceMetrics,
     qaPolicy,
-    production = false
+    production = false,
+    adminQaOverride = null
   } = {}) {
     const inputProbeResult = await this.probeAsset({ localPath: inputPath, actionId, mediaRole: "provider-source" });
     const inputProbe = inputProbeResult && inputProbeResult.probe ? inputProbeResult.probe : inputProbeResult;
@@ -207,6 +208,17 @@ class MediaWorker {
     });
     this.logger.info?.("petpack.media.action_processed", { actionId, ok: qa.ok });
     if (!qa.ok) {
+      if (adminQaOverride) {
+        // An administrator judged a rejected video deliverable and authorized
+        // this one pass. The full verdict is measured and preserved - only the
+        // gate decision changes, and the report says exactly who changed it.
+        const overridden = applyAdminQaOverride(qa, adminQaOverride);
+        this.logger.warn?.("petpack.media.action_qa_overridden", {
+          actionId,
+          measuredErrors: overridden.adminOverride.measuredErrors.length
+        });
+        return { plan, probeResult, qa: overridden, matteMode: plan.mediaProfile.matteMode };
+      }
       const error = new Error(`Action media QA failed: ${qa.errors.join("; ")}`);
       error.qa = qa;
       throw error;
@@ -215,8 +227,34 @@ class MediaWorker {
   }
 }
 
+/**
+ * Turns a measured QA rejection into an administrator-authorized pass. Every
+ * measurement, evidence field, and provenance binding stays exactly as
+ * produced - downstream evidence gates keep validating the real data - while
+ * the gate verdict flips and the authorization is embedded in the report.
+ */
+function applyAdminQaOverride(qa, adminQaOverride) {
+  if (!adminQaOverride || typeof adminQaOverride.actorId !== "string" || !adminQaOverride.actorId.trim() ||
+      typeof adminQaOverride.reason !== "string" || !adminQaOverride.reason.trim()) {
+    throw new Error("A QA override requires the authorizing administrator and a reason");
+  }
+  return {
+    ...qa,
+    ok: true,
+    errors: [],
+    adminOverride: {
+      actorId: adminQaOverride.actorId.trim(),
+      reason: adminQaOverride.reason.trim().slice(0, 200),
+      authorizedAt: typeof adminQaOverride.authorizedAt === "string" ? adminQaOverride.authorizedAt : null,
+      measuredOk: false,
+      measuredErrors: Array.isArray(qa.errors) ? qa.errors.slice(0, 40) : []
+    }
+  };
+}
+
 module.exports = {
   MediaWorker,
+  applyAdminQaOverride,
   requireRegularWorkerFile,
   runProcess
 };

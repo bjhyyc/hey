@@ -345,6 +345,7 @@ class PostgresTransactionalWorkflowStore {
                 qa_report_id = NULL,
                 processing_policy_version = NULL,
                 processor_version = NULL,
+                admin_qa_override = NULL,
                 updated_at = now()
           WHERE run_id = $1 AND action_id = $2 AND state = 'failed'
         RETURNING retry_count`,
@@ -363,6 +364,301 @@ class PostgresTransactionalWorkflowStore {
         runId: committedRun.id,
         actionId,
         retryCount: Number(reset.rows[0].retry_count)
+      });
+      return committedRun;
+    });
+  }
+
+  _assertOverride(override) {
+    if (!override || typeof override.actorId !== "string" || !override.actorId.trim() ||
+        typeof override.reason !== "string" || !override.reason.trim()) {
+      throw new Error("A QA override requires the authorizing administrator and a reason");
+    }
+    return {
+      actorId: override.actorId.trim(),
+      reason: override.reason.trim().slice(0, 200),
+      authorizedAt: new Date().toISOString()
+    };
+  }
+
+  /**
+   * The override report is a NEW passed qa_report carrying the authorization;
+   * the rejected report is referenced, never edited. Its bindings copy the
+   * generation row exactly, because the customer's later confirmation claim
+   * re-validates source/subject/policy/processor equality across candidate,
+   * generation, and report.
+   */
+  async _insertOverrideQaReport(tx, { generation, override, subjectKind, actionId = null }) {
+    const reportId = this.idFactory();
+    const report = {
+      ok: true,
+      adminOverride: {
+        ...override,
+        overriddenQaReportId: generation.qa_report_id || null
+      }
+    };
+    const inserted = await tx.query(
+      `INSERT INTO qa_report
+        (id, project_id, run_id, action_id, subject_kind, status, policy_version,
+         report, source_media_asset_id, subject_media_asset_id, processor_version)
+       VALUES ($1, $2, $3, $4, $5, 'passed', $6, $7::jsonb, $8::uuid, $9::uuid, $10)
+       RETURNING id`,
+      [
+        reportId, generation.project_id, generation.run_id, actionId, subjectKind,
+        generation.processing_policy_version, serializeJson(report),
+        generation.provider_output_asset_id, generation.normalized_media_asset_id,
+        generation.processor_version
+      ]
+    );
+    if (!Array.isArray(inserted.rows) || inserted.rows.length !== 1) {
+      throw new Error("The QA override report could not be persisted");
+    }
+    return reportId;
+  }
+
+  async _promoteOverriddenMasterCandidate(tx, { run, view, generationId, override }) {
+    const assetKind = `${view === "sleep" ? "sleep" : view}_master`;
+    const generation = oneRow(await tx.query(
+      `SELECT generation.id, generation.project_id, generation.run_id, generation.order_id,
+              generation.kind, generation.generation_attempt, generation.image_candidate_id,
+              generation.provider_output_asset_id, generation.normalized_media_asset_id,
+              generation.processing_policy_version, generation.processor_version,
+              generation.qa_report_id,
+              generation.parent_front_candidate_id, generation.parent_side_candidate_id
+         FROM master_image_generation generation
+         JOIN media_asset asset
+           ON asset.id = generation.normalized_media_asset_id
+          AND asset.project_id = generation.project_id
+          AND asset.run_id = generation.run_id
+          AND asset.kind = $4::media_kind
+          AND asset.deleted_at IS NULL
+        WHERE generation.id = $1
+          AND generation.run_id = $2
+          AND generation.kind = $3
+          AND generation.status = 'qa_failed'
+          AND generation.image_candidate_id IS NOT NULL
+          AND generation.provider_output_asset_id IS NOT NULL
+          AND generation.processing_policy_version IS NOT NULL
+          AND generation.processor_version IS NOT NULL
+        FOR UPDATE OF generation`,
+      [requireId(generationId, "Master generation ID"), run.id, view, assetKind]
+    ), "The selected master attempt is not a QA-rejected candidate of this run with retained media");
+    const overrideReportId = await this._insertOverrideQaReport(tx, {
+      generation,
+      override,
+      subjectKind: "image"
+    });
+    const candidate = await tx.query(
+      `UPDATE image_candidate
+          SET qa_status = 'passed', qa_report_id = $2
+        WHERE id = $1 AND qa_status = 'failed'
+      RETURNING id`,
+      [generation.image_candidate_id, overrideReportId]
+    );
+    if (!Array.isArray(candidate.rows) || candidate.rows.length !== 1) {
+      throw new Error("The rejected candidate could not be promoted");
+    }
+    const promoted = await tx.query(
+      `UPDATE master_image_generation
+          SET status = 'qa_passed', qa_report_id = $2, updated_at = now()
+        WHERE id = $1 AND status = 'qa_failed'
+      RETURNING id`,
+      [generation.id, overrideReportId]
+    );
+    if (!Array.isArray(promoted.rows) || promoted.rows.length !== 1) {
+      throw new Error("The rejected master generation could not be promoted");
+    }
+    return { generation, overrideReportId };
+  }
+
+  /**
+   * Administrator force-pass of a rejected front/side master. QA failure left
+   * a complete normalized candidate on record (asset, candidate row, failed
+   * report), so this is pure promotion plus the run transition: the image
+   * reappears on the customer's confirmation list and the customer - never
+   * the administrator - confirms it. A front override before the side view
+   * ever generated also starts the side generation, mirroring the ordinary
+   * characterMasterGenerated step.
+   */
+  async commitAdminMasterQaOverride({ previousRun = null, run, view, generationId, override, sideJobFactory = null } = {}) {
+    if (!run || typeof run !== "object") throw new Error("Next production run is required");
+    if (!previousRun || previousRun.id !== run.id) throw new Error("A QA override requires the persisted failed run");
+    if (!["front", "side"].includes(view)) throw new Error("Master QA override view must be front or side");
+    const safeOverride = this._assertOverride(override);
+    return this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      const transition = await this._updateRun(tx, previousRun, run);
+      const committedRun = { ...transition.run, completedActions: run.completedActions || [] };
+      await this._recordTransition(tx, { previousRun, run: committedRun });
+      const { generation } = await this._promoteOverriddenMasterCandidate(tx, {
+        run: committedRun,
+        view,
+        generationId,
+        override: safeOverride
+      });
+      if (committedRun.state === PRODUCTION_STATES.AWAKE_GENERATING) {
+        if (typeof sideJobFactory !== "function") {
+          throw new Error("A side-generation job factory is required when the side view has never generated");
+        }
+        const job = assertWorkflowJob(sideJobFactory(generation.image_candidate_id));
+        if (job.name !== JOB_NAMES.GENERATE_SIDE || job.data.runId !== committedRun.id) {
+          throw new Error("The override's side-generation job must belong to this run");
+        }
+        await this._insertOutbox(tx, job);
+      }
+      this.logger.warn?.("petpack.persistence.admin_master_override_committed", {
+        runId: committedRun.id,
+        view,
+        generationId,
+        state: committedRun.state
+      });
+      return committedRun;
+    });
+  }
+
+  /**
+   * Administrator force-pass of a rejected sleeping master. The customer never
+   * picks the sleeping master, so the administrator's choice is final: the
+   * candidate is promoted, bound to the confirmed character revision, the
+   * prompt-gate master frames are stored, and the run advances to
+   * awaiting_prompt_gate - all in one transaction. Releasing the seven video
+   * actions is the caller's next step via resumeAwaitingPromptGate, which is
+   * already crash-recoverable from exactly this state.
+   */
+  async commitAdminSleepQaOverride({ previousRun = null, run, generationId, override } = {}) {
+    if (!run || typeof run !== "object") throw new Error("Next production run is required");
+    if (!previousRun || previousRun.id !== run.id) throw new Error("A QA override requires the persisted failed run");
+    if (!previousRun.characterRevisionId) throw new Error("Sleeping-master override requires a confirmed character revision");
+    const safeOverride = this._assertOverride(override);
+    return this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      const transition = await this._updateRun(tx, previousRun, run);
+      const committedRun = { ...transition.run, completedActions: run.completedActions || [] };
+      await this._recordTransition(tx, { previousRun, run: committedRun });
+      const { generation } = await this._promoteOverriddenMasterCandidate(tx, {
+        run: committedRun,
+        view: "sleep",
+        generationId,
+        override: safeOverride
+      });
+      const revision = await tx.query(
+        `UPDATE character_revision
+            SET sleep_candidate_id = COALESCE(sleep_candidate_id, $2)
+          WHERE id = $1
+            AND project_id = $3
+            AND front_candidate_id = $4
+            AND side_candidate_id = $5
+            AND (sleep_candidate_id IS NULL OR sleep_candidate_id = $2)
+        RETURNING id`,
+        [
+          previousRun.characterRevisionId,
+          generation.image_candidate_id,
+          generation.project_id,
+          generation.parent_front_candidate_id,
+          generation.parent_side_candidate_id
+        ]
+      );
+      if (!Array.isArray(revision.rows) || revision.rows.length !== 1) {
+        throw new Error("The overridden sleeping master could not be bound to the approved character revision");
+      }
+      const frames = oneRow(await tx.query(
+        `SELECT front_asset.object_key AS front_object_key,
+                side_asset.object_key AS side_object_key,
+                sleep_asset.object_key AS sleep_object_key
+           FROM image_candidate front_candidate
+           JOIN media_asset front_asset ON front_asset.id = front_candidate.media_asset_id
+           JOIN image_candidate side_candidate ON side_candidate.id = $2
+           JOIN media_asset side_asset ON side_asset.id = side_candidate.media_asset_id
+           JOIN image_candidate sleep_candidate ON sleep_candidate.id = $3
+           JOIN media_asset sleep_asset ON sleep_asset.id = sleep_candidate.media_asset_id
+          WHERE front_candidate.id = $1`,
+        [generation.parent_front_candidate_id, generation.parent_side_candidate_id, generation.image_candidate_id]
+      ), "The override's master frames could not be resolved");
+      await this._savePromptGateMasters(tx, committedRun, {
+        frontMaster: { objectKey: frames.front_object_key },
+        sideMaster: { objectKey: frames.side_object_key },
+        sleepMaster: { objectKey: frames.sleep_object_key }
+      });
+      this.logger.warn?.("petpack.persistence.admin_sleep_override_committed", {
+        runId: committedRun.id,
+        generationId,
+        state: committedRun.state
+      });
+      return committedRun;
+    });
+  }
+
+  /**
+   * Administrator force-pass of one rejected provider video. Rejected videos
+   * have no processed artifact - QA fails before upload - so the chosen
+   * provider source re-enters media processing with a durable override marker
+   * on the action; the processing pass runs matting, normalization, and QA in
+   * full, records the verdict, but does not block on it. Every reset path
+   * clears the marker so it is consumed by exactly one pass.
+   */
+  async commitAdminActionQaOverride({ previousRun = null, run, actionId, sourceAssetId, override, jobFactory } = {}) {
+    if (!run || typeof run !== "object") throw new Error("Next production run is required");
+    if (!previousRun || previousRun.id !== run.id) throw new Error("A QA override requires the persisted failed run");
+    assertActionId(actionId);
+    const safeAssetId = requireId(sourceAssetId, "Rejected provider video asset ID");
+    const safeOverride = this._assertOverride(override);
+    if (typeof jobFactory !== "function") throw new Error("Administrator action override requires a job factory");
+    return this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      const transition = await this._updateRun(tx, previousRun, run);
+      const committedRun = { ...transition.run, completedActions: run.completedActions || [] };
+      await this._recordTransition(tx, { previousRun, run: committedRun });
+      // The chosen asset must be a provider video this exact action produced
+      // and QA rejected; the failed report rows are the attribution record.
+      const chosen = await tx.query(
+        `SELECT asset.id
+           FROM media_asset asset
+          WHERE asset.id = $1::uuid
+            AND asset.run_id = $2
+            AND asset.kind = 'provider_output'
+            AND asset.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM qa_report rejection
+               WHERE rejection.run_id = $2
+                 AND rejection.action_id = $3
+                 AND rejection.subject_kind = 'video'
+                 AND rejection.status = 'failed'
+                 AND rejection.source_media_asset_id = asset.id
+            )`,
+        [safeAssetId, committedRun.id, actionId]
+      );
+      if (!Array.isArray(chosen.rows) || chosen.rows.length !== 1) {
+        throw new Error("The selected video is not a QA-rejected provider output of this action");
+      }
+      const reset = await tx.query(
+        `UPDATE generation_action
+            SET state = 'succeeded',
+                provider_output_asset_id = $3::uuid,
+                media_asset_id = NULL,
+                qa_report_id = NULL,
+                processing_policy_version = NULL,
+                processor_version = NULL,
+                admin_qa_override = $4::jsonb,
+                updated_at = now()
+          WHERE run_id = $1
+            AND action_id = $2
+            AND state = 'failed'
+            AND provider_task_id IS NOT NULL
+        RETURNING retry_count`,
+        [committedRun.id, actionId, safeAssetId, serializeJson(safeOverride)]
+      );
+      if (!Array.isArray(reset.rows) || reset.rows.length !== 1) {
+        throw new Error("The failed action could not be staged for an override processing pass");
+      }
+      const job = assertWorkflowJob(jobFactory(Number(reset.rows[0].retry_count)));
+      if (job.name !== JOB_NAMES.PROCESS_VIDEO_ACTION || job.data.runId !== committedRun.id || job.data.actionId !== actionId) {
+        throw new Error("Administrator override job must reprocess the overridden action");
+      }
+      await this._insertOutbox(tx, job);
+      this.logger.warn?.("petpack.persistence.admin_action_override_committed", {
+        runId: committedRun.id,
+        actionId,
+        sourceAssetId: safeAssetId
       });
       return committedRun;
     });

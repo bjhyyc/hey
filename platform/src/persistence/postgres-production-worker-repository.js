@@ -823,6 +823,7 @@ class PostgresProductionWorkerRepository {
                 action.media_asset_id,
                 action.qa_report_id,
                 action.retry_count,
+                action.admin_qa_override,
                 action.processing_policy_version,
                 action.processor_version,
                 processing_prompt.duration AS requested_duration,
@@ -1048,6 +1049,9 @@ class PostgresProductionWorkerRepository {
         // rejection, so the worker can spend a bounded budget rather than
         // leaving the run stalled.
         retryCount: Number(row.retry_count || 0),
+        // Present only when an administrator authorized a force-pass for this
+        // processing pass; consumed (cleared) when the result is saved.
+        adminQaOverride: row.admin_qa_override || null,
         sourceAssetId: row.provider_output_asset_id,
         sourceObjectKey: assertPrivateObjectKey(row.source_object_key),
         sourceSha256: normalizeSha256(row.source_sha256, "Archived provider source checksum"),
@@ -1218,7 +1222,8 @@ class PostgresProductionWorkerRepository {
       if (qa.length !== 1) throw new Error("Processed action QA report could not be stored");
       const action = rows(await tx.query(
         `UPDATE generation_action
-            SET state = 'processed', media_asset_id = $4, qa_report_id = $5, updated_at = now()
+            SET state = 'processed', media_asset_id = $4, qa_report_id = $5,
+                admin_qa_override = NULL, updated_at = now()
           WHERE run_id = $1
             AND action_id = $2
             AND provider_task_id = $3
@@ -1420,6 +1425,7 @@ class PostgresProductionWorkerRepository {
                 qa_report_id = NULL,
                 processing_policy_version = NULL,
                 processor_version = NULL,
+                admin_qa_override = NULL,
                 updated_at = now()
           WHERE run_id = $1 AND action_id = $2 AND state = 'succeeded'
         RETURNING retry_count`,

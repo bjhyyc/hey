@@ -696,7 +696,10 @@ class ProductionJobWorker {
             requestedDuration: claim.requestedDuration,
             referenceMetrics: claim.referenceMetrics,
             qaPolicy: policy,
-            production: this.productionMode
+            production: this.productionMode,
+            // Administrator-authorized force-pass for this one processing
+            // pass: QA measures and records everything but does not block.
+            adminQaOverride: claim.adminQaOverride || null
           })
         ));
       } catch (error) {

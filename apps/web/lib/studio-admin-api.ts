@@ -52,6 +52,10 @@ export type AdminOrderDetail = {
     actionId?: string; state?: string; retryCount?: number;
     qa?: AdminQaSummary; previewUrl?: string; updatedAt?: string;
   }>;
+  rejectedActionVideos: Array<{
+    actionId?: string; assetId?: string; qa?: AdminQaSummary;
+    rejectedAt?: string; previewUrl?: string;
+  }>;
   delivery: { status?: string; downloadCount?: number; expiresAt?: string; assetRetained?: boolean } | null;
   dispatch: { pending?: number; leased?: number; failed?: number; dead?: number };
   timeline: Array<{ source?: string; at?: string; label?: string; detail?: string }>;
@@ -111,6 +115,11 @@ export const studioAdminApi = {
     adminRequest<AdminRescueOutcome>(["admin", "orders", orderId, "rerun"], {
       method: "POST",
       body: { stage, reason },
+    }),
+  qaOverride: (orderId: string, stage: string, candidateId: string, reason: string) =>
+    adminRequest<AdminRescueOutcome>(["admin", "orders", orderId, "qa-override"], {
+      method: "POST",
+      body: { stage, candidateId, reason },
     }),
   reissueDelivery: (orderId: string, reason: string) =>
     adminRequest<AdminRescueOutcome>(["admin", "orders", orderId, "delivery", "reissue"], {

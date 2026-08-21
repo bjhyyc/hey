@@ -31,7 +31,10 @@ function requireRescueWorkflow(workflow) {
     "adminRerunCharacterMaster",
     "adminRerunSleepMaster",
     "adminRerunVideoAction",
-    "adminGrantCharacterRegeneration"
+    "adminGrantCharacterRegeneration",
+    "adminOverrideCharacterMaster",
+    "adminOverrideSleepMaster",
+    "adminOverrideVideoAction"
   ];
   const missing = methods.filter((method) => !workflow || typeof workflow[method] !== "function");
   if (missing.length) throw new Error(`Administrator rescue workflow is incomplete: ${missing.join(", ")}`);
@@ -206,6 +209,16 @@ class AdminOrdersService {
         updatedAt: action.updatedAt
       });
     }
+    const rejectedActionVideos = [];
+    for (const video of context.rejectedActionVideos || []) {
+      rejectedActionVideos.push({
+        actionId: video.actionId,
+        assetId: video.assetId,
+        qa: summarizeQaReport("failed", video.qaReport),
+        rejectedAt: video.rejectedAt,
+        previewUrl: await this._signPreview(video.objectKey)
+      });
+    }
     const detail = {
       order: context.order,
       project: context.project,
@@ -219,6 +232,7 @@ class AdminOrdersService {
       },
       masters,
       actions,
+      rejectedActionVideos,
       delivery: context.delivery,
       dispatch: context.dispatch,
       timeline: context.timeline
@@ -322,6 +336,87 @@ class AdminOrdersService {
       grantedSoFar: context.adminRerunCount + 1
     });
     return { mode: "rerun_authorized", stage: parsed.stage, run: { id: next.id, state: next.state } };
+  }
+
+  /**
+   * Force-pass one QA-rejected candidate. `candidateId` is the
+   * master_image_generation ID for master stages, or the rejected provider
+   * video's media asset ID for an action stage - both are surfaced with
+   * previews in the order detail, so the administrator judges with their eyes
+   * before overriding. The original rejection report is never edited.
+   */
+  async qaOverrideStage({ actor, orderId, stage, candidateId, reason } = {}) {
+    const admin = requireAdmin(actor);
+    const safeReason = requiredString(reason, "Disposal reason", 200);
+    const safeCandidateId = requiredString(candidateId, "Override candidate ID", 128);
+    const parsed = parseStage(stage);
+    const context = await this.repository.getAdminOrderRescueContext(requiredString(orderId, "Order ID"));
+    if (!context) throw new Error("Order was not found");
+    const run = context.run;
+    if (!run || run.state !== PRODUCTION_STATES.FAILED) {
+      throw stageUnavailableError("Only a failed production run can accept a QA override");
+    }
+    const expectedResume = ADMIN_RERUN_RESUME_STATES[parsed.kind === "action" ? "action" : parsed.stage];
+    if (context.failedFromState !== expectedResume) {
+      throw stageUnavailableError(
+        `The run failed from ${context.failedFromState || "an unknown state"}; the ${parsed.stage} stage cannot be overridden`
+      );
+    }
+    const override = { actorId: admin.id, reason: safeReason };
+
+    let next;
+    if (parsed.kind === "master" || parsed.kind === "sleep") {
+      const wantedKind = parsed.kind === "sleep" ? "sleep" : parsed.view;
+      const attempt = context.masterAttempts.find((candidate) => candidate.id === safeCandidateId);
+      if (!attempt || attempt.kind !== wantedKind || attempt.status !== "qa_failed") {
+        throw stageUnavailableError("The selected candidate is not a QA-rejected master attempt of this stage");
+      }
+      next = parsed.kind === "sleep"
+        ? await this.workflow.adminOverrideSleepMaster({
+            run, generationId: safeCandidateId, override, failedFromState: context.failedFromState
+          })
+        : await this.workflow.adminOverrideCharacterMaster({
+            run, view: parsed.view, generationId: safeCandidateId, override, failedFromState: context.failedFromState
+          });
+    } else {
+      const action = context.actions.find((candidate) => candidate.actionId === parsed.actionId);
+      if (!action || action.state !== "failed") {
+        throw stageUnavailableError(`Action ${parsed.actionId} is not in a failed state`);
+      }
+      const video = (context.rejectedActionVideos || []).find(
+        (candidate) => candidate.assetId === safeCandidateId && candidate.actionId === parsed.actionId
+      );
+      if (!video) {
+        throw stageUnavailableError("The selected video is not a QA-rejected provider output of this action");
+      }
+      next = await this.workflow.adminOverrideVideoAction({
+        run,
+        actionId: parsed.actionId,
+        sourceAssetId: safeCandidateId,
+        override,
+        failedFromState: context.failedFromState
+      });
+    }
+    await this._recordDisposal({
+      actor: admin,
+      context,
+      eventType: "admin_qa_override_granted",
+      metadata: {
+        stage: parsed.stage,
+        candidateId: safeCandidateId,
+        reason: safeReason,
+        runId: run.id,
+        previousFailureCode: run.failureCode || null,
+        resultState: next.state
+      }
+    });
+    this.logger.warn?.("petpack.admin.qa_override_granted", {
+      orderId: context.order.id,
+      stage: parsed.stage,
+      candidateId: safeCandidateId,
+      resultState: next.state
+    });
+    return { mode: "qa_overridden", stage: parsed.stage, run: { id: next.id, state: next.state } };
   }
 
   async reissueDelivery({ actor, orderId, reason } = {}) {

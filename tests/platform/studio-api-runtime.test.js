@@ -140,7 +140,8 @@ describe("Studio API runtime", () => {
     const controlsRepository = { publishPriceCard: vi.fn(), summarizeProviderUsage: vi.fn() };
     const workflow = {
       startPaidOrder: vi.fn(), photosAccepted: vi.fn(), confirmCharacterMasters: vi.fn(), regenerateCharacterMaster: vi.fn(),
-      adminRerunCharacterMaster: vi.fn(), adminRerunSleepMaster: vi.fn(), adminRerunVideoAction: vi.fn(), adminGrantCharacterRegeneration: vi.fn()
+      adminRerunCharacterMaster: vi.fn(), adminRerunSleepMaster: vi.fn(), adminRerunVideoAction: vi.fn(), adminGrantCharacterRegeneration: vi.fn(),
+      adminOverrideCharacterMaster: vi.fn(), adminOverrideSleepMaster: vi.fn(), adminOverrideVideoAction: vi.fn()
     };
     const objectStore = { createUploadGrant: vi.fn(), createDownloadGrant: vi.fn(), verifyUploadedObject: vi.fn() };
     const paymentProvider = { createCheckout: vi.fn(), queryStatus: vi.fn(), handleNotification: vi.fn() };

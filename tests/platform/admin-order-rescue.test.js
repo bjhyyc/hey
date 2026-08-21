@@ -230,6 +230,9 @@ function createService({ context = baseContext(), workflowOverrides = {}, maxAdm
     adminRerunSleepMaster: vi.fn(async ({ run }) => ({ ...run, state: PRODUCTION_STATES.SLEEP_GENERATING })),
     adminRerunVideoAction: vi.fn(async ({ run }) => ({ ...run, state: PRODUCTION_STATES.VIDEO_GENERATING })),
     adminGrantCharacterRegeneration: vi.fn(async ({ run }) => ({ ...run })),
+    adminOverrideCharacterMaster: vi.fn(),
+    adminOverrideSleepMaster: vi.fn(),
+    adminOverrideVideoAction: vi.fn(),
     ...workflowOverrides
   };
   const objectStore = {

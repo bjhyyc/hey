@@ -104,6 +104,65 @@ function adminRerunProductionRun(run, { stage, failedFromState } = {}) {
 }
 
 /**
+ * An administrator force-passes one QA-rejected candidate of a failed run.
+ * The run resumes at the point right after the stage's ordinary QA pass:
+ *
+ * - front/side master: back to customer confirmation - the override only puts
+ *   the image back on the customer's candidate list, it never confirms for
+ *   them. Except when the front override happens before the side view ever
+ *   generated: then the run mirrors `characterMasterGenerated` and returns to
+ *   awake_generating with the side generation started (`needsSideGeneration`).
+ * - sleep master: the customer never picks the sleeping master, so the
+ *   administrator's choice is final and the run advances to the prompt gate.
+ * - action: back to video_generating; the chosen provider video re-enters
+ *   media processing with the QA verdict recorded but not blocking (the
+ *   generation_action reset is committed by the workflow store).
+ */
+function adminQaOverrideProductionRun(run, { stage, failedFromState } = {}) {
+  if (!run || run.state !== PRODUCTION_STATES.FAILED) {
+    throw adminRerunStageError("Only a failed production run can accept a QA override");
+  }
+  const resumeState = ADMIN_RERUN_RESUME_STATES[stage];
+  if (!resumeState) throw adminRerunStageError(`QA override does not support stage: ${stage}`);
+  if (failedFromState !== resumeState) {
+    throw adminRerunStageError(`The run failed from ${failedFromState || "an unknown state"}, not from the ${stage} stage`);
+  }
+  if (stage === "front_master" || stage === "side_master") {
+    const view = stage === "front_master" ? "front" : "side";
+    const needsSideGeneration = view === "front" && Number(run.sideGenerationAttempts || 0) === 0;
+    if (needsSideGeneration) {
+      return {
+        run: {
+          ...run,
+          state: PRODUCTION_STATES.AWAKE_GENERATING,
+          sideGenerationAttempts: 1,
+          sideQaRetries: 0,
+          failureCode: null
+        },
+        needsSideGeneration: true
+      };
+    }
+    return {
+      run: { ...run, state: PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION, failureCode: null },
+      needsSideGeneration: false
+    };
+  }
+  if (stage === "sleep_master") {
+    if (!run.characterRevisionId) {
+      throw adminRerunStageError("Sleeping-master override requires a confirmed character revision");
+    }
+    return {
+      run: { ...run, state: PRODUCTION_STATES.AWAITING_PROMPT_GATE, failureCode: null },
+      needsSideGeneration: false
+    };
+  }
+  return {
+    run: { ...run, state: PRODUCTION_STATES.VIDEO_GENERATING, failureCode: null },
+    needsSideGeneration: false
+  };
+}
+
+/**
  * Hands one spent self-service regeneration back to the customer, so the
  * "重新生成" button reappears on their confirmation page. Mirrors what
  * `characterRegenerationAbandoned` already does when a regeneration produced
@@ -281,6 +340,7 @@ module.exports = {
   ORDER_STATES,
   PRODUCTION_STATES,
   adminGrantCharacterRegeneration,
+  adminQaOverrideProductionRun,
   adminRerunProductionRun,
   canAdvanceFromVideoGeneration,
   canStartProduction,

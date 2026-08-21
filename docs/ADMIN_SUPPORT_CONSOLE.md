@@ -1,6 +1,40 @@
 # 客服/管理处置台设计（Admin Support Console）
 
-状态：P1 已实现（2026-08-20，未部署）；P2/P3 未开始。
+状态：P1 已实现（2026-08-20）；P2 人工放行已实现（2026-08-21）；均未部署。P3 未开始。
+
+## 0b. P2 人工放行实现要点（2026-08-21）
+
+`POST /api/admin/orders/:orderId/qa-override`，body `{stage, candidateId, reason}`。
+`candidateId`：母图/睡姿 = `master_image_generation.id`；视频 = 被拒 provider
+视频的 `media_asset.id`。详情接口新增 `rejectedActionVideos`（每条被拒视频的
+签名预览 + 拒绝原因），母图未通过尝试沿用原有 `masters` 列表。
+
+1. **母图（front/side）= 纯数据晋升，零重处理**。QA 失败时
+   `saveMasterResult` 本来就把归一化资产、`image_candidate(qa_status='failed')`
+   与失败报告全部落库。放行 = 写一条**新的** passed `qa_report`（report 含
+   `adminOverride{actorId, reason, overriddenQaReportId}`，绑定字段逐项复制
+   generation 行，因为客户确认 claim 会重新校验全链一致）→ 候选与 generation
+   同步晋升 → run `failed → awaiting_character_confirmation`。**客户自己确认**。
+   特例：front 放行发生在 side 从未生成时，镜像 `characterMasterGenerated`：
+   run 回 `awake_generating` 并入队 side 生成。
+2. **睡姿 = 管理员终审**。同样晋升 + `character_revision.sleep_candidate_id`
+   绑定 + 存 prompt-gate 三张 master frame，run `failed → awaiting_prompt_gate`
+   单事务提交；随后走既有 `resumeAwaitingPromptGate` 放七个视频动作。若有
+   提示词未发布，run 停在 prompt gate 可恢复，接口返回的 state 说明这一点。
+3. **视频 = 带标记重入处理**。被拒视频没有处理产物（QA 在上传前抛错），
+   放行把选中 provider 原片重设为 action 的 source（迁移 021 新列
+   `generation_action.admin_qa_override JSONB` 持久化授权），重新入队
+   `process-video-action`。抠图/归一化/QA 全程照跑、证据与 provenance 全真，
+   仅门禁判定被翻转：`applyAdminQaOverride` 保留全部测量字段与 provenance，
+   `ok` 翻 true，`adminOverride.measuredOk=false + measuredErrors` 记录实测。
+   标记被恰好一次处理消费：完成、QA-retry 重置、admin rerun 重置三处都清空。
+   改动全在平台层（media-worker.js / worker 仓储 / claim），**四个生产组件
+   未动，manifest SHA 不变**，但需要重建 Worker 镜像部署。
+4. **候选归属校验**：视频候选必须有该 action 的 failed `qa_report`
+   （source_media_asset_id 指向它）才可选，防止放行别的 run/action 的素材。
+5. **已知边界**：放行后的视频仍要过打包与交付验证层（chroma parity、
+   evidence 门）。一条画质确实不行的视频可能在 `validating` 再次失败——
+   该阶段无重跑入口，届时走退款。原拒绝报告永不改写。
 
 ## 0. P1 实现与设计稿的偏差（以代码为准）
 
@@ -218,7 +252,9 @@ Caddy `@studio` 已放行 `/api/admin/*`，边缘无需改动（限速除外）�
   （含失败候选签名 URL）、rerun、软卡补重生成、delivery reissue、
   audit_event 写入、operations 前端接通。测试：
   `tests/platform/admin-order-rescue.test.js`。
-- **P2 人工放行**：qa-override 三条路径 + worker override 标志 + 前端候选挑选 UI。
+- **P2 人工放行（✅ 2026-08-21 完成，见 §0b）**：qa-override 三条路径 +
+  worker override 标志 + 前端候选挑选 UI。测试：
+  `tests/platform/admin-qa-override.test.js`。
 - **P3 退款与用户处置**：refund service + 受控真实退款验收、users 检索/封禁、
   边缘限速 + per-user 配额。
 
