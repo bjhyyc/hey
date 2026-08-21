@@ -390,7 +390,9 @@ function createService(context) {
     findAdminOperations: vi.fn(async () => []),
     getAdminOrderRescueContext: vi.fn(async () => context),
     recordAdminAuditEvent: vi.fn(async (event) => { audits.push(event); return { recorded: true }; }),
-    extendDeliveryWindow: vi.fn()
+    extendDeliveryWindow: vi.fn(),
+    createAdminRefund: vi.fn(), applyAdminRefundRequested: vi.fn(), completeAdminRefund: vi.fn(),
+    getAdminUserView: vi.fn(), setAdminUserStatus: vi.fn()
   };
   const workflow = {
     adminRerunCharacterMaster: vi.fn(), adminRerunSleepMaster: vi.fn(), adminRerunVideoAction: vi.fn(),

@@ -28,6 +28,15 @@ heyirmy.com {
 }
 
 api.heyirmy.com {
+	# Stock-Caddy edge hardening: bound every request body before it reaches
+	# the application. True volumetric rate limiting needs an xcaddy build with
+	# a rate-limit plugin or an upstream WAF/CDN (see
+	# docs/ADMIN_SUPPORT_CONSOLE.md §5.3); the application applies its own
+	# per-IP throttle behind this.
+	request_body {
+		max_size 16MB
+	}
+
 	@health path /health
 	@ready path /readyz
 	@kaipay_notification {

@@ -223,7 +223,9 @@ function createService({ context = baseContext(), workflowOverrides = {}, maxAdm
     findAdminOperations: vi.fn(async () => []),
     getAdminOrderRescueContext: vi.fn(async () => context),
     recordAdminAuditEvent: vi.fn(async (event) => { audits.push(event); return { recorded: true }; }),
-    extendDeliveryWindow: vi.fn(async () => ({ id: "delivery-1", status: "ready", downloadCount: 1, expiresAt: "2026-08-23T00:00:00.000Z" }))
+    extendDeliveryWindow: vi.fn(async () => ({ id: "delivery-1", status: "ready", downloadCount: 1, expiresAt: "2026-08-23T00:00:00.000Z" })),
+    createAdminRefund: vi.fn(), applyAdminRefundRequested: vi.fn(), completeAdminRefund: vi.fn(),
+    getAdminUserView: vi.fn(), setAdminUserStatus: vi.fn()
   };
   const workflow = {
     adminRerunCharacterMaster: vi.fn(async ({ run }) => ({ ...run, state: PRODUCTION_STATES.AWAKE_GENERATING })),

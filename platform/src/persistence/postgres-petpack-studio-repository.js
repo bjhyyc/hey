@@ -1779,6 +1779,7 @@ class PostgresPetPackStudioRepository {
       return {
         order: {
           id: row.order_id,
+          userId: row.user_id || null,
           amountFen: databaseNumber(row.amount_fen, "Order amountFen"),
           currency: row.currency,
           paymentMethod: row.payment_method,
@@ -1944,6 +1945,261 @@ class PostgresPetPackStudioRepository {
         downloadCount: databaseNumber(updated[0].download_count, "Delivery download count"),
         expiresAt: isoTimestampOrNull(updated[0].expires_at)
       };
+    });
+  }
+
+  /**
+   * Stage a full-amount administrator refund. Idempotent per order: the refund
+   * row's idempotency key is derived from the order, so a double-click or a
+   * retried provider call reuses the same row and the same stable
+   * refundRequestNo (the row ID) instead of minting a second refund.
+   */
+  async createAdminRefund({ orderId, actorId, reason } = {}) {
+    const safeOrderId = requiredString(orderId, "Order ID");
+    if (!UUID_PATTERN.test(safeOrderId)) throw new Error("Order ID must be a UUID");
+    const safeActorId = requiredString(actorId, "Actor ID");
+    const safeReason = requiredString(reason, "Refund reason").slice(0, 200);
+    const idempotencyKey = `admin-refund:${safeOrderId}`;
+    return this._transaction(async (tx) => {
+      const order = oneRow(await tx.query(
+        `SELECT id, status, amount_fen, provider_order_id
+           FROM customer_order
+          WHERE id = $1
+          FOR UPDATE`,
+        [safeOrderId]
+      ), "Refund order was not found");
+      if (order.status !== PAYMENT_STATES.PAID) {
+        const error = new Error(`Only a paid order can be refunded; the order status is ${order.status}`);
+        error.code = "admin_refund_unavailable";
+        throw error;
+      }
+      if (!order.provider_order_id) {
+        const error = new Error("The order has no provider order to refund against");
+        error.code = "admin_refund_unavailable";
+        throw error;
+      }
+      const existing = rows(await tx.query(
+        "SELECT id, status, amount_fen FROM refund WHERE idempotency_key = $1 AND order_id = $2",
+        [idempotencyKey, safeOrderId]
+      ));
+      if (existing.length === 1) {
+        return {
+          refundId: existing[0].id,
+          amountFen: databaseNumber(existing[0].amount_fen, "Refund amountFen"),
+          status: existing[0].status,
+          alreadyRequested: true
+        };
+      }
+      const inserted = oneRow(await tx.query(
+        `INSERT INTO refund (id, order_id, amount_fen, status, idempotency_key, reason)
+         VALUES ($1, $2, $3, 'requested', $4, $5)
+         RETURNING id, amount_fen`,
+        [this.idFactory(), safeOrderId, order.amount_fen, idempotencyKey, safeReason]
+      ), "Refund request could not be staged");
+      await tx.query(
+        `INSERT INTO audit_event (id, actor_id, order_id, event_type, metadata)
+         VALUES ($1, $2, $3, 'admin_refund_staged', $4::jsonb)`,
+        [this.idFactory(), safeActorId, safeOrderId, JSON.stringify({ refundId: inserted.id, reason: safeReason })]
+      );
+      return {
+        refundId: inserted.id,
+        amountFen: databaseNumber(inserted.amount_fen, "Refund amountFen"),
+        status: "requested",
+        alreadyRequested: false
+      };
+    });
+  }
+
+  /**
+   * The provider accepted the refund request: the order leaves `paid`, the
+   * download is revoked, and an in-flight run stops burning provider money.
+   * A deliverable run stays deliverable as history - the revoked delivery is
+   * what closes the download.
+   */
+  async applyAdminRefundRequested({ orderId, refundId, providerRefundId = null } = {}) {
+    const safeOrderId = requiredString(orderId, "Order ID");
+    const safeRefundId = requiredString(refundId, "Refund ID");
+    return this._transaction(async (tx) => {
+      const order = oneRow(await tx.query(
+        `UPDATE customer_order
+            SET status = 'refund_pending', version = version + 1, updated_at = now()
+          WHERE id = $1 AND status = 'paid'
+        RETURNING id, status`,
+        [safeOrderId]
+      ), "The order left the paid state before the refund could be recorded");
+      const refund = oneRow(await tx.query(
+        `UPDATE refund
+            SET status = 'processing',
+                provider_refund_id = COALESCE($3, provider_refund_id),
+                updated_at = now()
+          WHERE id = $2 AND order_id = $1 AND status IN ('requested', 'processing')
+        RETURNING id, status`,
+        [safeOrderId, safeRefundId, providerRefundId]
+      ), "The staged refund row could not be advanced");
+      await tx.query(
+        `UPDATE delivery
+            SET status = 'revoked', updated_at = now()
+          WHERE order_id = $1 AND status <> 'revoked'`,
+        [safeOrderId]
+      );
+      const failedRuns = rows(await tx.query(
+        `UPDATE production_run
+            SET state = 'failed', failure_code = 'order_refunded',
+                version = version + 1, updated_at = now()
+          WHERE order_id = $1 AND state NOT IN ('deliverable', 'failed')
+        RETURNING id, version`,
+        [safeOrderId]
+      ));
+      for (const run of failedRuns) {
+        await tx.query(
+          `INSERT INTO production_run_event
+            (id, run_id, previous_state, next_state, expected_version, resulting_version)
+           VALUES ($1, $2, NULL, 'failed', NULL, $3)`,
+          [this.idFactory(), run.id, Number(run.version)]
+        );
+      }
+      this.logger.warn?.("petpack.persistence.admin_refund_applied", {
+        orderId: safeOrderId,
+        refundId: refund.id,
+        runsStopped: failedRuns.length
+      });
+      return { orderStatus: order.status, refundStatus: refund.status, runsStopped: failedRuns.length };
+    });
+  }
+
+  /**
+   * The provider's authoritative query reported the money returned. This is
+   * the only path from refund_pending to refunded - the ordinary payment
+   * reconciliation deliberately freezes refund states.
+   */
+  async completeAdminRefund({ orderId, paymentEventKey } = {}) {
+    const safeOrderId = requiredString(orderId, "Order ID");
+    const safeEventKey = requiredString(paymentEventKey, "Payment event idempotency key");
+    return this._transaction(async (tx) => {
+      const order = oneRow(await tx.query(
+        `UPDATE customer_order
+            SET status = 'refunded', version = version + 1, updated_at = now()
+          WHERE id = $1 AND status = 'refund_pending'
+        RETURNING id, status`,
+        [safeOrderId]
+      ), "Only a refund_pending order can be marked refunded");
+      await tx.query(
+        `INSERT INTO payment_event (id, order_id, event_type, idempotency_key, outcome)
+         VALUES ($1, $2, 'provider_reconciliation', $3, 'refunded')
+         ON CONFLICT (idempotency_key) DO NOTHING`,
+        [this.idFactory(), safeOrderId, safeEventKey]
+      );
+      await tx.query(
+        `UPDATE refund
+            SET status = 'success', updated_at = now()
+          WHERE order_id = $1 AND status IN ('requested', 'processing')`,
+        [safeOrderId]
+      );
+      this.logger.warn?.("petpack.persistence.admin_refund_completed", { orderId: safeOrderId });
+      return { orderStatus: order.status };
+    });
+  }
+
+  /**
+   * Support view of one account. There is deliberately nothing searchable or
+   * personal here - the platform never stores phone numbers (migration 010) -
+   * so the entry point is the user ID on an order the customer identified.
+   */
+  async getAdminUserView(userId) {
+    const safeUserId = requiredString(userId, "User ID");
+    if (!UUID_PATTERN.test(safeUserId)) throw new Error("User ID must be a UUID");
+    return this._transaction(async (tx) => {
+      const found = rows(await tx.query(
+        `SELECT app_user.id, app_user.role, app_user.status, app_user.created_at,
+                (SELECT COUNT(*)::int FROM customer_order o WHERE o.user_id = app_user.id) AS order_count,
+                (SELECT COUNT(*)::int FROM auth_session s
+                  WHERE s.user_id = app_user.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions,
+                (SELECT COUNT(*)::int FROM photo_precheck p
+                  WHERE p.user_id = app_user.id AND p.created_at > now() - interval '24 hours') AS prechecks_24h
+           FROM app_user
+          WHERE app_user.id = $1`,
+        [safeUserId]
+      ));
+      if (found.length !== 1) return null;
+      const orders = rows(await tx.query(
+        `SELECT id, project_id, status, amount_fen, created_at
+           FROM customer_order
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 10`,
+        [safeUserId]
+      ));
+      const row = found[0];
+      return {
+        id: row.id,
+        role: row.role,
+        status: row.status,
+        createdAt: isoTimestampOrNull(row.created_at),
+        orderCount: databaseNonNegativeNumber(row.order_count, "User order count"),
+        activeSessions: databaseNonNegativeNumber(row.active_sessions, "User active sessions"),
+        prechecks24h: databaseNonNegativeNumber(row.prechecks_24h, "User precheck count"),
+        recentOrders: orders.map((order) => ({
+          id: order.id,
+          projectId: order.project_id,
+          status: order.status,
+          amountFen: databaseNumber(order.amount_fen, "Order amountFen"),
+          createdAt: isoTimestampOrNull(order.created_at)
+        }))
+      };
+    });
+  }
+
+  /**
+   * Disable or re-enable one customer account. Session resolution already
+   * refuses disabled users; disabling additionally revokes every live session
+   * so the lockout is immediate, not at next expiry. Administrators cannot be
+   * disabled here - the role guard is in the WHERE, not just in the service.
+   */
+  async setAdminUserStatus({ userId, status, actorId, reason } = {}) {
+    const safeUserId = requiredString(userId, "User ID");
+    if (!UUID_PATTERN.test(safeUserId)) throw new Error("User ID must be a UUID");
+    if (!["active", "disabled"].includes(status)) throw new Error("User status must be active or disabled");
+    const safeActorId = requiredString(actorId, "Actor ID");
+    const safeReason = requiredString(reason, "Disposal reason").slice(0, 200);
+    return this._transaction(async (tx) => {
+      const updated = rows(await tx.query(
+        `UPDATE app_user
+            SET status = $2, updated_at = now()
+          WHERE id = $1 AND role = 'user'
+        RETURNING id, status`,
+        [safeUserId, status]
+      ));
+      if (updated.length !== 1) {
+        const error = new Error("Only an existing customer account can have its status changed");
+        error.code = "admin_user_disposal_unavailable";
+        throw error;
+      }
+      let revokedSessions = 0;
+      if (status === "disabled") {
+        const revoked = rows(await tx.query(
+          `UPDATE auth_session
+              SET revoked_at = now()
+            WHERE user_id = $1 AND revoked_at IS NULL
+          RETURNING id`,
+          [safeUserId]
+        ));
+        revokedSessions = revoked.length;
+      }
+      await tx.query(
+        `INSERT INTO audit_event (id, actor_id, event_type, metadata)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+        [
+          this.idFactory(), safeActorId,
+          status === "disabled" ? "admin_user_disabled" : "admin_user_enabled",
+          JSON.stringify({ targetUserId: safeUserId, reason: safeReason, revokedSessions })
+        ]
+      );
+      this.logger.warn?.("petpack.persistence.admin_user_status_changed", {
+        targetUserId: safeUserId,
+        status,
+        revokedSessions
+      });
+      return { id: updated[0].id, status: updated[0].status, revokedSessions };
     });
   }
 

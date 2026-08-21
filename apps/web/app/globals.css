@@ -1571,3 +1571,6 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .console-rejected-videos article { padding: 12px; display: grid; gap: 6px; background: var(--sunken); border: 1px solid var(--danger); border-radius: var(--radius-sm); font-size: var(--text-small); }
 .console-rejected-videos video { width: 100%; background: #000; border-radius: var(--radius-sm); }
 .console-rejected-videos small { color: var(--danger); line-height: 1.5; }
+.console-user { padding: 12px 14px; display: grid; gap: 8px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.console-refund { padding: 14px; border: 1px solid var(--danger); border-radius: var(--radius-sm); }
+.console-refund-button { color: var(--danger); border-color: var(--danger); }

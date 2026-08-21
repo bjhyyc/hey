@@ -1,6 +1,38 @@
 # 客服/管理处置台设计（Admin Support Console）
 
-状态：P1 已实现（2026-08-20）；P2 人工放行已实现（2026-08-21）；均未部署。P3 未开始。
+状态：P1（2026-08-20）、P2 人工放行（2026-08-21）、P3 退款/封禁/节流
+（2026-08-21）均已实现，未部署。
+
+## 0c. P3 实现要点（2026-08-21）
+
+1. **退款单端点、暗启动**：`POST /api/admin/orders/:orderId/refund`，行为随
+   订单状态：`paid` + 必填 reason = 发起全额退款；`refund_pending`（reason
+   可省）= 主动查单并在渠道确认 REFUNDED 时收敛到 `refunded`——普通支付对账
+   **刻意冻结**退款状态（`markOrderPaymentState`），这个轮询是唯一前进路径；
+   `refunded` = 报告已完成。退款行 ID 即渠道 `refundRequestNo`（幂等键
+   `admin-refund:<orderId>` 保证每单只有一行），重试重复同一渠道请求而非开新
+   退款。发起成功副作用（单事务）：订单 `paid→refund_pending`、delivery 全部
+   `revoked`、在途 run 置 `failed(order_refunded)` 停止烧钱（deliverable 保留
+   为历史）。**默认关闭**：`PETPACK_ADMIN_REFUND_ENABLED=true` 才启用，未开
+   时接口 503 `admin_refund_disabled`——对应 BLOCKED.md 的受控真实退款验收门。
+2. **账号处置**：`GET /api/admin/users/:userId`（状态、订单数、活跃会话、
+   24h 预检次数、近 10 单）；`POST /api/admin/users/:userId/disable|enable`
+   （必填 reason）。封禁 = `app_user.status='disabled'`（会话解析层既有拦截）
+   + 同事务吊销全部活跃会话立即生效 + audit_event。`role='user'` 写死在
+   UPDATE 的 WHERE：管理员账号在仓储层就不可封禁；服务层另拒自我处置。
+   入口 = 订单详情的 userId（无手机号检索，见 §0 第 3 条）。
+3. **应用层节流**：`request-rate-limiter.js` 每 IP 固定 60s 窗口两档——
+   全 API 默认 300 req/min，付款前可滥用面（`POST /api/auth/*`、
+   `/api/photo-precheck` 免费视觉模型调用、`/api/checkout`）默认 12 req/min；
+   超限 429 + retry-after。健康探针与 Kaipay 回调豁免（限流支付渠道通知
+   只会伤害支付收敛）。客户端 IP 仅在生产（Caddy 为唯一入口的内网）信任
+   `x-forwarded-for` 首项。开关与阈值：`PETPACK_HTTP_RATE_LIMIT_ENABLED`
+   （默认开）、`PETPACK_HTTP_RATE_LIMIT_RPM`、
+   `PETPACK_HTTP_RATE_LIMIT_SENSITIVE_RPM`。
+4. **边缘**：Caddyfile 补 stock 指令 `request_body max_size 16MB`（合同测试
+   锁定）。真正的容量型 DDoS 防护仍需 xcaddy rate-limit 插件构建或前置
+   腾讯云 CDN/WAF——stock Caddy 没有限速指令，此项保持在 §5.3 作为部署侧
+   待办，不阻塞本阶段。
 
 ## 0b. P2 人工放行实现要点（2026-08-21）
 
@@ -255,8 +287,10 @@ Caddy `@studio` 已放行 `/api/admin/*`，边缘无需改动（限速除外）�
 - **P2 人工放行（✅ 2026-08-21 完成，见 §0b）**：qa-override 三条路径 +
   worker override 标志 + 前端候选挑选 UI。测试：
   `tests/platform/admin-qa-override.test.js`。
-- **P3 退款与用户处置**：refund service + 受控真实退款验收、users 检索/封禁、
-  边缘限速 + per-user 配额。
+- **P3 退款与用户处置（✅ 2026-08-21 完成，见 §0c）**：refund service
+  （暗启动待受控真实退款验收）、users 视图/封禁、应用层节流 + 边缘请求体上限。
+  测试：`tests/platform/admin-refund-users-throttle.test.js`。
+  部署侧仍欠：边缘容量型限速（xcaddy 插件或 WAF）、per-user 配额列。
 
 ## 10. 开放问题
 

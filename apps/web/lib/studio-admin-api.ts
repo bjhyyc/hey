@@ -26,7 +26,7 @@ export type AdminRescueStage = { stage: string; mode: "rerun" | "regeneration_gr
 
 export type AdminOrderDetail = {
   order: {
-    id?: string; amountFen?: number; currency?: string; paymentMethod?: string;
+    id?: string; userId?: string; amountFen?: number; currency?: string; paymentMethod?: string;
     status?: string; paidAt?: string; deliveryStatus?: string; planCode?: string;
     createdAt?: string; updatedAt?: string;
   };
@@ -66,6 +66,24 @@ export type AdminRescueOutcome = {
   stage?: string;
   run?: { id?: string; state?: string };
   delivery?: { status?: string; expiresAt?: string; downloadCount?: number };
+};
+
+export type AdminRefundOutcome = {
+  mode?: string;
+  order?: { id?: string; status?: string };
+  refund?: { id?: string; amountFen?: number };
+  providerState?: string;
+};
+
+export type AdminUserView = {
+  id: string | null;
+  role: string | null;
+  status: string | null;
+  createdAt: string | null;
+  orderCount: number;
+  activeSessions: number;
+  prechecks24h: number;
+  recentOrders: Array<{ id?: string; projectId?: string; status?: string; amountFen?: number; createdAt?: string }>;
 };
 
 async function adminRequest<T>(
@@ -126,4 +144,16 @@ export const studioAdminApi = {
       method: "POST",
       body: { reason },
     }),
+  refundOrder: (orderId: string, reason?: string) =>
+    adminRequest<AdminRefundOutcome>(["admin", "orders", orderId, "refund"], {
+      method: "POST",
+      body: reason === undefined ? {} : { reason },
+    }),
+  userView: (userId: string) =>
+    adminRequest<AdminUserView>(["admin", "users", userId]),
+  setUserStatus: (userId: string, action: "disable" | "enable", reason: string) =>
+    adminRequest<{ user?: { id?: string; status?: string }; revokedSessions?: number }>(
+      ["admin", "users", userId, action],
+      { method: "POST", body: { reason } },
+    ),
 };

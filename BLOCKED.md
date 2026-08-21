@@ -8,7 +8,7 @@
 - Kaipay Pay API V3 的 capabilities/create/query/close/refund、HMAC-SHA256 请求签名、JSON Webhook 原始字节验签、事件幂等、主动查单二次确认和 204 回执已完成；Lighthouse 的 V3 credential ring 与独立通知加密键已安全挂载，数据库 013–015 已应用。`heyirmy.com` 与 `api.heyirmy.com` 的归属验证均已通过，复跑无费用 V3 capabilities 返回 `ok`；已按用户确认只发起一次 0.01 元支付宝 Web 创建请求，但 Kaipay 下单业务层拒绝、未返回订单号、未扣款且未回调。需在 Kaipay 控制台确认授权域名巡检与电脑网站产品状态已对当前二级商户生效；未获明确授权前不重试。
 - Lighthouse 已部署 API-only Studio API，Caddy 仅放行 `/readyz`、Kaipay 精确 POST 通知路径及既有 auth/业务白名单；公网 `/readyz` 返回 200，空回调探针到达应用并返回 400。Outbox/Worker 仍关闭；支付业务层通过后才继续重复通知、错误签名、未知状态和主动查询验收。Webhook 延迟时，网站会调用受保护的 `POST /api/projects/:projectId/payment-status` 服务端查单兜底。
 - Kaipay 对 `api.heyirmy.com` 的站点巡查曾因根路径 404 失败；现已部署精确根路径 200 验证响应并从公网核验 HTTPS/TLS 正常，等待 Kaipay 控制台重新巡查结果。
-- Kaipay V3 退款契约已实现；仍需部署操作员在明确费用上限内做一笔受控退款验收，证明 credential version 冻结、唯一 `refundRequestNo` 与人工审核分支符合商户实况。
+- Kaipay V3 退款契约已实现；仍需部署操作员在明确费用上限内做一笔受控退款验收，证明 credential version 冻结、唯一 `refundRequestNo` 与人工审核分支符合商户实况。（2026-08-21：管理台退款端点已实现并暗启动，`PETPACK_ADMIN_REFUND_ENABLED=true` 前恒返回 503；验收流程可直接用 `/admin/operations` 详情页的退款按钮执行。）
 - ModelArk Seedream 单图非流式多参考输入和 Seedance 2.0 首尾帧、4–15 秒、480p、无音频/水印、异步权威查询契约已实现；生产链路暂不配置未接通的回调 URL/Secret，避免把回调成功误认为业务完成。仍需部署操作员在安全文件配置生产端点和额度后复核精确价格、并发/限流与真实媒体质量，自动化流程不索要真实 API key。
 - Windows 安装包代码签名证书。
 

@@ -21,4 +21,8 @@ describe("Lighthouse Studio API edge allowlist", () => {
     expect(caddy).toContain("@studio path /api/auth/* /api/checkout /api/projects /api/projects/* /api/admin/*");
     expect(caddy).toMatch(/handle\s*\{\s*respond "not found" 404/s);
   });
+
+  it("bounds request bodies at the edge before they reach the application", () => {
+    expect(caddy).toMatch(/request_body\s*\{\s*max_size 16MB\s*\}/s);
+  });
 });

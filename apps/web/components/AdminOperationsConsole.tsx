@@ -6,6 +6,7 @@ import {
   type AdminOperationItem,
   type AdminOrderDetail,
   type AdminRescueStage,
+  type AdminUserView,
 } from "@/lib/studio-admin-api";
 import { StudioGatewayError } from "@/lib/studio-gateway-core";
 
@@ -131,6 +132,73 @@ function DisposalForm({
   );
 }
 
+/**
+ * The account behind the order: read-only counters plus the disable/enable
+ * lever for abusive accounts. Disabling revokes every live session, so the
+ * lockout is immediate.
+ */
+function UserAccountPanel({ userId }: { userId: string }) {
+  const [view, setView] = useState<AdminUserView | null>(null);
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState<"disable" | "enable" | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setMessage("正在加载账号…");
+    studioAdminApi.userView(userId)
+      .then((result) => { setView(result); setMessage(""); })
+      .catch((error) => { setView(null); setMessage(errorMessage(error)); });
+  }, [userId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!view) {
+    return <div className="console-user"><p className="form-message">{message}</p></div>;
+  }
+  const disabled = view.status === "disabled";
+  return (
+    <div className="console-user">
+      <p className="form-message">
+        账号 {view.id} · {disabled ? "已封禁" : "正常"} · 订单 {view.orderCount} 笔
+        · 活跃会话 {view.activeSessions} · 24h 预检 {view.prechecks24h} 次
+        · 注册于 {timeLabel(view.createdAt)}
+      </p>
+      {message ? <p className="form-message">{message}</p> : null}
+      <div className="console-rescue-buttons">
+        <button
+          className="ghost-button console-override-button"
+          disabled={busy}
+          onClick={() => setPending(disabled ? "enable" : "disable")}
+          type="button"
+        >
+          {disabled ? "解封账号" : "封禁账号（吊销全部会话）"}
+        </button>
+      </div>
+      {pending ? (
+        <DisposalForm
+          busy={busy}
+          onCancel={() => setPending(null)}
+          onSubmit={(reason) => {
+            setBusy(true);
+            setMessage("");
+            studioAdminApi.setUserStatus(userId, pending, reason)
+              .then((result) => {
+                setMessage(pending === "disable"
+                  ? `已封禁，吊销 ${result.revokedSessions ?? 0} 个会话。`
+                  : "已解封。");
+                setPending(null);
+                load();
+              })
+              .catch((error) => setMessage(errorMessage(error)))
+              .finally(() => setBusy(false));
+          }}
+          title={pending === "disable" ? "封禁账号" : "解封账号"}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function OrderDetailPanel({
   orderId,
   onChanged,
@@ -143,6 +211,7 @@ function OrderDetailPanel({
   const [pendingDisposal, setPendingDisposal] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState("");
+  const [showUser, setShowUser] = useState(false);
 
   const load = useCallback(() => {
     setMessage("正在加载订单详情…");
@@ -216,8 +285,16 @@ function OrderDetailPanel({
             · 项目 {detail.project.id}
           </p>
         </div>
-        <button className="ghost-button" onClick={load} type="button">刷新</button>
+        <div className="console-rescue-buttons">
+          {detail.order.userId ? (
+            <button className="ghost-button" onClick={() => setShowUser((open) => !open)} type="button">
+              {showUser ? "收起账号" : "查看账号"}
+            </button>
+          ) : null}
+          <button className="ghost-button" onClick={load} type="button">刷新</button>
+        </div>
       </header>
+      {showUser && detail.order.userId ? <UserAccountPanel userId={detail.order.userId} /> : null}
 
       <div className="console-summary">
         <article>
@@ -298,6 +375,61 @@ function OrderDetailPanel({
               title="重开下载窗口"
             />
           ) : null}
+        </div>
+      ) : null}
+
+      {["paid", "refund_pending", "refunded"].includes(detail.order.status || "") ? (
+        <div className="console-rescue console-refund">
+          <h3>退款（最后手段）</h3>
+          {detail.order.status === "refunded" ? (
+            <p className="form-message">已全额退款。</p>
+          ) : detail.order.status === "refund_pending" ? (
+            <div className="console-rescue-buttons">
+              <button
+                className="ghost-button"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setOutcome("");
+                  studioAdminApi.refundOrder(orderId)
+                    .then((result) => {
+                      setOutcome(result.mode === "refund_confirmed"
+                        ? "渠道确认退款已完成，订单已置为 refunded。"
+                        : `渠道仍在处理退款（${result.providerState || "pending"}），稍后再查。`);
+                      load();
+                      onChanged();
+                    })
+                    .catch((error) => setOutcome(errorMessage(error)))
+                    .finally(() => setBusy(false));
+                }}
+                type="button"
+              >
+                查退款结果
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="form-message">全额退款；发起后交付立即吊销、在途生成停止，渠道确认后订单转 refunded。</p>
+              <div className="console-rescue-buttons">
+                <button
+                  className="ghost-button console-refund-button"
+                  disabled={busy}
+                  onClick={() => setPendingDisposal("refund")}
+                  type="button"
+                >
+                  申请全额退款
+                </button>
+              </div>
+              {pendingDisposal === "refund" ? (
+                <DisposalForm
+                  busy={busy}
+                  onCancel={() => setPendingDisposal(null)}
+                  onSubmit={runDisposal((reason) => studioAdminApi.refundOrder(orderId, reason))}
+                  title={`申请全额退款：${amountLabel(detail.order.amountFen)}`}
+                />
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
 

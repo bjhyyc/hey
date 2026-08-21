@@ -27,6 +27,10 @@ const HTTP_API_ROUTES = Object.freeze({
   ADMIN_ORDER_RERUN: "POST /api/admin/orders/:orderId/rerun",
   ADMIN_ORDER_QA_OVERRIDE: "POST /api/admin/orders/:orderId/qa-override",
   ADMIN_ORDER_DELIVERY_REISSUE: "POST /api/admin/orders/:orderId/delivery/reissue",
+  ADMIN_ORDER_REFUND: "POST /api/admin/orders/:orderId/refund",
+  ADMIN_USER_VIEW: "GET /api/admin/users/:userId",
+  ADMIN_USER_DISABLE: "POST /api/admin/users/:userId/disable",
+  ADMIN_USER_ENABLE: "POST /api/admin/users/:userId/enable",
   ADMIN_RETENTION_PLAN: "GET /api/admin/retention/plan",
   ADMIN_IMAGE_PROMPT_HISTORY: "GET /api/admin/image-prompts/:kind/history",
   ADMIN_SAVE_IMAGE_PROMPT_DRAFT: "POST /api/admin/image-prompts/drafts",
@@ -404,6 +408,14 @@ function parseAdminDisposalReasonBody(body) {
   return { reason: requireString(body.reason, { maxLength: 200 }) };
 }
 
+// Initiating a refund requires a reason; polling an in-flight one does not.
+// The service enforces the distinction - the boundary only bounds the shape.
+function parseAdminRefundBody(body) {
+  assertExactKeys(body, { allowed: ["reason"], required: [] });
+  if (body.reason === undefined) return {};
+  return { reason: requireString(body.reason, { maxLength: 200 }) };
+}
+
 function parseAdminCostQuery(searchParams) {
   const allowed = new Set(["from", "to", "operation", "actionId", "bucket"]);
   for (const key of searchParams.keys()) {
@@ -704,6 +716,7 @@ function serializeAdminOrderDetail(value) {
   return {
     order: compactObject({
       id: safeString(value?.order?.id, { maxLength: 256 }),
+      userId: safeString(value?.order?.userId, { maxLength: 64 }),
       amountFen: safeInteger(value?.order?.amountFen),
       currency: safeString(value?.order?.currency, { maxLength: 8 }),
       paymentMethod: safeString(value?.order?.paymentMethod, { maxLength: 16 }),
@@ -807,6 +820,50 @@ function serializeAdminRescueOutcome(value) {
       expiresAt: safeString(value.delivery.expiresAt, { maxLength: 64 }),
       downloadCount: safeInteger(value.delivery.downloadCount)
     }) : undefined
+  });
+}
+
+function serializeAdminRefundOutcome(value) {
+  return compactObject({
+    mode: safeString(value?.mode, { maxLength: 64 }),
+    order: value?.order ? compactObject({
+      id: safeString(value.order.id, { maxLength: 256 }),
+      status: safeString(value.order.status, { maxLength: 32 })
+    }) : undefined,
+    refund: value?.refund ? compactObject({
+      id: safeString(value.refund.id, { maxLength: 64 }),
+      amountFen: safeInteger(value.refund.amountFen)
+    }) : undefined,
+    providerState: safeString(value?.providerState, { maxLength: 32 })
+  });
+}
+
+function serializeAdminUserView(value) {
+  return {
+    id: safeString(value?.id, { maxLength: 64 }) || null,
+    role: safeString(value?.role, { maxLength: 16 }) || null,
+    status: safeString(value?.status, { maxLength: 16 }) || null,
+    createdAt: safeString(value?.createdAt, { maxLength: 64 }) || null,
+    orderCount: safeInteger(value?.orderCount) ?? 0,
+    activeSessions: safeInteger(value?.activeSessions) ?? 0,
+    prechecks24h: safeInteger(value?.prechecks24h) ?? 0,
+    recentOrders: Array.isArray(value?.recentOrders) ? value.recentOrders.map((order) => compactObject({
+      id: safeString(order?.id, { maxLength: 64 }),
+      projectId: safeString(order?.projectId, { maxLength: 64 }),
+      status: safeString(order?.status, { maxLength: 32 }),
+      amountFen: safeInteger(order?.amountFen),
+      createdAt: safeString(order?.createdAt, { maxLength: 64 })
+    })) : []
+  };
+}
+
+function serializeAdminUserDisposal(value) {
+  return compactObject({
+    user: value?.user ? compactObject({
+      id: safeString(value.user.id, { maxLength: 64 }),
+      status: safeString(value.user.status, { maxLength: 16 })
+    }) : undefined,
+    revokedSessions: safeInteger(value?.revokedSessions)
   });
 }
 
@@ -1064,6 +1121,15 @@ function mapError(error) {
   if (error?.code === "delivery_reissue_unavailable") {
     return { status: 409, code: "delivery_reissue_unavailable", message: "交付无法补发：包体未就绪或已超出保留期" };
   }
+  if (error?.code === "admin_refund_disabled") {
+    return { status: 503, code: "admin_refund_disabled", message: "退款功能未开放：需先完成受控真实退款验收" };
+  }
+  if (error?.code === "admin_refund_unavailable") {
+    return { status: 409, code: "admin_refund_unavailable", message: "当前订单状态不能退款" };
+  }
+  if (error?.code === "admin_user_disposal_unavailable") {
+    return { status: 409, code: "admin_user_disposal_unavailable", message: "该账号当前不能执行此处置" };
+  }
   const message = typeof error?.message === "string" ? error.message : "";
   if (/authenticated actor is required/i.test(message)) {
     return { status: 401, code: "unauthenticated", message: "请先登录后继续" };
@@ -1177,6 +1243,23 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
     }
     if (method === "POST" && segments.length === 6 && segments[4] === "delivery" && segments[5] === "reissue" && typeof adminOrdersService.reissueDelivery === "function") {
       return { id: "admin_order_delivery_reissue", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
+    }
+    if (method === "POST" && segments.length === 5 && segments[4] === "refund" && typeof adminOrdersService.refundOrder === "function") {
+      return { id: "admin_order_refund", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
+    }
+  }
+  const adminUsersPrefix = segments[0] === "api" && segments[1] === "admin" && segments[2] === "users";
+  if (adminUsersPrefix && adminOrdersService) {
+    if (method === "GET" && segments.length === 4 && typeof adminOrdersService.getUserView === "function") {
+      return { id: "admin_user_view", requiresActor: true, userId: requirePathParameter(segments[3], "用户 ID") };
+    }
+    if (method === "POST" && segments.length === 5 && ["disable", "enable"].includes(segments[4]) && typeof adminOrdersService.setUserStatus === "function") {
+      return {
+        id: "admin_user_status",
+        requiresActor: true,
+        userId: requirePathParameter(segments[3], "用户 ID"),
+        status: segments[4] === "disable" ? "disabled" : "active"
+      };
     }
   }
   if (adminImagePromptPrefix) {
@@ -1389,6 +1472,21 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         const body = parseAdminDisposalReasonBody(decodeJsonObject(request.body, { maxJsonBytes }));
         const result = await adminOrdersService.reissueDelivery({ actor, orderId: route.orderId, ...body });
         return { status: 200, body: serializeAdminRescueOutcome(result) };
+      }
+      case "admin_order_refund": {
+        const body = parseAdminRefundBody(decodeJsonObject(request.body, { maxJsonBytes }));
+        const result = await adminOrdersService.refundOrder({ actor, orderId: route.orderId, ...body });
+        return { status: 200, body: serializeAdminRefundOutcome(result) };
+      }
+      case "admin_user_view": {
+        assertNoBody(request);
+        const result = await adminOrdersService.getUserView({ actor, userId: route.userId });
+        return { status: 200, body: serializeAdminUserView(result) };
+      }
+      case "admin_user_status": {
+        const body = parseAdminDisposalReasonBody(decodeJsonObject(request.body, { maxJsonBytes }));
+        const result = await adminOrdersService.setUserStatus({ actor, userId: route.userId, status: route.status, ...body });
+        return { status: 200, body: serializeAdminUserDisposal(result) };
       }
       case "admin_retention_plan": {
         assertNoBody(request);

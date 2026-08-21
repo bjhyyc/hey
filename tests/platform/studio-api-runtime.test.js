@@ -135,7 +135,9 @@ describe("Studio API runtime", () => {
       getImagePromptVersions: vi.fn(), getImagePromptHistory: vi.fn(), saveImagePromptVersions: vi.fn(),
       listAdminOperations: vi.fn(),
       findAdminOperations: vi.fn(), getAdminOrderRescueContext: vi.fn(),
-      recordAdminAuditEvent: vi.fn(), extendDeliveryWindow: vi.fn()
+      recordAdminAuditEvent: vi.fn(), extendDeliveryWindow: vi.fn(),
+      createAdminRefund: vi.fn(), applyAdminRefundRequested: vi.fn(), completeAdminRefund: vi.fn(),
+      getAdminUserView: vi.fn(), setAdminUserStatus: vi.fn()
     };
     const controlsRepository = { publishPriceCard: vi.fn(), summarizeProviderUsage: vi.fn() };
     const workflow = {

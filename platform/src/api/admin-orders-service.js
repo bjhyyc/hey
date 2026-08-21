@@ -19,11 +19,28 @@ function requireOrdersRepository(repository) {
     "findAdminOperations",
     "getAdminOrderRescueContext",
     "recordAdminAuditEvent",
-    "extendDeliveryWindow"
+    "extendDeliveryWindow",
+    "createAdminRefund",
+    "applyAdminRefundRequested",
+    "completeAdminRefund",
+    "getAdminUserView",
+    "setAdminUserStatus"
   ];
   const missing = methods.filter((method) => !repository || typeof repository[method] !== "function");
   if (missing.length) throw new Error(`Administrator orders repository is incomplete: ${missing.join(", ")}`);
   return repository;
+}
+
+function refundDisabledError() {
+  const error = new Error("Administrator refunds are not enabled on this deployment");
+  error.code = "admin_refund_disabled";
+  return error;
+}
+
+function refundUnavailableError(message) {
+  const error = new Error(message);
+  error.code = "admin_refund_unavailable";
+  return error;
 }
 
 function requireRescueWorkflow(workflow) {
@@ -138,6 +155,8 @@ class AdminOrdersService {
     repository,
     workflow,
     objectStore,
+    paymentProvider = null,
+    refundEnabled = false,
     maxAdminRerunsPerOrder = DEFAULT_MAX_ADMIN_RERUNS_PER_ORDER,
     deliveryReissueSeconds = DEFAULT_DELIVERY_REISSUE_SECONDS,
     logger = console
@@ -145,6 +164,12 @@ class AdminOrdersService {
     this.repository = requireOrdersRepository(repository);
     this.workflow = requireRescueWorkflow(workflow);
     this.objectStore = requireObjectStore(objectStore);
+    if (typeof refundEnabled !== "boolean") throw new Error("refundEnabled must be a boolean");
+    if (refundEnabled && (!paymentProvider || typeof paymentProvider.refund !== "function" || typeof paymentProvider.queryStatus !== "function")) {
+      throw new Error("Enabled administrator refunds require a payment provider with refund and queryStatus");
+    }
+    this.paymentProvider = paymentProvider;
+    this.refundEnabled = refundEnabled;
     if (!Number.isSafeInteger(maxAdminRerunsPerOrder) || maxAdminRerunsPerOrder < 1 || maxAdminRerunsPerOrder > 20) {
       throw new Error("maxAdminRerunsPerOrder must be an integer between 1 and 20");
     }
@@ -417,6 +442,138 @@ class AdminOrdersService {
       resultState: next.state
     });
     return { mode: "qa_overridden", stage: parsed.stage, run: { id: next.id, state: next.state } };
+  }
+
+  /**
+   * The last resort, and one state-driven endpoint. On a paid order it
+   * initiates the full-amount refund (reason required); on refund_pending it
+   * queries the provider and converges to refunded when the money is
+   * confirmed returned - the ordinary payment reconciliation deliberately
+   * freezes refund states, so this poll is the only path forward; on a
+   * refunded order it reports completion. Gated off by default until the
+   * controlled real-refund acceptance in BLOCKED.md has been performed.
+   */
+  async refundOrder({ actor, orderId, reason } = {}) {
+    const admin = requireAdmin(actor);
+    if (!this.refundEnabled || !this.paymentProvider) throw refundDisabledError();
+    const context = await this.repository.getAdminOrderRescueContext(requiredString(orderId, "Order ID"));
+    if (!context) throw new Error("Order was not found");
+    const order = context.order;
+
+    if (order.status === "refunded") {
+      return { mode: "refund_already_complete", order: { id: order.id, status: order.status } };
+    }
+
+    if (order.status === "refund_pending") {
+      const reconciliation = await this.paymentProvider.queryStatus({ platformOrderId: order.id });
+      if (reconciliation && reconciliation.state === "refunded") {
+        await this.repository.completeAdminRefund({
+          orderId: order.id,
+          paymentEventKey: reconciliation.paymentEventKey
+        });
+        await this._recordDisposal({
+          actor: admin,
+          context,
+          eventType: "admin_refund_confirmed",
+          metadata: { reason: "provider_query_refunded" }
+        });
+        this.logger.warn?.("petpack.admin.refund_confirmed", { orderId: order.id });
+        return { mode: "refund_confirmed", order: { id: order.id, status: "refunded" } };
+      }
+      this.logger.info?.("petpack.admin.refund_still_pending", {
+        orderId: order.id,
+        providerState: reconciliation ? reconciliation.state : null
+      });
+      return {
+        mode: "refund_pending",
+        order: { id: order.id, status: order.status },
+        providerState: reconciliation ? reconciliation.state : null
+      };
+    }
+
+    if (order.status !== "paid") {
+      throw refundUnavailableError(`Only a paid order can be refunded; the order status is ${order.status}`);
+    }
+    const safeReason = requiredString(reason, "Refund reason", 200);
+    const staged = await this.repository.createAdminRefund({
+      orderId: order.id,
+      actorId: admin.id,
+      reason: safeReason
+    });
+    if (staged.amountFen !== order.amountFen) {
+      throw refundUnavailableError("The staged refund amount does not match the order; partial refunds are not supported");
+    }
+    const providerResult = await this.paymentProvider.refund({
+      platformOrderId: order.id,
+      // The refund row ID doubles as the stable unique refundRequestNo, so a
+      // retry after a transport failure repeats the same provider request.
+      refundId: staged.refundId,
+      amountFen: staged.amountFen,
+      reason: safeReason,
+      idempotencyKey: `admin-refund:${order.id}`
+    });
+    await this.repository.applyAdminRefundRequested({
+      orderId: order.id,
+      refundId: staged.refundId,
+      providerRefundId: providerResult && typeof providerResult.providerRefundId === "string"
+        ? providerResult.providerRefundId
+        : null
+    });
+    await this._recordDisposal({
+      actor: admin,
+      context,
+      eventType: "admin_refund_requested",
+      metadata: {
+        reason: safeReason,
+        refundId: staged.refundId,
+        amountFen: staged.amountFen,
+        alreadyStaged: staged.alreadyRequested === true
+      }
+    });
+    this.logger.warn?.("petpack.admin.refund_requested", {
+      orderId: order.id,
+      refundId: staged.refundId,
+      amountFen: staged.amountFen
+    });
+    return {
+      mode: "refund_requested",
+      order: { id: order.id, status: "refund_pending" },
+      refund: { id: staged.refundId, amountFen: staged.amountFen }
+    };
+  }
+
+  async getUserView({ actor, userId } = {}) {
+    requireAdmin(actor);
+    const view = await this.repository.getAdminUserView(requiredString(userId, "User ID"));
+    if (!view) throw new Error("User was not found");
+    this.logger.info?.("petpack.admin.user_viewed", { targetUserId: view.id, status: view.status });
+    return view;
+  }
+
+  async setUserStatus({ actor, userId, status, reason } = {}) {
+    const admin = requireAdmin(actor);
+    const safeUserId = requiredString(userId, "User ID");
+    const safeReason = requiredString(reason, "Disposal reason", 200);
+    if (!["active", "disabled"].includes(status)) throw new Error("User status must be active or disabled");
+    if (safeUserId === admin.id) {
+      const error = new Error("An administrator cannot change their own account status");
+      error.code = "admin_user_disposal_unavailable";
+      throw error;
+    }
+    // The repository refuses non-user roles in its WHERE clause; the audit row
+    // is written in the same transaction as the status change.
+    const result = await this.repository.setAdminUserStatus({
+      userId: safeUserId,
+      status,
+      actorId: admin.id,
+      reason: safeReason
+    });
+    this.logger.warn?.("petpack.admin.user_status_changed", {
+      targetUserId: safeUserId,
+      status: result.status,
+      revokedSessions: result.revokedSessions
+    });
+    return { user: { id: result.id, status: result.status }, revokedSessions: result.revokedSessions };
   }
 
   async reissueDelivery({ actor, orderId, reason } = {}) {

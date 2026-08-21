@@ -9,6 +9,7 @@ const { createCloudBasePhoneAuth } = require("../auth/create-cloudbase-phone-aut
 const { loadModelRegistry } = require("../config/model-registry");
 const { createPetPackStudioHttpApi } = require("../http/petpack-studio-http-api");
 const { createNodeHttpServer } = require("../http/node-http-server");
+const { createRequestRateLimiter } = require("../http/request-rate-limiter");
 const { PostgresPetPackStudioRepository } = require("../persistence/postgres-petpack-studio-repository");
 const { PostgresProductionControlsRepository } = require("../persistence/postgres-production-controls-repository");
 const { createPostgresDatabase } = require("../persistence/postgres-database");
@@ -57,6 +58,17 @@ function loadStudioApiRuntimeConfig(environment = process.env) {
       ? environment.PETPACK_GENERATION_SALES_ENABLED === "true"
       : environment.PETPACK_GENERATION_SALES_ENABLED !== "false",
     photoPrecheckEnforced: environment.PETPACK_PHOTO_PRECHECK_ENFORCED === "true",
+    // Off until the controlled real-refund acceptance in BLOCKED.md is done.
+    adminRefundEnabled: environment.PETPACK_ADMIN_REFUND_ENABLED === "true",
+    httpRateLimitEnabled: environment.PETPACK_HTTP_RATE_LIMIT_ENABLED !== "false",
+    httpRateLimitRpm: (() => {
+      const value = Number(environment.PETPACK_HTTP_RATE_LIMIT_RPM);
+      return Number.isSafeInteger(value) && value >= 30 && value <= 100000 ? value : 300;
+    })(),
+    httpRateLimitSensitiveRpm: (() => {
+      const value = Number(environment.PETPACK_HTTP_RATE_LIMIT_SENSITIVE_RPM);
+      return Number.isSafeInteger(value) && value >= 3 && value <= 10000 ? value : 12;
+    })(),
     precheckDailyLimit: (() => {
       const limit = Number(environment.PETPACK_PRECHECK_DAILY_LIMIT);
       return Number.isSafeInteger(limit) && limit >= 1 && limit <= 100 ? limit : 8;
@@ -245,6 +257,8 @@ async function createStudioApiRuntime({
       repository: runtimeRepository,
       workflow: runtimeWorkflow,
       objectStore: runtimeObjectStore,
+      paymentProvider: runtimePaymentProvider,
+      refundEnabled: config.adminRefundEnabled,
       logger
     });
     const runtimeAdminCostService = adminCostService || new AdminCostService({ repository: runtimeControlsRepository, logger });
@@ -268,6 +282,12 @@ async function createStudioApiRuntime({
       host: config.host,
       port: config.port,
       allowNonLoopback: config.allowNonLoopback,
+      rateLimiter: createRequestRateLimiter({
+        enabled: config.httpRateLimitEnabled,
+        requestsPerMinute: config.httpRateLimitRpm,
+        sensitiveRequestsPerMinute: config.httpRateLimitSensitiveRpm,
+        logger
+      }),
       healthCheck: async () => {
         await runtimeDatabase.assertReady();
         return { ready: true };

@@ -1,5 +1,7 @@
 const http = require("node:http");
 
+const { resolveClientIp } = require("./request-rate-limiter");
+
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -106,9 +108,17 @@ function createNodeHttpServer({
   healthCheck = async () => ({ ready: true }),
   maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
   requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  rateLimiter = null,
+  // Trust x-forwarded-for only when this process is reachable solely through
+  // its own reverse proxy - true for the production compose network where
+  // Caddy is the only ingress. On loopback the socket address IS the client.
+  trustForwardedFor = allowNonLoopback === true,
   logger = console
 } = {}) {
   const httpApi = requireApi(api);
+  if (rateLimiter && typeof rateLimiter.check !== "function") {
+    throw new Error("A request rate limiter must expose check()");
+  }
   if (host !== "127.0.0.1" && !(allowNonLoopback === true && host === "0.0.0.0")) {
     throw new Error("The PetPack API must bind to 127.0.0.1 unless the production container explicitly enables 0.0.0.0 on its internal network");
   }
@@ -126,6 +136,25 @@ function createNodeHttpServer({
       if (request.method === "GET" && (request.url === "/readyz" || request.url === "/healthz")) {
         await writeReadinessResponse(response, { healthCheck, logger, endpoint: request.url });
         return;
+      }
+      if (rateLimiter) {
+        const verdict = rateLimiter.check({
+          method: request.method,
+          path: request.url,
+          clientIp: resolveClientIp({
+            socketAddress: request.socket && request.socket.remoteAddress,
+            forwardedFor: request.headers["x-forwarded-for"],
+            trustForwardedFor
+          })
+        });
+        if (verdict && verdict.allowed !== true) {
+          writeResponse(response, {
+            status: 429,
+            headers: { "retry-after": String(verdict.retryAfterSeconds || 60) },
+            body: { error: { code: "rate_limited", message: "请求过于频繁，请稍后再试" } }
+          });
+          return;
+        }
       }
       const rawBody = await readBoundedBody(request, bodyLimit);
       const result = await httpApi.handle({
