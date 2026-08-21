@@ -133,10 +133,15 @@ describe("Studio API runtime", () => {
     const repository = {
       getPromptVersions: vi.fn(), savePromptVersions: vi.fn(), getPromptHistory: vi.fn(),
       getImagePromptVersions: vi.fn(), getImagePromptHistory: vi.fn(), saveImagePromptVersions: vi.fn(),
-      listAdminOperations: vi.fn()
+      listAdminOperations: vi.fn(),
+      findAdminOperations: vi.fn(), getAdminOrderRescueContext: vi.fn(),
+      recordAdminAuditEvent: vi.fn(), extendDeliveryWindow: vi.fn()
     };
     const controlsRepository = { publishPriceCard: vi.fn(), summarizeProviderUsage: vi.fn() };
-    const workflow = { startPaidOrder: vi.fn(), photosAccepted: vi.fn(), confirmCharacterMasters: vi.fn(), regenerateCharacterMaster: vi.fn() };
+    const workflow = {
+      startPaidOrder: vi.fn(), photosAccepted: vi.fn(), confirmCharacterMasters: vi.fn(), regenerateCharacterMaster: vi.fn(),
+      adminRerunCharacterMaster: vi.fn(), adminRerunSleepMaster: vi.fn(), adminRerunVideoAction: vi.fn(), adminGrantCharacterRegeneration: vi.fn()
+    };
     const objectStore = { createUploadGrant: vi.fn(), createDownloadGrant: vi.fn(), verifyUploadedObject: vi.fn() };
     const paymentProvider = { createCheckout: vi.fn(), queryStatus: vi.fn(), handleNotification: vi.fn() };
     const service = {

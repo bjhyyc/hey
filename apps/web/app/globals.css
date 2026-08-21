@@ -1511,3 +1511,58 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
    the upload row it must simply align with the other controls. */
 .home-species-switch { margin: 0; }
 .home-species-switch button { min-height: 34px; padding: 0 15px; font-size: var(--text-small); }
+
+/* Support console (/admin/operations). The order list must scan like a queue —
+   amount and state first, IDs second — and every disposal keeps its reason
+   field adjacent to its confirm button so the audit habit costs no navigation. */
+.console-layout { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 14px; align-items: start; }
+.console-search { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.console-search .primary-button, .console-search .ghost-button { min-height: 40px; }
+.console-order-list { display: grid; gap: 8px; margin-top: 12px; }
+.console-order-list li button {
+  width: 100%; padding: 12px 14px; display: grid; gap: 4px; text-align: left;
+  background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer;
+}
+.console-order-list li button:hover { border-color: var(--emerald-line); }
+.console-order-list li.is-selected button { border-color: var(--emerald); background: var(--emerald-tint); }
+.console-order-list li span { color: var(--muted); font-size: var(--text-small); overflow-wrap: anywhere; }
+.console-order-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.console-order-meta em { padding: 1px 7px; color: var(--danger); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; font-size: 11px; font-style: normal; }
+.console-detail { display: grid; gap: 18px; }
+.console-detail-header { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.console-detail-header h2 { margin: 0; font-size: var(--text-lead); }
+.console-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.console-summary article { padding: 12px 14px; display: grid; gap: 3px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--text-small); }
+.console-summary small { color: var(--muted); }
+.console-rescue { display: grid; gap: 10px; }
+.console-rescue h3, .console-media h3, .console-actions-table h3, .console-timeline h3 { margin: 0; font-size: var(--text-body); font-weight: var(--weight-label); }
+.console-rescue-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.console-rescue-buttons .ghost-button { min-height: 38px; }
+.console-disposal { padding: 14px; display: grid; gap: 10px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.console-disposal textarea { padding: 10px 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); outline: none; resize: vertical; font: inherit; }
+.console-disposal textarea:focus { border-color: var(--emerald); box-shadow: 0 0 0 3px var(--emerald-tint); }
+.console-disposal-buttons { display: flex; gap: 8px; }
+.console-disposal-buttons .primary-button { min-height: 40px; width: auto; padding: 0 18px; }
+.console-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.console-media-grid figure { margin: 0; display: grid; gap: 5px; }
+.console-media-grid img { width: 100%; aspect-ratio: 1; object-fit: contain; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.console-media-grid figure.is-failed img { border-color: var(--danger); }
+.console-media-grid figcaption { display: grid; gap: 2px; color: var(--muted); font-size: var(--text-small); }
+.console-media-grid figcaption small { color: var(--danger); line-height: 1.5; }
+.console-media-missing { display: grid; place-items: center; aspect-ratio: 1; color: var(--muted); background: var(--sunken); border: 1px dashed var(--line); border-radius: var(--radius-sm); font-size: var(--text-small); }
+.console-actions-table ul { display: grid; gap: 8px; }
+.console-actions-table li { padding: 10px 12px; display: grid; gap: 4px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--text-small); }
+.console-actions-table li.is-failed { border-color: var(--danger); }
+.console-actions-table li span { color: var(--muted); }
+.console-actions-table li small { color: var(--danger); line-height: 1.5; }
+.console-actions-table video { width: 100%; max-width: 340px; margin-top: 4px; background: #000; border-radius: var(--radius-sm); }
+.console-timeline ul { display: grid; gap: 6px; }
+.console-timeline li { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: var(--text-small); color: var(--muted); }
+.console-timeline-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.console-timeline-source { padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; }
+.console-timeline-source.is-admin { color: var(--emerald); border-color: var(--emerald-line); }
+.console-timeline-source.is-payment { color: var(--warn); }
+@media (max-width: 900px) {
+  .console-layout { grid-template-columns: 1fr; }
+  .console-summary { grid-template-columns: 1fr; }
+}

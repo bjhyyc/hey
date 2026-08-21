@@ -5,6 +5,8 @@ const { REQUIRED_ACTION_IDS, assertActionId, createVideoJobSnapshot } = require(
 const {
   assertCharacterMasterView,
   PRODUCTION_STATES,
+  adminGrantCharacterRegeneration,
+  adminRerunProductionRun,
   canAdvanceFromVideoGeneration,
   completeVideoAction,
   startProductionRun,
@@ -479,6 +481,94 @@ class ProductionWorkflow {
   async deliveryReady({ run }) {
     const next = transitionProductionRun(run, "deliveryReady");
     return this._saveAndQueue(run, next);
+  }
+
+  /**
+   * Administrator-authorized rescue of a failed run: exactly one extra
+   * generation for the stage the run died in. Retry ceilings are untouched, so
+   * a granted generation that fails quality again returns the run to `failed`
+   * through the ordinary exhaustion paths and needs a fresh authorization.
+   */
+  async adminRerunCharacterMaster({ run, view, failedFromState }) {
+    const safeView = assertCharacterMasterView(view);
+    const next = adminRerunProductionRun(run, { stage: `${safeView}_master`, failedFromState });
+    const job = createWorkflowJob({
+      name: safeView === "front" ? JOB_NAMES.GENERATE_FRONT : JOB_NAMES.GENERATE_SIDE,
+      run: next,
+      inputRevision: `${safeView}:admin-rerun-${next[`${safeView}GenerationAttempts`]}`,
+      attempts: this.modelRegistry.modelArk.image.maxRetries + 1
+    });
+    this.logger.warn?.("petpack.workflow.admin_rerun_authorized", {
+      runId: run.id,
+      stage: `${safeView}_master`,
+      generationAttempt: next[`${safeView}GenerationAttempts`],
+      previousFailureCode: run.failureCode || null
+    });
+    return this._saveAndQueue(run, next, job);
+  }
+
+  async adminRerunSleepMaster({ run, failedFromState }) {
+    const next = adminRerunProductionRun(run, { stage: "sleep_master", failedFromState });
+    const job = createWorkflowJob({
+      name: JOB_NAMES.GENERATE_SLEEP,
+      run: next,
+      inputRevision: `${requiredId(run.characterRevisionId, "Character revision ID")}:admin-rerun-sleep-${next.sleepGenerationAttempts}`,
+      // Mirrors the internal sleep QA retry budget: one queue delivery, with
+      // outbox dead-letter alerting as the safety net for machinery failures.
+      attempts: 1
+    });
+    this.logger.warn?.("petpack.workflow.admin_rerun_authorized", {
+      runId: run.id,
+      stage: "sleep_master",
+      sleepGenerationAttempts: next.sleepGenerationAttempts,
+      previousFailureCode: run.failureCode || null
+    });
+    return this._saveAndQueue(run, next, job);
+  }
+
+  async adminRerunVideoAction({ run, actionId, failedFromState }) {
+    assertActionId(actionId);
+    if (typeof this.runStore.commitAdminActionRerun !== "function") {
+      throw new Error("The production run store does not support administrator action reruns");
+    }
+    const next = adminRerunProductionRun(run, { stage: "action", failedFromState });
+    const committed = await this.runStore.commitAdminActionRerun({
+      previousRun: run,
+      run: next,
+      actionId,
+      // The reset's incremented retry_count keeps the rerun's dedupe key unique
+      // against both earlier QA-retry jobs and earlier admin reruns.
+      jobFactory: (retryCount) => createWorkflowJob({
+        name: JOB_NAMES.GENERATE_VIDEO,
+        run: next,
+        inputRevision: `${actionId}:admin-rerun-${retryCount}`,
+        actionId,
+        attempts: this.modelRegistry.modelArk.video.maxRetries + 1
+      })
+    });
+    this.logger.warn?.("petpack.workflow.admin_rerun_authorized", {
+      runId: run.id,
+      stage: "action",
+      actionId,
+      previousFailureCode: run.failureCode || null
+    });
+    return committed;
+  }
+
+  /**
+   * Hands one spent self-service regeneration back to a customer stuck at
+   * character confirmation with their regeneration budget spent. No job is
+   * queued: the customer presses 重新生成 themselves once the button returns.
+   */
+  async adminGrantCharacterRegeneration({ run, view }) {
+    const safeView = assertCharacterMasterView(view);
+    const next = adminGrantCharacterRegeneration(run, { view: safeView });
+    this.logger.warn?.("petpack.workflow.admin_regeneration_granted", {
+      runId: run.id,
+      view: safeView,
+      userRegenerationsUsed: next[`${safeView}UserRegenerationsUsed`]
+    });
+    return this._commit({ previousRun: run, run: next });
   }
 }
 

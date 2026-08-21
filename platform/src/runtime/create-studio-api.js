@@ -1,6 +1,7 @@
 const { AdminCostService } = require("../api/admin-cost-service");
 const { AdminImagePromptService } = require("../api/admin-image-prompt-service");
 const { AdminOperationsService } = require("../api/admin-operations-service");
+const { AdminOrdersService } = require("../api/admin-orders-service");
 const { AdminPromptService } = require("../api/admin-prompt-service");
 const { PetPackStudioService } = require("../api/petpack-studio-service");
 const { createPhotoPrecheckVisionClient } = require("../providers/photo-precheck-vision-client");
@@ -172,6 +173,7 @@ async function createStudioApiRuntime({
   adminPromptService,
   adminImagePromptService,
   adminOperationsService,
+  adminOrdersService,
   adminCostService,
   api,
   httpServer,
@@ -239,6 +241,12 @@ async function createStudioApiRuntime({
     const runtimeAdminPromptService = adminPromptService || new AdminPromptService({ repository: runtimeRepository, logger });
     const runtimeAdminImagePromptService = adminImagePromptService || new AdminImagePromptService({ repository: runtimeRepository, logger });
     const runtimeAdminOperationsService = adminOperationsService || new AdminOperationsService({ repository: runtimeRepository, logger });
+    const runtimeAdminOrdersService = adminOrdersService || new AdminOrdersService({
+      repository: runtimeRepository,
+      workflow: runtimeWorkflow,
+      objectStore: runtimeObjectStore,
+      logger
+    });
     const runtimeAdminCostService = adminCostService || new AdminCostService({ repository: runtimeControlsRepository, logger });
     const runtimeApi = api || createPetPackStudioHttpApi({
       service: runtimeService,
@@ -251,6 +259,7 @@ async function createStudioApiRuntime({
       adminPromptService: runtimeAdminPromptService,
       adminImagePromptService: runtimeAdminImagePromptService,
       adminOperationsService: runtimeAdminOperationsService,
+      adminOrdersService: runtimeAdminOrdersService,
       adminCostService: runtimeAdminCostService,
       logger
     });

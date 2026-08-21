@@ -42,6 +42,88 @@ function regenerationLimitError(view) {
   return error;
 }
 
+function adminRerunStageError(message) {
+  const error = new Error(message);
+  error.code = "admin_rerun_stage_unavailable";
+  return error;
+}
+
+// The state a run resumes in for each administrator rerun stage, which must
+// equal the state it failed from (production_run_event.previous_state of the
+// latest failed transition). This is stage validation by where the run died,
+// not by failure code: workers fail runs with many codes (QA exhaustion,
+// provider errors, budget exhaustion) and all of them deserve the same rescue.
+const ADMIN_RERUN_RESUME_STATES = Object.freeze({
+  front_master: PRODUCTION_STATES.AWAKE_GENERATING,
+  side_master: PRODUCTION_STATES.AWAKE_GENERATING,
+  sleep_master: PRODUCTION_STATES.SLEEP_GENERATING,
+  action: PRODUCTION_STATES.VIDEO_GENERATING
+});
+
+/**
+ * An administrator authorizes exactly one extra generation for the stage a
+ * failed run died in. No retry budgets are raised: if the granted generation
+ * fails quality again, the existing exhaustion checks return the run to
+ * `failed` and a further grant needs a further explicit authorization.
+ */
+function adminRerunProductionRun(run, { stage, failedFromState } = {}) {
+  if (!run || run.state !== PRODUCTION_STATES.FAILED) {
+    throw adminRerunStageError("Only a failed production run can be rerun by an administrator");
+  }
+  const resumeState = ADMIN_RERUN_RESUME_STATES[stage];
+  if (!resumeState) throw adminRerunStageError(`Administrator rerun does not support stage: ${stage}`);
+  if (failedFromState !== resumeState) {
+    throw adminRerunStageError(`The run failed from ${failedFromState || "an unknown state"}, not from the ${stage} stage`);
+  }
+  if (stage === "front_master" || stage === "side_master") {
+    const view = stage === "front_master" ? "front" : "side";
+    return {
+      ...run,
+      state: resumeState,
+      // Attempts stay monotonic so the rerun's job revision and its
+      // master_image_generation row can never collide with earlier attempts.
+      [characterField(view, "GenerationAttempts")]: Number(run[characterField(view, "GenerationAttempts")] || 0) + 1,
+      failureCode: null
+    };
+  }
+  if (stage === "sleep_master") {
+    if (!run.characterRevisionId) {
+      throw adminRerunStageError("Sleeping-master rerun requires a confirmed character revision");
+    }
+    return {
+      ...run,
+      state: resumeState,
+      sleepGenerationAttempts: Number(run.sleepGenerationAttempts || 0) + 1,
+      failureCode: null
+    };
+  }
+  // stage === "action": the generation_action reset (queued state, cleared
+  // provider fields, retry_count increment) is committed by the workflow store
+  // in the same transaction as this run transition.
+  return { ...run, state: resumeState, failureCode: null };
+}
+
+/**
+ * Hands one spent self-service regeneration back to the customer, so the
+ * "重新生成" button reappears on their confirmation page. Mirrors what
+ * `characterRegenerationAbandoned` already does when a regeneration produced
+ * nothing usable - the counter decrement is the established mechanism.
+ */
+function adminGrantCharacterRegeneration(run, { view } = {}) {
+  const safeView = assertCharacterMasterView(view);
+  if (!run || run.state !== PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION) {
+    throw adminRerunStageError("A regeneration can be granted only while the customer is confirming character masters");
+  }
+  const field = characterField(safeView, "UserRegenerationsUsed");
+  const used = Number(run[field] || 0);
+  if (used <= 0) {
+    const error = new Error(`The ${safeView} view still has unused self-service regenerations`);
+    error.code = "admin_regeneration_grant_unavailable";
+    throw error;
+  }
+  return { ...run, [field]: used - 1 };
+}
+
 function canStartProduction(order) {
   return Boolean(order && order.status === ORDER_STATES.PAID && order.id);
 }
@@ -193,10 +275,13 @@ function canAdvanceFromVideoGeneration(run) {
 }
 
 module.exports = {
+  ADMIN_RERUN_RESUME_STATES,
   CHARACTER_MASTER_VIEWS,
   MAX_USER_REGENERATIONS_PER_VIEW,
   ORDER_STATES,
   PRODUCTION_STATES,
+  adminGrantCharacterRegeneration,
+  adminRerunProductionRun,
   canAdvanceFromVideoGeneration,
   canStartProduction,
   completeVideoAction,

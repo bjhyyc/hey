@@ -22,6 +22,10 @@ const HTTP_API_ROUTES = Object.freeze({
   KAIPAY_NOTIFICATION: "POST /api/payments/kaipay/notify/:platformOrderId",
   ADMIN_OPERATIONS: "GET /api/admin/operations",
   ADMIN_OPERATION_COSTS: "GET /api/admin/operations/costs",
+  ADMIN_ORDERS_SEARCH: "GET /api/admin/orders",
+  ADMIN_ORDER_DETAIL: "GET /api/admin/orders/:orderId",
+  ADMIN_ORDER_RERUN: "POST /api/admin/orders/:orderId/rerun",
+  ADMIN_ORDER_DELIVERY_REISSUE: "POST /api/admin/orders/:orderId/delivery/reissue",
   ADMIN_RETENTION_PLAN: "GET /api/admin/retention/plan",
   ADMIN_IMAGE_PROMPT_HISTORY: "GET /api/admin/image-prompts/:kind/history",
   ADMIN_SAVE_IMAGE_PROMPT_DRAFT: "POST /api/admin/image-prompts/drafts",
@@ -362,6 +366,34 @@ function parseAdminOperationsQuery(searchParams) {
   });
 }
 
+const ADMIN_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ADMIN_RERUN_STAGE_PATTERN = /^(front_master|side_master|sleep_master|action:[a-z][a-z-]{0,31})$/;
+
+function parseAdminOrdersSearchQuery(searchParams) {
+  const allowed = new Set(["orderId", "projectId"]);
+  for (const key of searchParams.keys()) {
+    if (!allowed.has(key) || searchParams.getAll(key).length !== 1) throw badRequest();
+  }
+  const orderId = searchParams.get("orderId");
+  const projectId = searchParams.get("projectId");
+  if (Boolean(orderId) === Boolean(projectId)) throw badRequest("检索需要订单 ID 或项目 ID 之一");
+  const target = orderId || projectId;
+  if (!ADMIN_UUID_PATTERN.test(target)) throw badRequest("检索 ID 必须是 UUID");
+  return compactObject({ orderId: orderId || undefined, projectId: projectId || undefined });
+}
+
+function parseAdminRerunBody(body) {
+  assertExactKeys(body, { allowed: ["stage", "reason"] });
+  const stage = requireString(body.stage, { maxLength: 64 });
+  if (!ADMIN_RERUN_STAGE_PATTERN.test(stage)) throw badRequest("重跑环节无效");
+  return { stage, reason: requireString(body.reason, { maxLength: 200 }) };
+}
+
+function parseAdminDisposalReasonBody(body) {
+  assertExactKeys(body, { allowed: ["reason"] });
+  return { reason: requireString(body.reason, { maxLength: 200 }) };
+}
+
 function parseAdminCostQuery(searchParams) {
   const allowed = new Set(["from", "to", "operation", "actionId", "bucket"]);
   for (const key of searchParams.keys()) {
@@ -641,6 +673,126 @@ function serializeAdminOperationsPage(value) {
   };
 }
 
+function serializeAdminOrdersSearch(value) {
+  return { items: serializeAdminOperationsPage({ items: value?.items }).items };
+}
+
+function serializeAdminQaSummary(value) {
+  if (!value) return null;
+  return {
+    status: safeString(value.status, { maxLength: 32 }) || null,
+    reasons: Array.isArray(value.reasons)
+      ? value.reasons.map((reason) => safeString(reason, { maxLength: 200 })).filter(Boolean).slice(0, 5)
+      : []
+  };
+}
+
+// The rescue detail is deliberately shaped like every other admin response:
+// preview URLs are already short-lived grants minted by the service, and
+// object keys, prompt text, and provider payloads must never appear here.
+function serializeAdminOrderDetail(value) {
+  return {
+    order: compactObject({
+      id: safeString(value?.order?.id, { maxLength: 256 }),
+      amountFen: safeInteger(value?.order?.amountFen),
+      currency: safeString(value?.order?.currency, { maxLength: 8 }),
+      paymentMethod: safeString(value?.order?.paymentMethod, { maxLength: 16 }),
+      status: safeString(value?.order?.status, { maxLength: 32 }),
+      paidAt: safeString(value?.order?.paidAt, { maxLength: 64 }),
+      deliveryStatus: safeString(value?.order?.deliveryStatus, { maxLength: 32 }),
+      planCode: safeString(value?.order?.planCode, { maxLength: 64 }),
+      createdAt: safeString(value?.order?.createdAt, { maxLength: 64 }),
+      updatedAt: safeString(value?.order?.updatedAt, { maxLength: 64 })
+    }),
+    project: compactObject({
+      id: safeString(value?.project?.id, { maxLength: 256 }),
+      displayName: safeString(value?.project?.displayName, { maxLength: 128 }),
+      state: safeString(value?.project?.state, { maxLength: 64 }),
+      createdAt: safeString(value?.project?.createdAt, { maxLength: 64 }),
+      updatedAt: safeString(value?.project?.updatedAt, { maxLength: 64 })
+    }),
+    run: value?.run ? compactObject({
+      id: safeString(value.run.id, { maxLength: 256 }),
+      state: safeString(value.run.state, { maxLength: 64 }),
+      failureCode: safeString(value.run.failureCode, { maxLength: 128 }) || null,
+      frontGenerationAttempts: safeInteger(value.run.frontGenerationAttempts),
+      sideGenerationAttempts: safeInteger(value.run.sideGenerationAttempts),
+      sleepGenerationAttempts: safeInteger(value.run.sleepGenerationAttempts),
+      frontUserRegenerationsUsed: safeInteger(value.run.frontUserRegenerationsUsed),
+      sideUserRegenerationsUsed: safeInteger(value.run.sideUserRegenerationsUsed),
+      frontQaRetries: safeInteger(value.run.frontQaRetries),
+      sideQaRetries: safeInteger(value.run.sideQaRetries),
+      version: safeInteger(value.run.version),
+      updatedAt: safeString(value.run.updatedAt, { maxLength: 64 })
+    }) : null,
+    failedFromState: safeString(value?.failedFromState, { maxLength: 64 }) || null,
+    rescue: {
+      adminRerunCount: safeInteger(value?.rescue?.adminRerunCount) ?? 0,
+      maxAdminRerunsPerOrder: safeInteger(value?.rescue?.maxAdminRerunsPerOrder) ?? 0,
+      rerunBudgetExhausted: safeBoolean(value?.rescue?.rerunBudgetExhausted),
+      availableStages: Array.isArray(value?.rescue?.availableStages)
+        ? value.rescue.availableStages.map((entry) => compactObject({
+            stage: safeString(entry?.stage, { maxLength: 64 }),
+            mode: safeString(entry?.mode, { maxLength: 32 })
+          })).filter((entry) => entry.stage)
+        : []
+    },
+    masters: Array.isArray(value?.masters) ? value.masters.map((attempt) => compactObject({
+      id: safeString(attempt?.id, { maxLength: 256 }),
+      kind: safeString(attempt?.kind, { maxLength: 16 }),
+      generationAttempt: safeInteger(attempt?.generationAttempt),
+      status: safeString(attempt?.status, { maxLength: 64 }),
+      lastErrorCode: safeString(attempt?.lastErrorCode, { maxLength: 128 }),
+      qa: serializeAdminQaSummary(attempt?.qa) || undefined,
+      previewUrl: safeString(attempt?.previewUrl, { maxLength: 4096 }),
+      createdAt: safeString(attempt?.createdAt, { maxLength: 64 })
+    })) : [],
+    actions: Array.isArray(value?.actions) ? value.actions.map((action) => compactObject({
+      actionId: safeString(action?.actionId, { maxLength: 128 }),
+      state: safeString(action?.state, { maxLength: 64 }),
+      retryCount: safeInteger(action?.retryCount),
+      qa: serializeAdminQaSummary(action?.qa) || undefined,
+      previewUrl: safeString(action?.previewUrl, { maxLength: 4096 }),
+      updatedAt: safeString(action?.updatedAt, { maxLength: 64 })
+    })) : [],
+    delivery: value?.delivery ? compactObject({
+      status: safeString(value.delivery.status, { maxLength: 32 }),
+      downloadCount: safeInteger(value.delivery.downloadCount),
+      expiresAt: safeString(value.delivery.expiresAt, { maxLength: 64 }),
+      assetRetained: safeBoolean(value.delivery.assetRetained),
+      updatedAt: safeString(value.delivery.updatedAt, { maxLength: 64 })
+    }) : null,
+    dispatch: compactObject({
+      pending: safeInteger(value?.dispatch?.pending),
+      leased: safeInteger(value?.dispatch?.leased),
+      failed: safeInteger(value?.dispatch?.failed),
+      dead: safeInteger(value?.dispatch?.dead)
+    }),
+    timeline: Array.isArray(value?.timeline) ? value.timeline.map((entry) => compactObject({
+      source: safeString(entry?.source, { maxLength: 16 }),
+      at: safeString(entry?.at, { maxLength: 64 }),
+      label: safeString(entry?.label, { maxLength: 128 }),
+      detail: safeString(entry?.detail, { maxLength: 256 })
+    })) : []
+  };
+}
+
+function serializeAdminRescueOutcome(value) {
+  return compactObject({
+    mode: safeString(value?.mode, { maxLength: 64 }),
+    stage: safeString(value?.stage, { maxLength: 64 }),
+    run: value?.run ? compactObject({
+      id: safeString(value.run.id, { maxLength: 256 }),
+      state: safeString(value.run.state, { maxLength: 64 })
+    }) : undefined,
+    delivery: value?.delivery ? compactObject({
+      status: safeString(value.delivery.status, { maxLength: 32 }),
+      expiresAt: safeString(value.delivery.expiresAt, { maxLength: 64 }),
+      downloadCount: safeInteger(value.delivery.downloadCount)
+    }) : undefined
+  });
+}
+
 function safeDecimalString(value) {
   const text = typeof value === "string" ? value : String(value ?? "");
   return /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(text) && text.length <= 128 ? text : undefined;
@@ -883,6 +1035,18 @@ function mapError(error) {
   if (error?.code === "character_regeneration_limit_reached") {
     return { status: 409, code: "character_regeneration_limit_reached", message: "该视角的重新生成次数已用完" };
   }
+  if (error?.code === "admin_rerun_stage_unavailable") {
+    return { status: 409, code: "admin_rerun_stage_unavailable", message: "该环节当前不能重跑" };
+  }
+  if (error?.code === "admin_rerun_limit_reached") {
+    return { status: 409, code: "admin_rerun_limit_reached", message: "该订单的管理员重跑次数已达上限" };
+  }
+  if (error?.code === "admin_regeneration_grant_unavailable") {
+    return { status: 409, code: "admin_regeneration_grant_unavailable", message: "该视角仍有未用完的重新生成次数" };
+  }
+  if (error?.code === "delivery_reissue_unavailable") {
+    return { status: 409, code: "delivery_reissue_unavailable", message: "交付无法补发：包体未就绪或已超出保留期" };
+  }
   const message = typeof error?.message === "string" ? error.message : "";
   if (/authenticated actor is required/i.test(message)) {
     return { status: 401, code: "unauthenticated", message: "请先登录后继续" };
@@ -899,7 +1063,7 @@ function mapError(error) {
   if (/not found|was not found/i.test(message)) {
     return { status: 404, code: "not_found", message: "请求的资源不存在" };
   }
-  if (/not available|paid order|required for this step|not ready|did not pass|must pass quality checks|current state|stale|conflict/i.test(message)) {
+  if (/not available|paid order|required for this step|not ready|did not pass|must pass quality checks|current state|stale|conflict|changed concurrently/i.test(message)) {
     return { status: 409, code: "operation_unavailable", message: "当前状态暂不能执行此操作" };
   }
   if (/must be|is required|invalid|exactly two|checksum|byte size|accepts only/i.test(message)) {
@@ -918,11 +1082,12 @@ function createActorResolutionRequest(request) {
   };
 }
 
-function matchRoute(method, segments, normalService, authService, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService) {
+function matchRoute(method, segments, normalService, authService, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService, adminOrdersService) {
   const is = (...parts) => segments.length === parts.length && parts.every((part, index) => part === segments[index]);
   const projectPrefix = segments[0] === "api" && segments[1] === "projects";
   const adminPrefix = segments[0] === "api" && segments[1] === "admin" && segments[2] === "prompts";
   const adminImagePromptPrefix = segments[0] === "api" && segments[1] === "admin" && segments[2] === "image-prompts";
+  const adminOrdersPrefix = segments[0] === "api" && segments[1] === "admin" && segments[2] === "orders";
 
   if (method === "POST" && is("api", "auth", "cloudbase", "session") && typeof authService?.exchangeCloudBaseAccessToken === "function") {
     return { id: "auth_cloudbase_session" };
@@ -980,6 +1145,20 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
   if (method === "GET" && is("api", "admin", "retention", "plan") && typeof adminRetentionService?.planCleanup === "function") {
     return { id: "admin_retention_plan", requiresActor: true, acceptsQuery: true };
   }
+  if (adminOrdersPrefix && adminOrdersService) {
+    if (method === "GET" && segments.length === 3 && typeof adminOrdersService.searchOrders === "function") {
+      return { id: "admin_orders_search", requiresActor: true, acceptsQuery: true };
+    }
+    if (method === "GET" && segments.length === 4 && typeof adminOrdersService.getOrderDetail === "function") {
+      return { id: "admin_order_detail", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
+    }
+    if (method === "POST" && segments.length === 5 && segments[4] === "rerun" && typeof adminOrdersService.rerunStage === "function") {
+      return { id: "admin_order_rerun", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
+    }
+    if (method === "POST" && segments.length === 6 && segments[4] === "delivery" && segments[5] === "reissue" && typeof adminOrdersService.reissueDelivery === "function") {
+      return { id: "admin_order_delivery_reissue", requiresActor: true, orderId: requirePathParameter(segments[3], "订单 ID") };
+    }
+  }
   if (adminImagePromptPrefix) {
     if (method === "GET" && segments.length === 5 && segments[4] === "history" && typeof adminImagePromptService?.getHistory === "function") {
       return { id: "admin_image_prompt_history", requiresActor: true, kind: requirePathParameter(segments[3], "母图提示词类型") };
@@ -1025,7 +1204,7 @@ function matchRoute(method, segments, normalService, authService, adminPromptSer
  * text for payment callbacks). `resolveActor` is intentionally injected: session, login, PII,
  * and CORS policy remain deployment decisions listed in BLOCKED.md.
  */
-function createPetPackStudioHttpApi({ service, petpackService, authService, phoneAuthExchangeEnabled = false, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService, resolveActor, sessionCookieName, secureSessionCookie = true, internalBearerToken, logger = console, maxJsonBytes = DEFAULT_MAX_JSON_BYTES, now = () => new Date().toISOString() } = {}) {
+function createPetPackStudioHttpApi({ service, petpackService, authService, phoneAuthExchangeEnabled = false, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService, adminOrdersService, resolveActor, sessionCookieName, secureSessionCookie = true, internalBearerToken, logger = console, maxJsonBytes = DEFAULT_MAX_JSON_BYTES, now = () => new Date().toISOString() } = {}) {
   const normalServiceCandidate = service || petpackService;
   const normalService = normalServiceCandidate ? requireNormalUserService(normalServiceCandidate) : null;
   const phoneAuthService = authService ? requireAuthService(authService) : null;
@@ -1166,6 +1345,26 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         const result = await adminCostService.getCostSummary({ actor, ...route.query });
         return { status: 200, body: serializeAdminCostSummary(result) };
       }
+      case "admin_orders_search": {
+        assertNoBody(request);
+        const result = await adminOrdersService.searchOrders({ actor, ...route.query });
+        return { status: 200, body: serializeAdminOrdersSearch(result) };
+      }
+      case "admin_order_detail": {
+        assertNoBody(request);
+        const result = await adminOrdersService.getOrderDetail({ actor, orderId: route.orderId });
+        return { status: 200, body: serializeAdminOrderDetail(result) };
+      }
+      case "admin_order_rerun": {
+        const body = parseAdminRerunBody(decodeJsonObject(request.body, { maxJsonBytes }));
+        const result = await adminOrdersService.rerunStage({ actor, orderId: route.orderId, ...body });
+        return { status: 202, body: serializeAdminRescueOutcome(result) };
+      }
+      case "admin_order_delivery_reissue": {
+        const body = parseAdminDisposalReasonBody(decodeJsonObject(request.body, { maxJsonBytes }));
+        const result = await adminOrdersService.reissueDelivery({ actor, orderId: route.orderId, ...body });
+        return { status: 200, body: serializeAdminRescueOutcome(result) };
+      }
       case "admin_retention_plan": {
         assertNoBody(request);
         const result = await adminRetentionService.planCleanup({ actor, ...route.query });
@@ -1233,7 +1432,7 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
       try {
         const method = getMethod(request);
         const target = parseRequestTarget(request);
-        route = matchRoute(method, target.segments, normalService, phoneAuthService, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService);
+        route = matchRoute(method, target.segments, normalService, phoneAuthService, adminPromptService, adminImagePromptService, adminOperationsService, adminCostService, adminRetentionService, adminOrdersService);
         if (!route) throw notFound();
         if (route.id !== "kaipay_notification" && !hasValidInternalBearer(request, gatewayToken)) {
           throw new HttpApiError({ status: 401, code: "invalid_gateway", message: "服务端网关认证失败" });
@@ -1245,6 +1444,7 @@ function createPetPackStudioHttpApi({ service, petpackService, authService, phon
         if (route.acceptsQuery) {
           if (route.id === "admin_operation_costs") route.query = parseAdminCostQuery(target.searchParams);
           else if (route.id === "admin_retention_plan") route.query = parseAdminRetentionQuery(target.searchParams);
+          else if (route.id === "admin_orders_search") route.query = parseAdminOrdersSearchQuery(target.searchParams);
           else route.query = parseAdminOperationsQuery(target.searchParams);
         }
         const actor = route.requiresActor ? await resolveRouteActor(request, route) : undefined;

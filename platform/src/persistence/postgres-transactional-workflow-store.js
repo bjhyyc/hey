@@ -314,6 +314,60 @@ class PostgresTransactionalWorkflowStore {
     });
   }
 
+  /**
+   * Administrator rerun of one failed video action: the run transition
+   * (failed -> video_generating), the action reset, and the regeneration job
+   * commit in a single transaction. The reset mirrors
+   * `requeueVideoActionAfterQaFailure`: every provider-owned field is cleared
+   * because the submission claim skips any action that still carries one, and
+   * retry_count increments so the rerun's dedupe key can never collide with an
+   * earlier QA-retry or admin-rerun job.
+   */
+  async commitAdminActionRerun({ previousRun = null, run, actionId, jobFactory } = {}) {
+    if (!run || typeof run !== "object") throw new Error("Next production run is required");
+    if (!previousRun || previousRun.id !== run.id) throw new Error("Administrator action rerun requires the persisted failed run");
+    assertActionId(actionId);
+    if (typeof jobFactory !== "function") throw new Error("Administrator action rerun requires a job factory");
+    return this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      const transition = await this._updateRun(tx, previousRun, run);
+      const committedRun = { ...transition.run, completedActions: run.completedActions || [] };
+      await this._recordTransition(tx, { previousRun, run: committedRun });
+      const reset = await tx.query(
+        `UPDATE generation_action
+            SET state = 'queued',
+                retry_count = retry_count + 1,
+                provider_task_id = NULL,
+                provider_request_id = NULL,
+                provider_poll_count = 0,
+                provider_output_asset_id = NULL,
+                media_asset_id = NULL,
+                qa_report_id = NULL,
+                processing_policy_version = NULL,
+                processor_version = NULL,
+                updated_at = now()
+          WHERE run_id = $1 AND action_id = $2 AND state = 'failed'
+        RETURNING retry_count`,
+        [committedRun.id, actionId]
+      );
+      if (!Array.isArray(reset.rows) || reset.rows.length !== 1) {
+        throw new Error("The failed action could not be reset for an administrator rerun");
+      }
+      const job = jobFactory(Number(reset.rows[0].retry_count));
+      const safeJob = assertWorkflowJob(job);
+      if (safeJob.data.runId !== committedRun.id || safeJob.data.actionId !== actionId) {
+        throw new Error("Administrator rerun job must belong to the reset action");
+      }
+      await this._insertOutbox(tx, safeJob);
+      this.logger.info?.("petpack.persistence.admin_action_rerun_committed", {
+        runId: committedRun.id,
+        actionId,
+        retryCount: Number(reset.rows[0].retry_count)
+      });
+      return committedRun;
+    });
+  }
+
   async commitJobs({ run, jobs = [] } = {}) {
     if (!run || !run.id || !run.state) throw new Error("Production run is required");
     if (!Array.isArray(jobs) || jobs.length === 0) throw new Error("At least one workflow job is required");

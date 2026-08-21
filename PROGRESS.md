@@ -185,9 +185,12 @@
 - 2026-08-19：`videoActionQaFailed` 在首次真实触发时暴露第二个缺陷并修复（提交 `1361d60`，镜像 r9）。让 run 失败需要该 run 的乐观锁版本，而我传的是手工拼装的 `{id, state}`，转移抛错，run 仍停在 `video_generating` 且预算已耗尽——正是该机制本该消除的僵死。claim 本身携带带版本号的 run，改用之。**值得记录的是：这个缺陷是被前一轮新增的"回落前先记录原因"日志抓住的**（线上出现 `action_qa_failure_not_recorded`），否则它会再次伪装成一个卡住的项目。新增三项测试，其中一项直接验证存储层对无版本号转移的拒绝。
 - 2026-08-19：`roll` 动作三次生成全部失败，判定为模型能力问题而非 QA 过严，停止继续投钱。三次失败模式互不相同：①整体悬空+躯干拉伸；②画面合格但被平台缺陷误杀（已修）；③半空张嘴、面部变形、严重身份漂移（40+ 项，含 speciesConsistent 与 faceIdentityMinScore）。第①③版经人工看帧确认确实是废片。根本难点：打滚要翻肚皮，而腹部与背面花色恰是参照照片从未拍到的部位，对不对称花色宠物尤甚。已起草针对性的 roll 猫版提示词修订（强制贴地基线、仰面不超过 0.6 秒、锁死面部禁止张嘴变形、腹部不新增斑纹，负面词同步补齐），**未发布、未再生成**，交用户审定。该单 6/7 动作已成品，run 保持可恢复状态未强制置为 failed，以免关闭重试可能。线上告警当前为 `ok:false`（3 条死亡执行：其中 2 条系已修复缺陷的产物，1 条为预算耗尽的正当死亡），处置方式待用户决定。
 
+- 2026-08-20：客服处置台 P1 完成（设计稿 `docs/ADMIN_SUPPORT_CONSOLE.md`，未部署）。覆盖：订单/项目 ID 点查与 attention 检索（`GET /api/admin/orders`）、救援详情（`GET /api/admin/orders/:orderId`，含每次母图尝试与被拒视频的短时签名预览、失败环节、时间线、outbox 计数）、授权重跑（`POST …/rerun`，`front_master|side_master|sleep_master|action:<id>`）、软卡补发客户重生成次数（同一入口自动分流）、交付重开 72 小时（`POST …/delivery/reissue`），以及 `/admin/operations` 前端接通。关键机制决策：**授权重跑=精确补发一次生成，不抬高任何重试上限**——granted 生成再失败会经既有耗尽路径回到 `failed`，再救需再次显式授权（每单上限 6 次，超限走人工/退款）；因此 **P1 零 SQL 迁移**。环节校验以 run 死亡前的状态（`production_run_event.previous_state`）为准而非失败码，故 provider 错误、预算耗尽等失败码同样可救；action 重跑完全镜像 `requeueVideoActionAfterQaFailure` 的重置语义（8/19 手工救 roll 时验证过的同一条路径），与 run 转移、outbox 作业同事务提交（store 新增 `commitAdminActionRerun`）。所有处置必填 reason 并写入 `audit_event`（`admin_rerun_granted`/`admin_regeneration_granted`/`admin_delivery_reissued`），审计写失败只记 error 不吞已提交的救援。交付重开 fail-closed：包体资产已出保留期或被删除时拒绝延长。手机号检索**不做**：迁移 010 明确手机号连哈希都不落库（CloudBase 只回 opaque subject），检索入口为客户从前端读出的订单/项目 ID。对象键全部止步于 service 层，HTTP 序列化按既有 fail-closed 风格显式塑形。新增 `tests/platform/admin-order-rescue.test.js` 26 项（状态机/工作流/服务/HTTP 面）；全仓 vitest 500+ 通过，`apps/web` tsc 与 `next build` 通过。未做（后续阶段）：QA override 人工放行（P2）、退款接口与用户封禁（P3）、边缘限速。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
+- 客服处置台 P1 代码已合入待部署（API 新四路由 + 网页 `/admin/operations`）；P2 人工放行与 P3 退款/封禁未开始，见 `docs/ADMIN_SUPPORT_CONSOLE.md` 分期。
 
 ## Next
 

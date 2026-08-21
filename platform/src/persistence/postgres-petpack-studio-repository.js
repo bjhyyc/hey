@@ -1543,6 +1543,381 @@ class PostgresPetPackStudioRepository {
     });
   }
 
+  /**
+   * Point lookup for the support console: a customer can read their order or
+   * project ID from the frontend, and this resolves either to the same shaped
+   * row the operations feed pages through. Phone numbers are not searchable by
+   * design - the platform stores only an opaque CloudBase subject (see
+   * migration 010), so an ID is the only join a support agent has.
+   */
+  async findAdminOperations({ orderId = null, projectId = null } = {}) {
+    const target = orderId || projectId;
+    if (typeof target !== "string" || !UUID_PATTERN.test(target)) {
+      throw new Error("Operations search requires a valid order or project UUID");
+    }
+    const whereSql = orderId ? "order_record.id = $1::uuid" : "project.id = $1::uuid";
+    return this._transaction(async (tx) => {
+      const result = rows(await tx.query(
+        `WITH page AS (
+           SELECT order_record.id AS order_id,
+                  order_record.status AS order_status,
+                  order_record.payment_method,
+                  order_record.amount_fen,
+                  order_record.paid_at,
+                  order_record.created_at AS order_created_at,
+                  order_record.updated_at AS order_updated_at,
+                  project.id AS project_id,
+                  project.state AS project_state,
+                  project.created_at AS project_created_at,
+                  project.updated_at AS project_updated_at,
+                  run.id AS run_id,
+                  run.character_revision_id AS run_character_revision_id,
+                  run.state AS run_state,
+                  (run.failure_code IS NOT NULL) AS run_has_failure,
+                  run.front_generation_attempts AS awake_generation_attempts,
+                  run.sleep_generation_attempts,
+                  run.version AS run_version,
+                  run.updated_at AS run_updated_at,
+                  delivery.status AS delivery_status,
+                  delivery.download_count AS delivery_download_count,
+                  delivery.expires_at AS delivery_expires_at,
+                  delivery.updated_at AS delivery_updated_at,
+                  COALESCE(run.updated_at, order_record.updated_at, project.updated_at) AS activity_at
+             FROM customer_order order_record
+             JOIN pet_project project ON project.id = order_record.project_id
+             LEFT JOIN production_run run ON run.order_id = order_record.id
+             LEFT JOIN delivery ON delivery.order_id = order_record.id
+            WHERE ${whereSql}
+            ORDER BY activity_at DESC, order_record.id DESC
+            LIMIT 5
+         )
+         SELECT page.*,
+                COALESCE(actions.action_states, '[]'::jsonb) AS action_states,
+                COALESCE(outbox.pending_count, 0) AS outbox_pending,
+                COALESCE(outbox.leased_count, 0) AS outbox_leased,
+                COALESCE(outbox.failed_count, 0) AS outbox_failed,
+                COALESCE(outbox.dead_count, 0) AS outbox_dead
+           FROM page
+           LEFT JOIN LATERAL (
+             SELECT jsonb_agg(
+                      jsonb_build_object(
+                        'actionId', action.action_id,
+                        'state', action.state,
+                        'retryCount', action.retry_count,
+                        'updatedAt', action.updated_at
+                      ) ORDER BY action.action_id
+                    ) AS action_states
+               FROM generation_action action
+              WHERE action.run_id = page.run_id
+           ) actions ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*) FILTER (WHERE outbox.status = 'pending') AS pending_count,
+                    COUNT(*) FILTER (WHERE outbox.status = 'leased') AS leased_count,
+                    COUNT(*) FILTER (WHERE outbox.status = 'failed') AS failed_count,
+                    COUNT(*) FILTER (WHERE outbox.status = 'dead') AS dead_count
+               FROM outbox_job outbox
+              WHERE outbox.aggregate_type = 'production_run'
+                AND outbox.aggregate_id = page.run_id
+           ) outbox ON TRUE
+          ORDER BY page.activity_at DESC, page.order_id DESC`,
+        [target]
+      ));
+      return result.map(mapAdminOperationRow);
+    });
+  }
+
+  /**
+   * Everything the support console's order-detail page needs, in one
+   * transaction: the order/run/delivery core, every master-image attempt with
+   * its private object keys (the service converts them to short-lived preview
+   * grants and strips the keys), per-action state with the last QA verdict and
+   * rejected provider output, the state the run failed from, and a merged
+   * timeline. Object keys never leave the service layer.
+   */
+  async getAdminOrderRescueContext(orderId) {
+    const safeOrderId = requiredString(orderId, "Order ID");
+    if (!UUID_PATTERN.test(safeOrderId)) throw new Error("Order ID must be a UUID");
+    return this._transaction(async (tx) => {
+      const core = rows(await tx.query(
+        `SELECT order_record.id AS order_id, order_record.user_id, order_record.amount_fen,
+                order_record.currency, order_record.payment_method, order_record.status AS order_status,
+                order_record.paid_at, order_record.delivery_status AS order_delivery_status,
+                order_record.created_at AS order_created_at, order_record.updated_at AS order_updated_at,
+                plan.code AS plan_code,
+                project.id AS project_id, project.display_name, project.state AS project_state,
+                project.created_at AS project_created_at, project.updated_at AS project_updated_at,
+                run.id AS run_id, run.order_id AS run_order_id, run.character_revision_id,
+                run.state AS run_state, run.model_registry_version, run.species,
+                run.front_generation_attempts, run.side_generation_attempts,
+                run.front_user_regenerations_used, run.side_user_regenerations_used,
+                run.front_qa_retries, run.side_qa_retries, run.sleep_generation_attempts,
+                run.failure_code, run.version AS run_version,
+                run.created_at AS run_created_at, run.updated_at AS run_updated_at,
+                delivery.id AS delivery_id, delivery.status AS delivery_status,
+                delivery.download_count, delivery.expires_at AS delivery_expires_at,
+                delivery.updated_at AS delivery_updated_at,
+                asset.object_key AS delivery_object_key,
+                (asset.id IS NOT NULL AND asset.deleted_at IS NULL
+                 AND (asset.expires_at IS NULL OR asset.expires_at > now())) AS delivery_asset_retained
+           FROM customer_order order_record
+           JOIN pet_project project ON project.id = order_record.project_id
+           LEFT JOIN product_plan plan ON plan.id = order_record.plan_id
+           LEFT JOIN production_run run ON run.order_id = order_record.id
+           LEFT JOIN delivery ON delivery.order_id = order_record.id
+           LEFT JOIN petpack_build build ON build.id = delivery.petpack_build_id
+           LEFT JOIN media_asset asset ON asset.id = build.media_asset_id
+          WHERE order_record.id = $1`,
+        [safeOrderId]
+      ));
+      if (core.length !== 1) return null;
+      const row = core[0];
+      const runId = row.run_id || null;
+
+      const masterAttempts = runId ? rows(await tx.query(
+        `SELECT generation.id, generation.kind, generation.generation_attempt,
+                generation.status, generation.last_error_code,
+                generation.created_at, generation.updated_at,
+                normalized.object_key AS normalized_object_key,
+                provider.object_key AS provider_object_key,
+                qa.status AS qa_status, qa.report AS qa_report
+           FROM master_image_generation generation
+           LEFT JOIN media_asset normalized
+             ON normalized.id = generation.normalized_media_asset_id
+            AND normalized.deleted_at IS NULL
+           LEFT JOIN media_asset provider
+             ON provider.id = generation.provider_output_asset_id
+            AND provider.deleted_at IS NULL
+           LEFT JOIN qa_report qa ON qa.id = generation.qa_report_id
+          WHERE generation.run_id = $1
+          ORDER BY generation.kind, generation.generation_attempt`,
+        [runId]
+      )) : [];
+
+      const actions = runId ? rows(await tx.query(
+        `SELECT action.action_id, action.state, action.retry_count, action.updated_at,
+                source.object_key AS provider_output_object_key,
+                qa.status AS qa_status, qa.report AS qa_report, qa.created_at AS qa_created_at
+           FROM generation_action action
+           LEFT JOIN media_asset source
+             ON source.id = action.provider_output_asset_id
+            AND source.deleted_at IS NULL
+           LEFT JOIN qa_report qa ON qa.id = action.qa_report_id
+          WHERE action.run_id = $1
+          ORDER BY action.action_id`,
+        [runId]
+      )) : [];
+
+      const failedFrom = runId ? rows(await tx.query(
+        `SELECT previous_state
+           FROM production_run_event
+          WHERE run_id = $1 AND next_state = 'failed'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [runId]
+      )) : [];
+
+      const timeline = rows(await tx.query(
+        `SELECT source, at, label, detail FROM (
+           SELECT 'run'::text AS source, event.created_at AS at,
+                  event.next_state::text AS label, COALESCE(event.previous_state::text, '') AS detail
+             FROM production_run_event event
+            WHERE $2::uuid IS NOT NULL AND event.run_id = $2::uuid
+           UNION ALL
+           SELECT 'payment'::text, event.created_at, event.event_type,
+                  COALESCE(event.provider_status, '') || CASE WHEN event.outcome IS NULL THEN '' ELSE ' -> ' || event.outcome::text END
+             FROM payment_event event
+            WHERE event.order_id = $1
+           UNION ALL
+           SELECT 'admin'::text, event.created_at, event.event_type,
+                  COALESCE(event.metadata->>'stage', event.metadata->>'view', '')
+             FROM audit_event event
+            WHERE event.order_id = $1
+         ) merged
+         ORDER BY at DESC
+         LIMIT 100`,
+        [safeOrderId, runId]
+      ));
+
+      const outbox = runId ? oneRow(await tx.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+                COUNT(*) FILTER (WHERE status = 'leased') AS leased_count,
+                COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+                COUNT(*) FILTER (WHERE status = 'dead') AS dead_count
+           FROM outbox_job
+          WHERE aggregate_type = 'production_run' AND aggregate_id = $1`,
+        [runId]
+      ), "Outbox counters could not be read") : { pending_count: 0, leased_count: 0, failed_count: 0, dead_count: 0 };
+
+      const rerunCount = oneRow(await tx.query(
+        `SELECT COUNT(*)::int AS granted
+           FROM audit_event
+          WHERE order_id = $1 AND event_type = 'admin_rerun_granted'`,
+        [safeOrderId]
+      ), "Administrator rerun count could not be read");
+
+      return {
+        order: {
+          id: row.order_id,
+          amountFen: databaseNumber(row.amount_fen, "Order amountFen"),
+          currency: row.currency,
+          paymentMethod: row.payment_method,
+          status: row.order_status,
+          paidAt: isoTimestampOrNull(row.paid_at),
+          deliveryStatus: row.order_delivery_status,
+          planCode: row.plan_code || null,
+          createdAt: isoTimestampOrNull(row.order_created_at),
+          updatedAt: isoTimestampOrNull(row.order_updated_at)
+        },
+        project: {
+          id: row.project_id,
+          displayName: row.display_name || null,
+          state: row.project_state,
+          createdAt: isoTimestampOrNull(row.project_created_at),
+          updatedAt: isoTimestampOrNull(row.project_updated_at)
+        },
+        run: runId ? mapRun({
+          id: row.run_id,
+          project_id: row.project_id,
+          order_id: row.run_order_id,
+          character_revision_id: row.character_revision_id,
+          state: row.run_state,
+          model_registry_version: row.model_registry_version,
+          front_generation_attempts: row.front_generation_attempts,
+          side_generation_attempts: row.side_generation_attempts,
+          front_user_regenerations_used: row.front_user_regenerations_used,
+          side_user_regenerations_used: row.side_user_regenerations_used,
+          front_qa_retries: row.front_qa_retries,
+          side_qa_retries: row.side_qa_retries,
+          sleep_generation_attempts: row.sleep_generation_attempts,
+          failure_code: row.failure_code,
+          version: row.run_version,
+          created_at: isoTimestampOrNull(row.run_created_at),
+          updated_at: isoTimestampOrNull(row.run_updated_at)
+        }) : null,
+        failedFromState: failedFrom.length === 1 ? failedFrom[0].previous_state : null,
+        adminRerunCount: databaseNonNegativeNumber(rerunCount.granted, "Administrator rerun count"),
+        masterAttempts: masterAttempts.map((attempt) => ({
+          id: attempt.id,
+          kind: attempt.kind,
+          generationAttempt: databaseNonNegativeNumber(attempt.generation_attempt, "Master generation attempt"),
+          status: attempt.status,
+          lastErrorCode: attempt.last_error_code || null,
+          qaStatus: attempt.qa_status || null,
+          qaReport: attempt.qa_report || null,
+          // Server-only: the service converts these to short-lived grants.
+          objectKey: attempt.normalized_object_key || attempt.provider_object_key || null,
+          createdAt: isoTimestampOrNull(attempt.created_at),
+          updatedAt: isoTimestampOrNull(attempt.updated_at)
+        })),
+        actions: actions.map((action) => ({
+          actionId: action.action_id,
+          state: action.state,
+          retryCount: databaseNonNegativeNumber(action.retry_count, "Action retry count"),
+          qaStatus: action.qa_status || null,
+          qaReport: action.qa_report || null,
+          // Server-only: the rejected provider video, for administrator review.
+          objectKey: action.provider_output_object_key || null,
+          updatedAt: isoTimestampOrNull(action.updated_at)
+        })),
+        delivery: row.delivery_id ? {
+          id: row.delivery_id,
+          status: row.delivery_status,
+          downloadCount: databaseNonNegativeNumber(row.download_count, "Delivery download count"),
+          expiresAt: isoTimestampOrNull(row.delivery_expires_at),
+          assetRetained: row.delivery_asset_retained === true,
+          updatedAt: isoTimestampOrNull(row.delivery_updated_at)
+        } : null,
+        dispatch: {
+          pending: databaseNonNegativeNumber(outbox.pending_count, "Pending outbox count"),
+          leased: databaseNonNegativeNumber(outbox.leased_count, "Leased outbox count"),
+          failed: databaseNonNegativeNumber(outbox.failed_count, "Failed outbox count"),
+          dead: databaseNonNegativeNumber(outbox.dead_count, "Dead outbox count")
+        },
+        timeline: timeline.map((entry) => ({
+          source: entry.source,
+          at: isoTimestampOrNull(entry.at),
+          label: entry.label,
+          detail: entry.detail || null
+        }))
+      };
+    });
+  }
+
+  /**
+   * Every administrator disposal writes here with its reason. `audit_event`
+   * has existed since migration 001; the download path already appends to it,
+   * and the rescue endpoints follow the same pattern.
+   */
+  async recordAdminAuditEvent({ actorId, projectId = null, orderId, eventType, metadata = {} } = {}) {
+    const safeActorId = requiredString(actorId, "Actor ID");
+    const safeOrderId = requiredString(orderId, "Order ID");
+    if (!/^admin_[a-z_]{1,64}$/.test(String(eventType || ""))) {
+      throw new Error("Administrator audit event type is invalid");
+    }
+    let serialized;
+    try {
+      serialized = JSON.stringify(metadata ?? {});
+    } catch {
+      throw new Error("Administrator audit metadata must be JSON serializable");
+    }
+    if (Buffer.byteLength(serialized, "utf8") > 8 * 1024) {
+      throw new Error("Administrator audit metadata exceeds the persistence limit");
+    }
+    return this._transaction(async (tx) => {
+      await tx.query(
+        `INSERT INTO audit_event (id, actor_id, project_id, order_id, event_type, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+        [this.idFactory(), safeActorId, projectId || null, safeOrderId, eventType, serialized]
+      );
+      return { recorded: true };
+    });
+  }
+
+  /**
+   * Reopens a closed download window. Only the delivery's own expiry moves:
+   * if retention has already deleted or expired the package asset, reissue
+   * fails closed - extending a pointer to an object that is gone would only
+   * produce a broken download link.
+   */
+  async extendDeliveryWindow({ orderId, extendSeconds } = {}) {
+    const safeOrderId = requiredString(orderId, "Order ID");
+    if (!UUID_PATTERN.test(safeOrderId)) throw new Error("Order ID must be a UUID");
+    if (!Number.isSafeInteger(extendSeconds) || extendSeconds < 3600 || extendSeconds > 30 * 24 * 3600) {
+      throw new Error("Delivery extension must be between 1 hour and 30 days in seconds");
+    }
+    return this._transaction(async (tx) => {
+      const updated = rows(await tx.query(
+        `UPDATE delivery
+            SET expires_at = now() + ($2 * interval '1 second'),
+                updated_at = now()
+          WHERE order_id = $1
+            AND status = 'ready'
+            AND EXISTS (
+              SELECT 1
+                FROM petpack_build build
+                JOIN media_asset asset
+                  ON asset.id = build.media_asset_id
+                 AND asset.deleted_at IS NULL
+                 AND (asset.expires_at IS NULL OR asset.expires_at > now())
+               WHERE build.id = delivery.petpack_build_id
+            )
+        RETURNING id, status, download_count, expires_at`,
+        [safeOrderId, extendSeconds]
+      ));
+      if (updated.length !== 1) {
+        const error = new Error("PetPack delivery cannot be reissued: the package is not ready or is no longer retained");
+        error.code = "delivery_reissue_unavailable";
+        throw error;
+      }
+      return {
+        id: updated[0].id,
+        status: updated[0].status,
+        downloadCount: databaseNumber(updated[0].download_count, "Delivery download count"),
+        expiresAt: isoTimestampOrNull(updated[0].expires_at)
+      };
+    });
+  }
+
   async reserveSourcePhoto(input = {}) {
     const reservation = assertSourcePhotoReservation(input);
     return this._transaction(async (tx) => {
