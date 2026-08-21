@@ -610,7 +610,25 @@ function createFixturePaymentProvider(logger) {
   };
 }
 
-async function main({ port = 8788, logger = console } = {}) {
+/**
+ * This harness authenticates nobody: every request is the fixture
+ * administrator. That is safe only because it binds loopback and runs against
+ * fake data - so refuse outright anywhere that could be a real deployment,
+ * rather than relying on the bind address alone.
+ */
+function assertLocalOnly(environment) {
+  if (environment.PETPACK_PLATFORM_MODE === "production" || environment.NODE_ENV === "production") {
+    throw new Error("The admin console fixture grants administrator access without authentication and must never run in production");
+  }
+  for (const name of ["PETPACK_POSTGRES_URL", "PETPACK_KAIPAY_MERCHANT_ID", "MODELARK_API_KEY", "PETPACK_COS_SECRET_ID"]) {
+    if (environment[name]) {
+      throw new Error(`Refusing to start: ${name} is set, so this looks like a real environment rather than a local trial`);
+    }
+  }
+}
+
+async function main({ port = 8788, environment = process.env, logger = console } = {}) {
+  assertLocalOnly(environment);
   const media = await createFixtureMedia({ logger });
   const state = createFixtureState();
   const repository = createFixtureRepository(state, logger);
@@ -730,4 +748,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, createFixtureState, createFixtureRepository };
+module.exports = { main, assertLocalOnly, createFixtureState, createFixtureRepository };

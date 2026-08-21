@@ -3,6 +3,38 @@
 状态：P1（2026-08-20）、P2 人工放行（2026-08-21）、P3 退款/封禁/节流
 （2026-08-21）均已实现，未部署。
 
+## 0e. 管理员唯一性（2026-08-21）
+
+要求：控制台管理员只能是所有者本人。现状核实与补强：
+
+**已经成立的部分**（核实过，非推断）：
+- 角色**每次请求从数据库现取**：`resolveSession` 用会话 token 哈希 JOIN
+  `app_user` 取 role/status，cookie 里不含角色，伪造 cookie 拿不到 admin；
+  `status <> 'active'` 直接返回 null。
+- **全部生产代码没有一处能授予 admin**：手机号注册恒写 `role='user'`
+  （`postgres-auth-repository.js`），没有任何端点修改角色。唯一写
+  `role='admin'` 的是本地零成本演练脚本，不连生产库。
+- P3 的账号处置只能改 `status`，且 UPDATE 的 WHERE 写死 `role='user'`
+  ——既改不了角色，也封不掉管理员；服务层另拒自我处置。
+
+**补强的部分**：
+1. `platform/src/runtime/administrators.js`：任命/查看/撤销脚本。
+   - `--appoint <accountId>` 强制**唯一性**：同事务内把其他管理员降为
+     `user`，且必须显式 `--replace` 才允许，避免手滑造出两个。
+   - `--list` 回答"现在谁是管理员"，并列出最近登录账号供定位自己。
+   - 全程写 `audit_event`（`admin_role_granted` / `admin_role_revoked`）。
+   - **不接受也不打印手机号**：迁移 010 决定手机号连哈希都不入库，
+     账号只能用自身 ID 或截断后的 CloudBase subject 指认。
+2. 本地试用装置 `assertLocalOnly`：它把每个请求当管理员且不做认证，
+   因此一旦检测到生产标记（`PETPACK_PLATFORM_MODE=production`、
+   `NODE_ENV=production`）或任何真实凭据环境变量（Postgres/Kaipay/
+   ModelArk/COS）就拒绝启动，不再只依赖绑定 127.0.0.1。
+
+**任命流程**：用要当管理员的手机号在正式站登录一次 → 服务器上
+`node platform/src/runtime/administrators.js --list` → 认出刚才那次登录对应的
+账号 ID → `--appoint <该 ID>`。之后该账号访问 `/admin/operations` 即生效，
+其他任何人都不行。
+
 ## 0d. 本地试用发现并修复的问题（2026-08-21）
 
 用 `platform/src/development/start-admin-console-fixture.js`（内存 fixture API +

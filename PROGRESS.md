@@ -193,6 +193,8 @@
 
 - 2026-08-21：客服处置台本地试用（新增 `platform/src/development/start-admin-console-fixture.js`：内存 fixture 数据 + 真实 HTTP/service/状态机 + ffmpeg 生成的样片，`.claude/launch.json` 加 `admin-console-fixture` 配置，网页用 `apps/web/.env.development.local` 指向它，绝不碰生产）。浏览器逐个点完全部处置，发现并修复 8 个问题，最重要一个是**退款后仍可重跑造成二次烧钱**：退款把 run 置 `failed`，与其他失败无从区分，救援按钮照常出现且服务层照常执行（已实测把 `refund_pending` 单重跑回 `awake_generating`）；修法是把准入判据从 run 改到**订单**——`assertOrderEntitled` 要求 `status='paid'`，rerun/qa-override/delivery-reissue 三处全加，前端按钮同步收起，新错误码 `admin_order_not_entitled`→409。其次是 **attention feed 漏掉两类需人工的单**（客户重生成用完停在确认页、交付过期但包体尚在），客服只能靠客户报 ID 才找得到，已在 attention SQL 与 `createAdminOperationsView` 各加判据并补出 user-regeneration 计数。其余六项为文案与状态展示缺陷（处置成功提示一律说"生成需要几分钟"、run 恢复后仍显示"失败于"、订单状态英文、封禁提示被刷新覆盖、空区块、标签缺分隔）。回归测试补在 `admin-order-rescue.test.js`——原有测试全用 `paid` fixture，正是这个盲区放过了退款漏洞。全仓 1249 项通过。
 
+- 2026-08-21：管理员唯一性核实与补强。核实结论：角色每次请求从数据库现取（`resolveSession` JOIN `app_user`，cookie 不含角色，伪造无效）；**全部生产代码没有一处能授予 admin**（手机注册恒写 `role='user'`，无任何端点改角色，唯一写 `role='admin'` 的是本地演练脚本）；P3 账号处置只能改 status 且 WHERE 写死 `role='user'`，改不了角色也封不掉管理员。补强：新增 `platform/src/runtime/administrators.js`（`--list` / `--appoint <id> [--replace]` / `--revoke`），任命时同事务降级其他管理员以强制唯一，必须显式 `--replace` 才允许替换，全程写 audit_event；**不接受也不打印手机号**——迁移 010 决定手机号连哈希都不入库，只能用账号 ID 或截断的 CloudBase subject 指认。本地试用装置加 `assertLocalOnly`：检测到生产标记或任何真实凭据环境变量即拒绝启动（它把每个请求当管理员且不认证，不能只靠绑定 127.0.0.1）。任命流程：用该手机号在正式站登录一次 → `--list` 认出账号 ID → `--appoint`。新增 `tests/platform/administrators.test.js` 6 项。
+
 ## In progress
 
 - 客户端、网站、CloudBase 登录边界、Kaipay Pay API V3、Seedream/Seedance 2.0 请求契约与 Studio API 已完成 API-only 部署；Outbox/Worker 与真实生成仍保持关闭。Gate 0 全部通过；Gate 1/2 的代码和无费用契约验证完成，真实付费/生成及 `studio-production` profile 仍需受控费用验收与生产视觉组件。
