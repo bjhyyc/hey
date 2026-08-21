@@ -643,6 +643,22 @@ async function main({ port = 8788, logger = console } = {}) {
   const api = createPetPackStudioHttpApi({
     adminOperationsService: new AdminOperationsService({ repository, logger }),
     adminOrdersService,
+    // The site chrome asks for a session on every page. Without an auth
+    // service those routes do not exist and every page reports "接口不存在",
+    // which reads like a broken build rather than a harness boundary.
+    // Real phone login needs CloudBase SMS and cannot run locally; here the
+    // session simply always exists and is always the fixture administrator.
+    authService: {
+      exchangeCloudBaseAccessToken: async () => {
+        const error = new Error("Phone login needs CloudBase and cannot run in the local harness");
+        error.code = "fixture_login_unavailable";
+        throw error;
+      },
+      revokeSessionToken: async () => ({ revoked: true }),
+      resolveSessionToken: async () => FIXTURE_ADMIN
+    },
+    sessionCookieName: "petpack_session",
+    secureSessionCookie: false,
     // Development harness: every request is the fixture administrator. The real
     // deployment resolves this from a signed session cookie.
     resolveActor: async () => FIXTURE_ADMIN,
@@ -663,6 +679,20 @@ async function main({ port = 8788, logger = console } = {}) {
     }
     if (url.pathname === "/livez") {
       response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    // Only the console's own surface is implemented here. Saying so beats a
+     // bare "接口不存在", which looks like a regression in the API itself.
+    const servedPrefixes = ["/api/admin/", "/api/auth/"];
+    if (url.pathname.startsWith("/api/") && !servedPrefixes.some((prefix) => url.pathname.startsWith(prefix))) {
+      const payload = JSON.stringify({
+        error: {
+          code: "fixture_route_not_implemented",
+          message: "本地试用装置只提供管理台与会话接口；该接口请在完整环境中使用"
+        }
+      });
+      response.writeHead(501, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(payload) });
+      response.end(payload);
       return;
     }
     const chunks = [];
