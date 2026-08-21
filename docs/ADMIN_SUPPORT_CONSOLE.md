@@ -3,6 +3,33 @@
 状态：P1（2026-08-20）、P2 人工放行（2026-08-21）、P3 退款/封禁/节流
 （2026-08-21）均已实现，未部署。
 
+## 0d. 本地试用发现并修复的问题（2026-08-21）
+
+用 `platform/src/development/start-admin-console-fixture.js`（内存 fixture API +
+真实 HTTP/service/状态机）在浏览器逐个点完全部处置后修掉：
+
+1. **退款后仍可重跑，会二次烧钱（严重）**。退款把 run 置为 `failed`，与任何
+   其他失败无从区分，于是救援按钮照常出现、服务层照常执行——已验证一个
+   `refund_pending` 订单能被重跑回 `awake_generating`。修：救援的准入判据是
+   **订单**而非 run，`assertOrderEntitled` 要求 `status='paid'`，
+   rerun / qa-override / delivery-reissue 三处全加；`availableRescueStages`
+   与前端按钮同步收起。新错误码 `admin_order_not_entitled` → 409。
+2. **两类需人工的单进不了需关注列表**：客户重生成用完停在确认页、交付已过期
+   但包体还在。客服只能靠客户报 ID 才找得到。修：attention SQL 与
+   `createAdminOperationsView` 各加一条判据（`regenerations_exhausted`、
+   `delivery_expired`），feed 行补出两个 user-regeneration 计数。
+3. 处置成功提示一律写"生成需要几分钟"，退款/补发下载/放行都套用 → 按 mode
+   分别措辞（`describeOutcome`）。
+4. run 已恢复后详情仍显示"失败于：X"（`failedFromState` 是历史值）→ 仅在
+   `run.state==='failed'` 时显示。
+5. 订单状态显示英文 `paid`/`refund_pending` → 中文化。
+6. 封禁成功提示被随后的账号刷新覆盖，看不到吊销了几个会话 → 刷新保留提示。
+7. 无动作数据时仍渲染空的"七个动作"区块 → 收起。
+8. "补发45° 母图重生成次数" 缺分隔 → 加书名号。
+
+回归测试补在 `admin-order-rescue.test.js`（退款后拒绝三种救援、attention 两种
+新形态）——原有测试全部用 `paid` fixture，正是这个盲区放过了第 1 条。
+
 ## 0c. P3 实现要点（2026-08-21）
 
 1. **退款单端点、暗启动**：`POST /api/admin/orders/:orderId/refund`，行为随

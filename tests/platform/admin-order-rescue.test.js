@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import stateMachineModule from "../../platform/src/domain/production-state-machine.js";
 import workflowModule from "../../platform/src/workflow/production-workflow.js";
+import adminOperationsModule from "../../platform/src/api/admin-operations-service.js";
 import adminOrdersModule from "../../platform/src/api/admin-orders-service.js";
 import httpApiModule from "../../platform/src/http/petpack-studio-http-api.js";
 
@@ -19,6 +20,7 @@ const {
 } = stateMachineModule;
 const { ProductionWorkflow, JOB_NAMES } = workflowModule;
 const { AdminOrdersService, availableRescueStages, parseStage, summarizeQaReport } = adminOrdersModule;
+const { createAdminOperationsView } = adminOperationsModule;
 const { createPetPackStudioHttpApi } = httpApiModule;
 
 const modelRegistry = Object.freeze({
@@ -338,6 +340,78 @@ describe("AdminOrdersService", () => {
     repository.recordAdminAuditEvent.mockRejectedValueOnce(new Error("audit table offline"));
     const outcome = await service.rerunStage({ actor: admin, orderId: "order-1", stage: "front_master", reason: "r" });
     expect(outcome.mode).toBe("rerun_authorized");
+  });
+});
+
+// The console offered - and the service executed - a rerun on an order that
+// had already been refunded, which would have spent generation budget on an
+// order the customer no longer held. A refund leaves the run `failed` exactly
+// like any other failure, so nothing downstream could tell the difference;
+// entitlement has to be judged on the order, not the run.
+describe("rescues require an order that is still paid", () => {
+  const refundedContext = () => {
+    const context = baseContext();
+    context.order = { ...context.order, status: "refund_pending" };
+    return context;
+  };
+
+  it("offers no rescue stages once the order is no longer paid", () => {
+    expect(availableRescueStages(refundedContext())).toEqual([]);
+  });
+
+  it("refuses a rerun, a QA override, and a delivery reissue on a refunded order", async () => {
+    const { service, workflow, repository } = createService({ context: refundedContext() });
+    for (const call of [
+      service.rerunStage({ actor: admin, orderId: "order-1", stage: "front_master", reason: "r" }),
+      service.qaOverrideStage({ actor: admin, orderId: "order-1", stage: "front_master", candidateId: "gen-1", reason: "r" }),
+      service.reissueDelivery({ actor: admin, orderId: "order-1", reason: "r" })
+    ]) {
+      await expect(call).rejects.toMatchObject({ code: "admin_order_not_entitled" });
+    }
+    expect(workflow.adminRerunCharacterMaster).not.toHaveBeenCalled();
+    expect(repository.extendDeliveryWindow).not.toHaveBeenCalled();
+  });
+
+  it("still allows a rescue while the order is paid", async () => {
+    const { service } = createService();
+    const outcome = await service.rerunStage({ actor: admin, orderId: "order-1", stage: "front_master", reason: "r" });
+    expect(outcome.mode).toBe("rerun_authorized");
+  });
+});
+
+// Two orders need a human without anything having failed. Neither reached the
+// attention feed, so support could only find them if the customer read out an
+// ID - which the customer has no reason to know they should do.
+describe("attention feed covers the no-failure stuck shapes", () => {
+  const baseRecord = () => ({
+    activityAt: "2026-08-21T00:00:00.000Z",
+    order: { id: "order-1", status: "paid", paymentMethod: "KAIPAY", amountFen: 4900 },
+    project: { id: "project-1", state: "producing" },
+    run: { id: "run-1", state: "video_generating", hasFailure: false, frontUserRegenerationsUsed: 0, sideUserRegenerationsUsed: 0 },
+    actions: [],
+    delivery: null,
+    outbox: { pending: 0, leased: 0, failed: 0, dead: 0 }
+  });
+
+  it("flags a customer stuck at confirmation with their regenerations spent", () => {
+    const record = baseRecord();
+    record.run = { ...record.run, state: "awaiting_character_confirmation", frontUserRegenerationsUsed: 2 };
+    const view = createAdminOperationsView(record);
+    expect(view.attention.required).toBe(true);
+    expect(view.attention.reasons).toContain("regenerations_exhausted");
+  });
+
+  it("flags a finished PetPack whose download window closed", () => {
+    const record = baseRecord();
+    record.delivery = { status: "ready", downloadCount: 1, expiresAt: "2020-01-01T00:00:00.000Z" };
+    const view = createAdminOperationsView(record);
+    expect(view.attention.reasons).toContain("delivery_expired");
+  });
+
+  it("leaves a healthy run and a live download alone", () => {
+    const record = baseRecord();
+    record.delivery = { status: "ready", downloadCount: 0, expiresAt: "2099-01-01T00:00:00.000Z" };
+    expect(createAdminOperationsView(record).attention.required).toBe(false);
   });
 });
 

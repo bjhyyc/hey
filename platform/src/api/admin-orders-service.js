@@ -71,6 +71,23 @@ function stageUnavailableError(message) {
   return error;
 }
 
+/**
+ * Every rescue either spends provider money or hands back a download, so it
+ * requires an order that is still paid for. Without this a refunded order
+ * still offered its rescue buttons - and the state machine happily accepted
+ * them, because a refund leaves the run `failed` exactly like any other
+ * failure. Refunding then re-running would burn generation budget on an order
+ * the customer no longer holds.
+ */
+function assertOrderEntitled(order) {
+  if (!order || order.status !== "paid") {
+    const error = new Error(`This order is ${order ? order.status : "unknown"}; rescues are available only while it is paid`);
+    error.code = "admin_order_not_entitled";
+    throw error;
+  }
+  return order;
+}
+
 function parseStage(stage) {
   const value = requiredString(stage, "Rerun stage", 64);
   if (!STAGE_PATTERN.test(value)) throw stageUnavailableError(`Administrator rerun does not support stage: ${value}`);
@@ -117,6 +134,8 @@ function summarizeQaReport(status, report) {
 function availableRescueStages(context) {
   const run = context.run;
   if (!run) return [];
+  // A refunded or unpaid order gets no rescue buttons at all.
+  if (!context.order || context.order.status !== "paid") return [];
   const stages = [];
   if (run.state === PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION) {
     for (const view of ["front", "side"]) {
@@ -297,6 +316,7 @@ class AdminOrdersService {
     const parsed = parseStage(stage);
     const context = await this.repository.getAdminOrderRescueContext(requiredString(orderId, "Order ID"));
     if (!context) throw new Error("Order was not found");
+    assertOrderEntitled(context.order);
     const run = context.run;
     if (!run) throw stageUnavailableError("This order has no production run to rerun");
 
@@ -377,6 +397,7 @@ class AdminOrdersService {
     const parsed = parseStage(stage);
     const context = await this.repository.getAdminOrderRescueContext(requiredString(orderId, "Order ID"));
     if (!context) throw new Error("Order was not found");
+    assertOrderEntitled(context.order);
     const run = context.run;
     if (!run || run.state !== PRODUCTION_STATES.FAILED) {
       throw stageUnavailableError("Only a failed production run can accept a QA override");
@@ -581,6 +602,7 @@ class AdminOrdersService {
     const safeReason = requiredString(reason, "Disposal reason", 200);
     const context = await this.repository.getAdminOrderRescueContext(requiredString(orderId, "Order ID"));
     if (!context) throw new Error("Order was not found");
+    assertOrderEntitled(context.order);
     const delivery = await this.repository.extendDeliveryWindow({
       orderId: context.order.id,
       extendSeconds: this.deliveryReissueSeconds

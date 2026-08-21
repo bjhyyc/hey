@@ -49,7 +49,24 @@ const ATTENTION_LABELS: Record<string, string> = {
   action_failed: "动作失败",
   outbox_retrying: "队列重试中",
   outbox_dead: "队列死信",
+  regenerations_exhausted: "重生成用完",
+  delivery_expired: "下载已过期",
 };
+
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  draft: "草稿",
+  pending_payment: "待支付",
+  paid: "已支付",
+  payment_review: "支付待核",
+  expired: "已过期",
+  refund_pending: "退款处理中",
+  refunded: "已退款",
+};
+
+function orderStatusLabel(status?: string): string {
+  if (!status) return "—";
+  return ORDER_STATUS_LABELS[status] || status;
+}
 
 function stageLabel(stage: string): string {
   if (stage.startsWith("action:")) {
@@ -74,6 +91,32 @@ function timeLabel(value?: string | null): string {
 
 function amountLabel(amountFen?: number): string {
   return Number.isSafeInteger(amountFen) ? `¥${((amountFen as number) / 100).toFixed(2)}` : "—";
+}
+
+/**
+ * What actually happens next differs per disposal - a rerun starts a
+ * generation, a reissue only moves an expiry, a refund moves money - so the
+ * confirmation has to say the right thing rather than always promising a
+ * generation.
+ */
+function describeOutcome(mode?: string, runState?: string): string {
+  if (mode === "qa_overridden" && runState === "awaiting_prompt_gate") {
+    return "已放行，但七条动作提示词未全部发布；发布齐后运行会自动继续。";
+  }
+  switch (mode) {
+    case "rerun_authorized":
+      return "已授权重跑，生成需要几分钟，稍后刷新查看。";
+    case "qa_overridden":
+      return "已放行，该素材重新进入后续流程。";
+    case "regeneration_granted":
+      return "已补发一次重生成机会，客户页面上的按钮已恢复。";
+    case "delivery_reissued":
+      return "下载窗口已重开，可让客户重新进入项目页下载。";
+    case "refund_requested":
+      return "退款已提交渠道；交付已吊销、在途生成已停止，稍后点「查退款结果」确认。";
+    default:
+      return "已执行，稍后刷新查看最新状态。";
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -143,10 +186,12 @@ function UserAccountPanel({ userId }: { userId: string }) {
   const [pending, setPending] = useState<"disable" | "enable" | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(() => {
-    setMessage("正在加载账号…");
+  // The reload after a disposal must not wipe the line that says what the
+  // disposal did - "已封禁，吊销 N 个会话" is the only place that count appears.
+  const load = useCallback((keepMessage = false) => {
+    if (!keepMessage) setMessage("正在加载账号…");
     studioAdminApi.userView(userId)
-      .then((result) => { setView(result); setMessage(""); })
+      .then((result) => { setView(result); if (!keepMessage) setMessage(""); })
       .catch((error) => { setView(null); setMessage(errorMessage(error)); });
   }, [userId]);
 
@@ -187,7 +232,7 @@ function UserAccountPanel({ userId }: { userId: string }) {
                   ? `已封禁，吊销 ${result.revokedSessions ?? 0} 个会话。`
                   : "已解封。");
                 setPending(null);
-                load();
+                load(true);
               })
               .catch((error) => setMessage(errorMessage(error)))
               .finally(() => setBusy(false));
@@ -237,10 +282,9 @@ function OrderDetailPanel({
     setOutcome("");
     perform(reason)
       .then((result) => {
-        const state = (result as { run?: { state?: string } } | null)?.run?.state;
-        setOutcome(state === "awaiting_prompt_gate"
-          ? "已放行，但七条动作提示词未全部发布；发布齐后运行会自动继续。"
-          : "已执行。状态稍后刷新，生成需要几分钟。");
+        const outcomeResult = result as { mode?: string; run?: { state?: string } } | null;
+        const state = outcomeResult?.run?.state;
+        setOutcome(describeOutcome(outcomeResult?.mode, state));
         setPendingDisposal(null);
         load();
         onChanged();
@@ -257,14 +301,16 @@ function OrderDetailPanel({
   const rescue = detail.rescue;
   const failedMasters = detail.masters.filter((attempt) => attempt.status !== "qa_passed");
   // A rejected candidate can be force-passed only for the stage the run died
-  // in; the server re-validates, this only decides which buttons render.
+  // in, and only while the order is still paid - the server re-validates both,
+  // this only decides which buttons render.
+  const orderEntitled = detail.order.status === "paid";
   const overridableMasterStage = (kind?: string): string | null => {
-    if (run?.state !== "failed") return null;
+    if (!orderEntitled || run?.state !== "failed") return null;
     if ((kind === "front" || kind === "side") && detail.failedFromState === "awake_generating") return `${kind}_master`;
     if (kind === "sleep" && detail.failedFromState === "sleep_generating") return "sleep_master";
     return null;
   };
-  const videoOverridesEnabled = run?.state === "failed" && detail.failedFromState === "video_generating";
+  const videoOverridesEnabled = orderEntitled && run?.state === "failed" && detail.failedFromState === "video_generating";
   const failedActionIds = new Set(detail.actions.filter((action) => action.state === "failed").map((action) => action.actionId));
   const overridableVideos = videoOverridesEnabled
     ? detail.rejectedActionVideos.filter((video) => video.actionId && failedActionIds.has(video.actionId))
@@ -281,7 +327,7 @@ function OrderDetailPanel({
         <div>
           <h2>{detail.project.displayName || "未命名项目"}</h2>
           <p className="form-message">
-            订单 {detail.order.id}（{amountLabel(detail.order.amountFen)} · {detail.order.status || "—"}）
+            订单 {detail.order.id}（{amountLabel(detail.order.amountFen)} · {orderStatusLabel(detail.order.status)}）
             · 项目 {detail.project.id}
           </p>
         </div>
@@ -301,7 +347,9 @@ function OrderDetailPanel({
           <small>生产状态</small>
           <strong>{runStateLabel(run?.state)}</strong>
           {run?.failureCode ? <span className="error-state">失败码：{run.failureCode}</span> : null}
-          {detail.failedFromState ? <span>失败于：{runStateLabel(detail.failedFromState)}</span> : null}
+          {run?.state === "failed" && detail.failedFromState
+            ? <span>失败于：{runStateLabel(detail.failedFromState)}</span>
+            : null}
         </article>
         <article>
           <small>环节消耗</small>
@@ -329,7 +377,7 @@ function OrderDetailPanel({
                 onClick={() => setPendingDisposal(entry.mode === "rerun" ? `rerun:${entry.stage}` : `grant:${entry.stage}`)}
                 type="button"
               >
-                {entry.mode === "rerun" ? `重跑${stageLabel(entry.stage)}` : `补发${stageLabel(entry.stage)}重生成次数`}
+                {entry.mode === "rerun" ? `重跑${stageLabel(entry.stage)}` : `补发「${stageLabel(entry.stage)}」重生成次数`}
               </button>
             ))}
           </div>
@@ -342,7 +390,7 @@ function OrderDetailPanel({
               title={
                 pendingDisposal.startsWith("rerun:")
                   ? `授权重跑：${stageLabel(pendingDisposal.slice("rerun:".length))}（补发一次生成）`
-                  : `补发重生成次数：${stageLabel(pendingDisposal.slice("grant:".length))}`
+                  : `补发「${stageLabel(pendingDisposal.slice("grant:".length))}」重生成次数`
               }
             />
           ) : null}
@@ -504,6 +552,7 @@ function OrderDetailPanel({
         />
       ) : null}
 
+      {detail.actions.length > 0 ? (
       <div className="console-actions-table">
         <h3>七个动作</h3>
         <ul>
@@ -519,6 +568,7 @@ function OrderDetailPanel({
           ))}
         </ul>
       </div>
+      ) : null}
 
       <div className="console-timeline">
         <h3>时间线</h3>

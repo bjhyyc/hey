@@ -1,4 +1,5 @@
 const { requireAdmin } = require("../auth/authorization");
+const { MAX_USER_REGENERATIONS_PER_VIEW } = require("../domain/production-state-machine");
 const {
   decodeAdminOperationsCursor,
   normalizeAdminOperationsQuery
@@ -52,6 +53,20 @@ function createAdminOperationsView(record) {
   const failedActionIds = actions.filter((action) => action.state === "failed").map((action) => action.actionId);
   const attentionReasons = [];
   if (PAYMENT_ATTENTION_STATES.has(record.order.status)) attentionReasons.push("payment_attention");
+  // Two shapes that need a human without anything having failed: a customer
+  // waiting at confirmation with their self-service regenerations spent, and a
+  // finished PetPack whose download window closed. Neither used to appear in
+  // the attention feed, so support could only find them if the customer read
+  // out an ID.
+  if (record.run && record.run.state === "awaiting_character_confirmation" &&
+      (nonNegativeInteger(record.run.frontUserRegenerationsUsed) >= MAX_USER_REGENERATIONS_PER_VIEW ||
+       nonNegativeInteger(record.run.sideUserRegenerationsUsed) >= MAX_USER_REGENERATIONS_PER_VIEW)) {
+    attentionReasons.push("regenerations_exhausted");
+  }
+  if (record.delivery && record.delivery.status === "ready" && record.delivery.expiresAt &&
+      new Date(record.delivery.expiresAt).getTime() < Date.now()) {
+    attentionReasons.push("delivery_expired");
+  }
   if (record.run && record.run.state === "failed") attentionReasons.push("run_failed");
   if (record.run && record.run.hasFailure) attentionReasons.push("run_failure_recorded");
   if (failedActionIds.length > 0) attentionReasons.push("action_failed");
@@ -84,6 +99,8 @@ function createAdminOperationsView(record) {
       hasFailure: Boolean(record.run.hasFailure),
       awakeGenerationAttempts: nonNegativeInteger(record.run.awakeGenerationAttempts),
       sleepGenerationAttempts: nonNegativeInteger(record.run.sleepGenerationAttempts),
+      frontUserRegenerationsUsed: nonNegativeInteger(record.run.frontUserRegenerationsUsed),
+      sideUserRegenerationsUsed: nonNegativeInteger(record.run.sideUserRegenerationsUsed),
       version: nonNegativeInteger(record.run.version),
       updatedAt: record.run.updatedAt || null
     } : null,

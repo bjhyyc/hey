@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "apps/web", "run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "admin-console-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["platform/src/development/start-admin-console-fixture.js"],
+      "port": 8788
     }
   ]
 }

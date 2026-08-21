@@ -67,6 +67,15 @@ const ADMIN_OPERATION_STATUS_SQL = Object.freeze({
   attention: `(
     order_record.status IN ('payment_review', 'expired', 'refund_pending', 'refunded')
     OR run.state = 'failed'
+    OR (
+      run.state = 'awaiting_character_confirmation'
+      AND (run.front_user_regenerations_used >= 2 OR run.side_user_regenerations_used >= 2)
+    )
+    OR (
+      delivery.status = 'ready'
+      AND delivery.expires_at IS NOT NULL
+      AND delivery.expires_at < now()
+    )
     OR EXISTS (
       SELECT 1 FROM generation_action action
        WHERE action.run_id = run.id AND action.state = 'failed'
@@ -359,6 +368,8 @@ function mapAdminOperationRow(row) {
       hasFailure: Boolean(row.run_has_failure),
       awakeGenerationAttempts: databaseNonNegativeNumber(row.awake_generation_attempts, "Awake generation attempts"),
       sleepGenerationAttempts: databaseNonNegativeNumber(row.sleep_generation_attempts, "Sleep generation attempts"),
+      frontUserRegenerationsUsed: databaseNonNegativeNumber(row.front_user_regenerations_used, "Front user regenerations"),
+      sideUserRegenerationsUsed: databaseNonNegativeNumber(row.side_user_regenerations_used, "Side user regenerations"),
       version: databaseNonNegativeNumber(row.run_version, "Production run version"),
       updatedAt: row.run_updated_at || null
     } : null,
@@ -1475,6 +1486,8 @@ class PostgresPetPackStudioRepository {
                   (run.failure_code IS NOT NULL) AS run_has_failure,
                   run.front_generation_attempts AS awake_generation_attempts,
                   run.sleep_generation_attempts,
+                  run.front_user_regenerations_used,
+                  run.side_user_regenerations_used,
                   run.version AS run_version,
                   run.updated_at AS run_updated_at,
                   delivery.status AS delivery_status,
@@ -1576,6 +1589,8 @@ class PostgresPetPackStudioRepository {
                   (run.failure_code IS NOT NULL) AS run_has_failure,
                   run.front_generation_attempts AS awake_generation_attempts,
                   run.sleep_generation_attempts,
+                  run.front_user_regenerations_used,
+                  run.side_user_regenerations_used,
                   run.version AS run_version,
                   run.updated_at AS run_updated_at,
                   delivery.status AS delivery_status,

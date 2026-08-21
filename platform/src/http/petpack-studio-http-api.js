@@ -1121,6 +1121,9 @@ function mapError(error) {
   if (error?.code === "delivery_reissue_unavailable") {
     return { status: 409, code: "delivery_reissue_unavailable", message: "交付无法补发：包体未就绪或已超出保留期" };
   }
+  if (error?.code === "admin_order_not_entitled") {
+    return { status: 409, code: "admin_order_not_entitled", message: "该订单已退款或未支付，不能再执行救援处置" };
+  }
   if (error?.code === "admin_refund_disabled") {
     return { status: 503, code: "admin_refund_disabled", message: "退款功能未开放：需先完成受控真实退款验收" };
   }
