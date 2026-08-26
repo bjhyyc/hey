@@ -637,7 +637,7 @@ export function AdminOperationsConsole() {
             <input
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter") search(); }}
-              placeholder="可让客户复制项目页网址，网址末段即项目 ID"
+              placeholder="客户项目页底部的项目编号（可一键复制）"
               value={query}
             />
           </label>

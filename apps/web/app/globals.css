@@ -1574,3 +1574,9 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .console-user { padding: 12px 14px; display: grid; gap: 8px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); }
 .console-refund { padding: 14px; border: 1px solid var(--danger); border-radius: var(--radius-sm); }
 .console-refund-button { color: var(--danger); border-color: var(--danger); }
+
+/* The project code a customer reads to support. Quiet by design - it must be
+   findable when support asks for it, not compete with the page's own action. */
+.support-code { margin: 18px 0 0; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; color: var(--muted); font-size: var(--text-small); }
+.support-code code { padding: 3px 8px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
+.support-code .ghost-button { min-height: 30px; padding: 0 12px; font-size: var(--text-small); }

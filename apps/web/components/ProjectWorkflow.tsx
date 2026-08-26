@@ -136,7 +136,7 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
     // than as one more line of the explanation around it.
     return <section className="workflow-card failed-card">
       <h3>制作没有完成</h3>
-      <p>这个项目在生成阶段中断了，照片和订单都已保留。请联系我们处理，不要重复下单。</p>
+      <p>这个项目在生成阶段中断了，照片和订单都已保留。请联系我们处理并提供页面下方的项目编号，不要重复下单。</p>
       <Link className="ghost-button" href="/projects">返回项目列表</Link>
     </section>;
   }
