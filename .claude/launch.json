@@ -4,13 +4,20 @@
     {
       "name": "petpack-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/web", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "apps/web",
+        "run",
+        "dev"
+      ],
       "port": 3000
     },
     {
       "name": "admin-console-fixture",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["platform/src/development/start-admin-console-fixture.js"],
+      "runtimeArgs": [
+        "platform/src/development/start-admin-console-fixture-local.js"
+      ],
       "port": 8788
     }
   ]
