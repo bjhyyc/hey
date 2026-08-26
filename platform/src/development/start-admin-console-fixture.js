@@ -19,7 +19,8 @@
 const http = require("node:http");
 const crypto = require("node:crypto");
 
-const { createPetPackStudioHttpApi } = require("../http/petpack-studio-http-api");
+const { HttpApiError, createPetPackStudioHttpApi } = require("../http/petpack-studio-http-api");
+const { createUserProjectSummary, createUserProjectView } = require("../api/project-progress");
 const { AdminOperationsService } = require("../api/admin-operations-service");
 const { AdminOrdersService } = require("../api/admin-orders-service");
 const { ProductionWorkflow } = require("../workflow/production-workflow");
@@ -574,6 +575,145 @@ function createFixtureRunStore(repository, logger) {
   };
 }
 
+/**
+ * The customer-facing service over the same demo state, so 我的项目 and every
+ * project sub-page run alongside the console - and a rescue performed in the
+ * console is immediately visible from the customer's side of the same order.
+ * Flows that need real infrastructure (photo upload needs COS, checkout needs
+ * Kaipay, precheck needs the vision model) say so honestly instead of 404ing.
+ */
+function createFixtureUserService({ state, mediaUrl, logger }) {
+  const notInTrial = (message) => new HttpApiError({ status: 503, code: "fixture_unavailable", message });
+  function recordByProject(projectId) {
+    for (const record of state.orders.values()) {
+      if (record.project.id === projectId) return record;
+    }
+    throw new Error("Project was not found");
+  }
+  function characterCandidate(record, view) {
+    const passed = record.masterAttempts
+      .filter((attempt) => attempt.kind === view && attempt.status === "qa_passed")
+      .sort((left, right) => left.generationAttempt - right.generationAttempt);
+    if (passed.length === 0) return null;
+    const current = passed[passed.length - 1];
+    return {
+      id: current.id,
+      previewUrl: mediaUrl(current.objectKey),
+      attempts: passed.map((attempt) => ({
+        id: attempt.id,
+        generationAttempt: attempt.generationAttempt,
+        previewUrl: mediaUrl(attempt.objectKey),
+        isCurrent: attempt.id === current.id
+      }))
+    };
+  }
+  return {
+    async listProjects() {
+      const items = [...state.orders.values()].map((record) => createUserProjectSummary({
+        project: record.project,
+        order: record.order,
+        run: record.run,
+        delivery: record.delivery
+      }));
+      return { items };
+    },
+    async getProjectView({ projectId }) {
+      const record = recordByProject(projectId);
+      return createUserProjectView({
+        project: record.project,
+        order: record.order,
+        run: record.run,
+        characterCandidates: {
+          front: characterCandidate(record, "front"),
+          side: characterCandidate(record, "side")
+        },
+        delivery: record.delivery,
+        actions: record.actions
+      });
+    },
+    async refreshPaymentStatus({ projectId }) {
+      const record = recordByProject(projectId);
+      return { order: { id: record.order.id, status: record.order.status }, nextAction: { type: "none" } };
+    },
+    async regenerateCharacterMaster({ projectId, view }) {
+      const record = recordByProject(projectId);
+      const run = record.run;
+      if (!run || run.state !== "awaiting_character_confirmation") {
+        throw new Error("Character regeneration is not available in the current state");
+      }
+      const usedField = view + "UserRegenerationsUsed";
+      if (Number(run[usedField] || 0) >= 2) {
+        const error = new Error("The " + view + " character master self-service regeneration limit has been reached");
+        error.code = "character_regeneration_limit_reached";
+        throw error;
+      }
+      run[usedField] = Number(run[usedField] || 0) + 1;
+      const attemptsField = view + "GenerationAttempts";
+      run[attemptsField] = Number(run[attemptsField] || 0) + 1;
+      const template = record.masterAttempts.find((attempt) => attempt.kind === view && attempt.status === "qa_passed");
+      record.masterAttempts.push({
+        id: uuid("gen:" + record.order.id + ":" + view + ":" + run[attemptsField]),
+        kind: view,
+        generationAttempt: run[attemptsField],
+        status: "qa_passed",
+        lastErrorCode: null,
+        qaStatus: "passed",
+        qaReport: { ok: true },
+        objectKey: template ? template.objectKey : "private/fixture/" + view + ".png",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      record.timeline.unshift({ source: "run", at: new Date().toISOString(), label: "customer_regeneration", detail: view });
+      run.updatedAt = new Date().toISOString();
+      logger.info?.("fixture.customer_regeneration", { projectId, view, used: run[usedField] });
+      return { accepted: true, view };
+    },
+    async confirmCharacter({ projectId, frontMasterRevisionId, sideMasterRevisionId }) {
+      const record = recordByProject(projectId);
+      const passedIds = new Set(record.masterAttempts
+        .filter((attempt) => attempt.status === "qa_passed")
+        .map((attempt) => attempt.id));
+      if (!passedIds.has(frontMasterRevisionId) || !passedIds.has(sideMasterRevisionId)) {
+        throw new Error("The selected character is not a quality-approved candidate of this production run");
+      }
+      record.run.state = "sleep_generating";
+      record.run.characterRevisionId = uuid("revision:" + record.order.id + ":" + frontMasterRevisionId);
+      record.run.updatedAt = new Date().toISOString();
+      record.timeline.unshift({ source: "run", at: new Date().toISOString(), label: "sleep_generating", detail: "customer confirmed" });
+      return { accepted: true };
+    },
+    async createPetpackDownload({ projectId }) {
+      const record = recordByProject(projectId);
+      const delivery = record.delivery;
+      const live = delivery && delivery.status === "ready" &&
+        (!delivery.expiresAt || new Date(delivery.expiresAt).getTime() > Date.now());
+      if (!live) throw new Error("PetPack download is not ready");
+      delivery.downloadCount += 1;
+      delivery.updatedAt = new Date().toISOString();
+      return { downloadUrl: mediaUrl("private/fixture/Hey-Pet-demo.petpack"), expiresInSeconds: 600 };
+    },
+    async createCheckout() {
+      const error = new Error("New orders are closed in the local trial");
+      error.code = "generation_sales_disabled";
+      throw error;
+    },
+    async photoPrecheck() {
+      const error = new Error("本地试用不包含照片预检：它需要真实的视觉模型调用");
+      error.code = "precheck_unavailable";
+      throw error;
+    },
+    async createSourcePhotoUploadGrants() {
+      throw notInTrial("本地试用不包含照片上传：它需要真实对象存储；请在完整环境中体验");
+    },
+    async confirmSourcePhotoUpload() {
+      throw notInTrial("本地试用不包含照片上传：它需要真实对象存储；请在完整环境中体验");
+    },
+    async handlePaymentNotification() {
+      throw notInTrial("本地试用不包含支付回调");
+    }
+  };
+}
+
 function createFixtureObjectStore(mediaBaseUrl) {
   return {
     policy: {},
@@ -648,6 +788,13 @@ async function main({ port = 8788, environment = process.env, logger = console }
     logger
   });
   const mediaBaseUrl = `http://127.0.0.1:${port}/fixture-media`;
+  const mediaUrl = (objectKey) => `${mediaBaseUrl}/${String(objectKey).split("/").pop()}`;
+  // A minimal valid (empty) zip, so the customer delivery page really hands
+  // the browser a file when the download button is pressed.
+  media.set("Hey-Pet-demo.petpack", {
+    contentType: "application/vnd.petpack+zip",
+    body: Buffer.concat([Buffer.from([0x50, 0x4b, 0x05, 0x06]), Buffer.alloc(18)])
+  });
   const adminOrdersService = new AdminOrdersService({
     repository,
     workflow,
@@ -659,6 +806,7 @@ async function main({ port = 8788, environment = process.env, logger = console }
     logger
   });
   const api = createPetPackStudioHttpApi({
+    service: createFixtureUserService({ state, mediaUrl, logger }),
     adminOperationsService: new AdminOperationsService({ repository, logger }),
     adminOrdersService,
     // The site chrome asks for a session on every page. Without an auth
@@ -697,20 +845,6 @@ async function main({ port = 8788, environment = process.env, logger = console }
     }
     if (url.pathname === "/livez") {
       response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ status: "ok" }));
-      return;
-    }
-    // Only the console's own surface is implemented here. Saying so beats a
-     // bare "接口不存在", which looks like a regression in the API itself.
-    const servedPrefixes = ["/api/admin/", "/api/auth/"];
-    if (url.pathname.startsWith("/api/") && !servedPrefixes.some((prefix) => url.pathname.startsWith(prefix))) {
-      const payload = JSON.stringify({
-        error: {
-          code: "fixture_route_not_implemented",
-          message: "本地试用装置只提供管理台与会话接口；该接口请在完整环境中使用"
-        }
-      });
-      response.writeHead(501, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(payload) });
-      response.end(payload);
       return;
     }
     const chunks = [];
