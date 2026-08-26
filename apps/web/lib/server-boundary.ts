@@ -3,6 +3,17 @@ import "server-only";
 import { platformStudioPath, StudioGatewayError } from "./studio-gateway-core";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+// The photo pre-check calls a vision model on three to four photographs and
+// legitimately takes around 15-20 seconds. The first production run of r31
+// proved the mismatch the hard way: the platform finished judging
+// (precheck.vision_ok, ~15.0s at the edge) while this gateway had already
+// aborted at exactly 15s, so the customer saw "服务暂时不可用" and the model
+// spend was discarded. Only this known-long route gets the long budget.
+const LONG_REQUEST_TIMEOUT_MS = 60_000;
+
+function requestTimeoutMs(path: string): number {
+  return path === "/api/photo-precheck" ? LONG_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+}
 
 export type StudioGatewayConfiguration =
   | { configured: true; origin: URL; token: string }
@@ -56,7 +67,8 @@ export async function serverStudioRequest(
     );
   }
 
-  const target = new URL(platformStudioPath(path), configuration.origin);
+  const platformPath = platformStudioPath(path);
+  const target = new URL(platformPath, configuration.origin);
   const incoming = new URL(request.url);
   target.search = incoming.search;
 
@@ -76,7 +88,7 @@ export async function serverStudioRequest(
     body,
     cache: "no-store",
     redirect: "manual",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(requestTimeoutMs(platformPath)),
   });
 
   const outgoingHeaders = new Headers();
