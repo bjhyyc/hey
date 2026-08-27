@@ -270,6 +270,50 @@ describe("request rate limiter", () => {
       .toBe("172.18.0.2");
   });
 
+  it("prefers the gateway-attested customer address over every transport hint", () => {
+    // All relayed traffic shares one CloudBase egress IP; the attested header
+    // is what keeps per-client throttling per-client.
+    expect(resolveClientIp({
+      socketAddress: "172.18.0.2",
+      forwardedFor: "43.143.111.226",
+      trustForwardedFor: true,
+      gatewayClientIp: "203.0.113.77"
+    })).toBe("203.0.113.77");
+    // A malformed attestation falls back instead of poisoning the key.
+    expect(resolveClientIp({
+      socketAddress: "172.18.0.2",
+      forwardedFor: "43.143.111.226",
+      trustForwardedFor: true,
+      gatewayClientIp: "not an ip"
+    })).toBe("43.143.111.226");
+  });
+
+  it("honors the attested address only when the caller holds the gateway bearer", async () => {
+    const token = "t".repeat(48);
+    const seen = [];
+    const api = { handle: vi.fn(async () => ({ status: 200, body: { ok: true } })) };
+    const limiter = {
+      check(input) { seen.push(input.clientIp); return { allowed: true }; }
+    };
+    const server = createNodeHttpServer({
+      api, port: 0, rateLimiter: limiter, internalBearerToken: token,
+      logger: { warn() {}, info() {} }
+    });
+    const address = await server.start();
+    try {
+      await fetch(`http://127.0.0.1:${address.port}/api/projects`, {
+        headers: { authorization: `Bearer ${token}`, "x-petpack-client-ip": "203.0.113.88" }
+      });
+      await fetch(`http://127.0.0.1:${address.port}/api/projects`, {
+        headers: { authorization: "Bearer wrong-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "x-petpack-client-ip": "203.0.113.99" }
+      });
+      expect(seen[0]).toBe("203.0.113.88");
+      expect(seen[1]).not.toBe("203.0.113.99");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("returns 429 with retry-after through the HTTP server", async () => {
     const api = { handle: vi.fn(async () => ({ status: 200, body: { ok: true } })) };
     const limiter = createRequestRateLimiter({

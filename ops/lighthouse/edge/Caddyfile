@@ -17,6 +17,7 @@ heyirmy.com {
 	}
 
 	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 	}
@@ -29,30 +30,44 @@ heyirmy.com {
 
 api.heyirmy.com {
 	# Stock-Caddy edge hardening: bound every request body before it reaches
-	# the application. True volumetric rate limiting needs an xcaddy build with
-	# a rate-limit plugin or an upstream WAF/CDN (see
-	# docs/ADMIN_SUPPORT_CONSOLE.md §5.3); the application applies its own
-	# per-IP throttle behind this.
+	# the application. Deliberately above the platform's own 10MB server bound
+	# and the pre-check route's 8MB allowance, so the innermost layer is the
+	# one that refuses and the customer gets its message rather than a reset.
+	# True volumetric rate limiting needs an xcaddy build with a rate-limit
+	# plugin or an upstream WAF/CDN (see docs/ADMIN_SUPPORT_CONSOLE.md §5.3);
+	# the application applies its own per-IP throttle behind this.
 	request_body {
 		max_size 16MB
 	}
 
+	@root path /
 	@health path /health
 	@ready path /readyz
 	@kaipay_notification {
 		method POST
 		path_regexp kaipay ^/api/payments/kaipay/notify/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
 	}
-	@studio path /api/auth/* /api/checkout /api/projects /api/projects/* /api/admin/*
+	# Auth lives in its own container. Folding these paths into @studio would
+	# send every login to the studio API, which does not serve them - the
+	# repository carried exactly that mistake while production ran this file.
+	@auth path /api/auth/*
+	@studio path /api/checkout /api/photo-precheck /api/projects /api/projects/* /api/admin/*
 
 	handle @health {
 		respond "ok" 200
+	}
+	handle @root {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "Hey PetPack API" 200
 	}
 	handle @ready {
 		reverse_proxy studio-api:8787
 	}
 	handle @kaipay_notification {
 		reverse_proxy studio-api:8787
+	}
+	handle @auth {
+		reverse_proxy auth-api:8787
 	}
 	handle @studio {
 		reverse_proxy studio-api:8787
@@ -62,6 +77,7 @@ api.heyirmy.com {
 	}
 
 	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 	}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   KAIPAY_STATUS_POLL_INTERVAL_MS,
   kaipayQrPresentation,
@@ -27,6 +27,8 @@ export function NewProjectForm() {
   const [displayName, setDisplayName] = useState("");
   const [paymentChannel, setPaymentChannel] = useState<KaipayPaymentChannel>("ALIPAY");
   const [busy, setBusy] = useState(false);
+  const checkoutKeyRef = useRef<string>("");
+  if (!checkoutKeyRef.current) checkoutKeyRef.current = crypto.randomUUID();
   const [message, setMessage] = useState("");
   const [qrPayment, setQrPayment] = useState<QrPayment | null>(null);
   // The home page already asked whether this is a cat or a dog and kept the
@@ -141,7 +143,11 @@ export function NewProjectForm() {
         displayName: displayName.trim(),
         paymentMethod: "KAIPAY",
         paymentChannel,
-        idempotencyKey: crypto.randomUUID(),
+        // Minted once per form, not per click. A retry after a gateway timeout
+        // or a network wobble must repeat the same request - a fresh key would
+        // have the platform treat it as a second purchase and create a second
+        // real order against the customer's money.
+        idempotencyKey: checkoutKeyRef.current,
         species,
         ...(precheckPass && precheckCovered ? { precheckId: precheckPass.precheckId } : {}),
       });

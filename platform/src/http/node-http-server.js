@@ -1,4 +1,5 @@
 const http = require("node:http");
+const { timingSafeEqual } = require("node:crypto");
 
 const { resolveClientIp } = require("./request-rate-limiter");
 
@@ -113,17 +114,36 @@ function createNodeHttpServer({
   // its own reverse proxy - true for the production compose network where
   // Caddy is the only ingress. On loopback the socket address IS the client.
   trustForwardedFor = allowNonLoopback === true,
+  // Requests that prove they came from our own gateway (by holding the
+  // internal bearer) may attest the real customer address in
+  // x-petpack-client-ip; everything the gateway relays shares one egress IP,
+  // so without the attestation per-client throttling degrades to per-site.
+  internalBearerToken = "",
   logger = console
 } = {}) {
   const httpApi = requireApi(api);
   if (rateLimiter && typeof rateLimiter.check !== "function") {
     throw new Error("A request rate limiter must expose check()");
   }
+  if (typeof internalBearerToken !== "string") throw new Error("The internal bearer token must be a string");
+  const expectedBearer = internalBearerToken ? Buffer.from(`Bearer ${internalBearerToken}`, "utf8") : null;
+  function gatewayAttestedClientIp(request) {
+    if (!expectedBearer) return null;
+    const supplied = request.headers.authorization;
+    if (typeof supplied !== "string") return null;
+    const candidate = Buffer.from(supplied, "utf8");
+    if (candidate.length !== expectedBearer.length || !timingSafeEqual(candidate, expectedBearer)) return null;
+    const header = request.headers["x-petpack-client-ip"];
+    return typeof header === "string" ? header : null;
+  }
   if (host !== "127.0.0.1" && !(allowNonLoopback === true && host === "0.0.0.0")) {
     throw new Error("The PetPack API must bind to 127.0.0.1 unless the production container explicitly enables 0.0.0.0 on its internal network");
   }
   const listenPort = boundedInteger(port, 8787, 0, 65_535, "Local API port");
-  const bodyLimit = boundedInteger(maxBodyBytes, DEFAULT_MAX_BODY_BYTES, 1_024, 2 * 1024 * 1024, "Local API body limit");
+  // The photo pre-check route accepts up to 8MB of JSON (three to four
+  // base64 photographs at 2MB each); the server-level bound must be able to
+  // sit above every route-level bound or the stricter layer wins silently.
+  const bodyLimit = boundedInteger(maxBodyBytes, DEFAULT_MAX_BODY_BYTES, 1_024, 16 * 1024 * 1024, "Local API body limit");
   const timeoutMs = boundedInteger(requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, 1_000, 60_000, "Local API request timeout");
   if (typeof healthCheck !== "function") throw new Error("A health check is required");
 
@@ -144,7 +164,8 @@ function createNodeHttpServer({
           clientIp: resolveClientIp({
             socketAddress: request.socket && request.socket.remoteAddress,
             forwardedFor: request.headers["x-forwarded-for"],
-            trustForwardedFor
+            trustForwardedFor,
+            gatewayClientIp: gatewayAttestedClientIp(request)
           })
         });
         if (verdict && verdict.allowed !== true) {

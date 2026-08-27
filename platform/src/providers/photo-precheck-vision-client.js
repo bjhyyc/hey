@@ -1,6 +1,9 @@
 "use strict";
 
 const PROMPT_VERSION = "pet-photo-precheck/v3";
+// Comfortably inside the web gateway's 60s pre-check budget, so the platform
+// is the layer that decides a hung model call is over.
+const VISION_REQUEST_TIMEOUT_MS = 45_000;
 
 const RESPONSE_SCHEMA = Object.freeze({
   type: "object",
@@ -86,11 +89,30 @@ function createPhotoPrecheckVisionClient({ registry, fetchImpl = fetch, logger =
   const modelId = baseUrl && apiKey ? registry?.modelArk?.vision?.modelId : "";
 
   async function post(body) {
-    const response = await fetchImpl(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(body)
-    });
+    // Without a deadline this call inherits undici's, which is minutes long.
+    // The web gateway gives the pre-check 60s; if the model hangs past that,
+    // the customer already has an error while this request keeps running and
+    // keeps costing money. Give up first, and say why.
+    let response;
+    try {
+      response = await fetchImpl(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(VISION_REQUEST_TIMEOUT_MS)
+      });
+    } catch (cause) {
+      const timedOut = cause && (cause.name === "TimeoutError" || cause.name === "AbortError");
+      const error = new Error(timedOut
+        ? "照片预检超时，请稍后重试"
+        : "照片预检服务暂时不可用，请稍后重试");
+      error.code = timedOut ? "precheck_timeout" : "precheck_provider_error";
+      logger.warn?.("petpack.precheck.vision_call_failed", {
+        timedOut: Boolean(timedOut),
+        errorName: cause && cause.name ? cause.name : "Error"
+      });
+      throw error;
+    }
     const payload = await response.json().catch(() => null);
     return { status: response.status, payload };
   }

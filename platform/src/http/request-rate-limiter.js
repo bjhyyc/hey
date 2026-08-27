@@ -27,16 +27,34 @@ function boundedRate(value, fallback, minimum, maximum, label) {
   return parsed;
 }
 
+function safeIpToken(value) {
+  if (typeof value !== "string") return null;
+  const first = value.split(",")[0].trim();
+  return first && first.length <= 64 && /^[0-9a-fA-F.:]+$/.test(first) ? first : null;
+}
+
 /**
- * The first entry of x-forwarded-for is the client as reported by the edge.
- * Trust it only when explicitly told the deployment sits behind a proxy that
- * is the sole route to this process (the production compose network, where
- * Caddy is the only ingress); otherwise the socket address is the client.
+ * Which address is "the client" depends on who is talking:
+ *
+ * 1. A request that authenticated with the internal gateway bearer comes from
+ *    our own Next gateway on CloudBase, and EVERY such request shares one
+ *    egress IP - keying on the transport address would put the whole customer
+ *    base into a single bucket (the sensitive budget would be 12/min for the
+ *    entire site). The gateway attests the real client in
+ *    x-petpack-client-ip, and holding the secret token is what makes that
+ *    attestation trustworthy.
+ * 2. Otherwise, behind our own edge (the production compose network where
+ *    Caddy is the only ingress), the first x-forwarded-for entry is the
+ *    client; Caddy does not forward untrusted inbound XFF, so it cannot be
+ *    spoofed by hitting the edge directly.
+ * 3. On loopback, the socket address IS the client.
  */
-function resolveClientIp({ socketAddress, forwardedFor, trustForwardedFor }) {
-  if (trustForwardedFor && typeof forwardedFor === "string" && forwardedFor.trim()) {
-    const first = forwardedFor.split(",")[0].trim();
-    if (first && first.length <= 64 && /^[0-9a-fA-F.:]+$/.test(first)) return first;
+function resolveClientIp({ socketAddress, forwardedFor, trustForwardedFor, gatewayClientIp = null }) {
+  const attested = safeIpToken(gatewayClientIp);
+  if (attested) return attested;
+  if (trustForwardedFor) {
+    const forwarded = safeIpToken(forwardedFor);
+    if (forwarded) return forwarded;
   }
   return typeof socketAddress === "string" && socketAddress ? socketAddress : "unknown";
 }

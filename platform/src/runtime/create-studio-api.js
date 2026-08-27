@@ -288,6 +288,10 @@ async function createStudioApiRuntime({
         sensitiveRequestsPerMinute: config.httpRateLimitSensitiveRpm,
         logger
       }),
+      internalBearerToken: config.internalBearerToken,
+      // Must sit above the pre-check route's 8MB JSON allowance, or the
+      // server rejects at 1MB what the route was built to accept.
+      maxBodyBytes: 10 * 1024 * 1024,
       healthCheck: async () => {
         await runtimeDatabase.assertReady();
         return { ready: true };

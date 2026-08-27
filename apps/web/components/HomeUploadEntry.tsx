@@ -160,7 +160,10 @@ export function HomeUploadEntry() {
     setBusy(true);
     try {
       const next = [...photos] as PhotoFileSlots;
-      next[index] = file;
+      // The initial selection downscales every file; replacing one used to
+      // store the raw original, so an oversized photograph could pass the
+      // pre-check and the payment and only fail later, during generation.
+      next[index] = await normalizePhotoFile(file);
       if (await hasDuplicatePhotos(next.filter((item): item is File => Boolean(item)))) {
         setMessage("不能上传重复照片");
         return;
