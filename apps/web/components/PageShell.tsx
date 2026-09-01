@@ -12,15 +12,17 @@ export function PageShell({
   children,
   compact = false,
   wide = false,
+  sales = true,
 }: {
   children: ReactNode;
   compact?: boolean;
   wide?: boolean;
+  sales?: boolean;
 }) {
   const shell = wide ? "shell shell-wide" : "shell";
   return (
     <div className="site-shell">
-      <SiteHeader />
+      <SiteHeader sales={sales} />
       <main className={`${shell} page-main page-space${compact ? " narrow-page compact-page" : ""}`}>{children}</main>
       <SiteFooter />
     </div>

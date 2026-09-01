@@ -1472,7 +1472,11 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 @media (max-width: 780px) {
   .shell, .page-main, .page-main.compact-page, .page-main.narrow-page { width: min(calc(100% - 30px), 640px); }
   .secondary-header-right { gap: 12px; }
-  .primary-nav { display: none; }
+  /* Hiding the whole nav on a phone took 我的项目 with it, leaving a returning
+     customer no way back to their work from any inner page. Keep that one and
+     drop only the client download, which the home page and footer also carry. */
+  .primary-nav { gap: 16px; }
+  .primary-nav .primary-nav-client { display: none; }
   .home-minimal-shell { width: min(calc(100% - 30px), 720px); min-height: calc(100svh - 70px); padding: 88px 0 80px; }
   .pika-home { min-height: calc(100svh - 70px); }
   .page-main { padding-top: 50px; }
@@ -1616,3 +1620,10 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 main.shell-wide.page-main,
 main.shell-wide.page-main.compact-page,
 main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); max-width: none; }
+
+/* The nav's own link to the customer's work. It reads as navigation rather
+   than as a call to action - the amber slot to its right holds that. */
+.primary-nav-projects { color: var(--ink); font-weight: var(--weight-heading); }
+@media (max-width: 470px) {
+  .primary-nav { gap: 12px; font-size: var(--text-small); }
+}
