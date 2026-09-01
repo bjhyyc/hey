@@ -1,7 +1,14 @@
+import { SUPPORT_QQ, SUPPORT_QQ_URL } from "@/lib/support-channel";
+
 export function SiteFooter() {
   return (
     <footer className="site-footer">
       <div className="shell footer-inner">
+        {SUPPORT_QQ ? (
+          <a href={SUPPORT_QQ_URL} target="_blank" rel="noopener noreferrer">
+            客服 QQ：{SUPPORT_QQ}
+          </a>
+        ) : null}
         <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
           蜀ICP备2026044501号
         </a>

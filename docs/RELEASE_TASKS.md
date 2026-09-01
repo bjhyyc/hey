@@ -1,50 +1,64 @@
-# Hey Pet 上线任务清单
+# Hey Pet 正式上线前检查清单
 
-更新时间：2026-08-18
+更新时间:2026-09-01(此前版本停在 2026-08-18,与现实差距过大,已按逐项核实的当前状态重写)
 
 ## 当前结论
 
-尚未达到公开收费上线条件。线上 API、Outbox、Worker 当前均为 healthy，公网 `/readyz` 返回 200；但 Worker/Outbox 使用 `controlled-real` 镜像，不能作为 production-assured 视觉生产链路。
+技术链路已全部打通并在生产运行:production-assured Worker(含视频人工放行)、
+管理台八项处置、预检门禁、限速、审计、唯一管理员、每日备份与 10 分钟巡检。
+**距公开收费上线还差的全部是运营决策与验收动作**,见「必须由用户完成」。
 
-production-assured Worker 组件包（`platform/src/runtime/production-worker-components.js`）已完成并通过组件合同与 manifest 固定验证。候选 Worker 镜像 `production-qa-20260818-r4` 已打入干净上游客户端树、Electron 31.7.7、xvfb 与 FFmpeg 7.0.2，并移除运行时 npm/Corepack/Yarn；本地加固 smoke、临时根可写探针和 Critical/High CVE 门已通过。该镜像尚未推送到生产镜像仓库，也尚未替换线上 Worker。
+## 一、已完成并在生产运行 ✅
 
-本地最近一次回归：108 个测试文件通过，2 个按设计跳过；1089 个测试通过，2 个跳过。桌宠 Vite、落地页 Vite、网站 Next.js 三项生产构建通过。
+- [x] production-assured Worker(`admin-override-20260827`,manifest `c0df69f1…` 与生产钉值逐字节一致);API `seam-fixes-20260826`;迁移 001–021 全部应用。
+- [x] 真实批次验收:v2prompt 边牧批次 3 母图 + 7 动作全过生产 QA 门、打包、原版导入、真实 Electron 七项交互(08-18);此后多个真实客户单成品交付(匡匡/嘎嘎嘎/7777/uuu 等 deliverable)。
+- [x] 支付全链:Kaipay V3 下单→回调验签→主动查单→paid→工作流启动一次,19 笔 0.01 元真实订单跑通;同步回跳页;webhook 延迟时服务端查单兜底。
+- [x] 照片预检门禁(`ENFORCED=true`,vision 45s 超时,网关 60s 预算,体积漏斗 16→10→8MB)。
+- [x] 管理台:检索/详情/重跑/人工放行(母图+睡姿+视频)/补发重生成/交付重开/退款(暗启动)/账号封禁,全部必填原因写 `audit_event`;唯一管理员已任命(2658b6e3…,任命脚本强制唯一性)。
+- [x] 跨层接缝清查 8 项修复(超时表、限速身份见证、错误文案分层、幂等键、照片替换降采样、边缘配置对齐并合同测试锁死)。
+- [x] 每日 PostgreSQL 备份 cron(19:30 UTC,保留 7 天,已试跑并 pg_restore 校验)+ 每 10 分钟运维巡检 cron(落 `/opt/petpack/shared/logs/`)。
+- [x] 客户端品牌化:Hey 1.0.0(appId `com.heyirmy.hey`)。
+- [x] 下载页/客服入口代码就绪:`NEXT_PUBLIC_CLIENT_DOWNLOAD_URL/_SHA256/_VERSION`、`NEXT_PUBLIC_SUPPORT_QQ` 四个构建参数(Dockerfile ARG),配置后自动亮起;未配置时诚实降级。
 
-最近一次免费生产 QA 校准（不调用 ModelArk，复用已生成的 controlled-real 媒体）报告：
-`.tmp/production-qa-calibration/calibration-2026-08-18T0611/report.json`。
-三张母图通过（3/3），七个动作通过 5/7：`idle`、`sneeze`、`roll`、`sleep-loop`、`hover-attention`；`sleep-transition` 因逐帧形变/抠图边缘稳定性失败，`stretch` 因多主体/抠图完整性失败。该报告只能证明生产门正确拒绝当前旧媒体，不能替代下一次真实七动作批次。
+## 二、必须由用户完成(按依赖顺序)
 
-2026-08-18 线上只读部署前快照：Studio API、Outbox、Worker 均 healthy 且重启数为 0；当前 Worker 仍为 `controlled-real-20260817-r5`。Seedream/Seedance endpoint 和 model registry 均已配置且不含 fixture/test 标识；`/work` 属于 UID/GID 10001 并可写。数据库无进行中工作：101 个 outbox 全部 sent，99 个 execution succeeded、1 个 dead，1 个历史 run failed；没有 pending/leased/retryable execution，也没有 pending/leased/failed outbox。
+1. **正式 SKU 与定价**:生产 `product_plan` 目前只有 0.01 元冒烟计划且 enabled。
+   决定正式价格→我插入新计划并停用冒烟计划→CloudBase 构建参数
+   `NEXT_PUBLIC_PETPACK_PLAN_CODE` 同步改为新 code(否则前端仍下 1 分钱单)。
+2. **Kaipay 正式验收**:一笔真实支付宝支付(≥最低额)全链验收;随后在管理台
+   用该单做一笔**受控真实退款**(退款按钮已就绪),验收通过后我把
+   `PETPACK_ADMIN_REFUND_ENABLED=true` 上线。微信渠道按需另行验收。
+3. **客服 QQ 号**:提供号码→CloudBase 构建参数 `NEXT_PUBLIC_SUPPORT_QQ`→
+   页脚与失败页自动出现入口(需在 QQ 设置允许临时会话)。
+4. **客户端存放确认**:推荐方案 COS 公共读前缀 + 默认 CDN(详见
+   `docs/CLIENT_DISTRIBUTION.md`);确认后我上传安装包并给出
+   `NEXT_PUBLIC_CLIENT_DOWNLOAD_URL/_SHA256/_VERSION` 三个值。
+5. **法务文本**:隐私政策/服务协议/AI 生成说明的正文(经营主体、保留期限、
+   删除流程、退款规则)。页面骨架已在 `/privacy` `/terms`,提供文本我即排版上线。
+6. **CloudBase 构建参数一次性配齐**(上述 2–4 产出的值 + 现有 env),之后
+   重新构建部署一次 web。
+7. (可选,不阻塞)Windows 代码签名证书——无证书首次运行有 SmartScreen
+   提示,下载页已如实说明;拿到证书后重打包即可去除。
 
-## P0：必须完成
+## 三、上线前对账(我来做,不需要用户)
 
-- [x] 保存单独的 `sleep-transition` 原始提示词覆盖；其他六个动作提示词不变。
-- [x] 将可信 FFmpeg 首尾帧解码检查接入 `MediaWorker`。
-- [x] 提供 production-assured 的母图处理器、抠图/去绿处理器、动作 QA 和交付验证器（`platform/src/runtime/production-worker-components.js`：全部证据从解码字节实测，无 fixture 值；照片/母图参照分别用背景分离与 chroma 掩膜测量；逐帧覆盖 + worst-frame chroma 完整性 + 外观最小分 + sleep-loop 呼吸循环计数；交付验证器绑定 pinned 干净上游导入与 pinned Electron 交互 runner）。
-- [x] 生产 manifest 固定组件版本、合同版本、校准摘要和引擎摘要（`productionComponentManifest` canonical SHA-256 必须等于 `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256`；校准摘要 = 冻结校准数据的 canonical SHA-256，交付验证器摘要绑定上游树/Electron/runner 校验和；`print-production-worker-manifest.js` 供运维在镜像内输出待固定 SHA）。
-- [x] 下一次真实生成按完整七动作批次执行；只替换 `sleep-transition` 提示词，不单独重复生成（2026-08-18 完成：v2 提示词批次，3 母图 + 7 视频一次生成，总花费 ¥19.5，预算硬上限 ¥24/用户批准 ¥40；母图经用户过目后并行提交七视频；`@long` 按用户审查改为 `@front`）。
-- [x] 真实七动作媒体通过逐帧 QA、首尾帧绑定、sleep-loop 接缝、打包和原版客户端导入（2026-08-18 完成：母图 3/3、动作 7/7 通过生产 QA 门（校准 v2prompt 批次：端点有界质心对齐分离 provider 系统性 9px 取景平移、逐动作构图余量/水平位移/形变幅度包络、sleep-loop 相位匹配连续型边界模式）；打包 `hey-border-collie-v2prompt-20260818.petpack`（SHA `c043483a50a7940da432960d149e73dd58e93f41cb80a966e7a3b43b036dcd77`）；pinned 干净树上游导入通过；真实 Electron 交互验证七项全过（含 22 秒入睡与悬停冷却）。报告：`.tmp/production-qa-calibration/calibration-2026-08-18T0957/report.json`；成品：`final-delivery/Hey-Pet-border-collie-v2prompt-20260818.petpack`。大构图（狗占画面更大）经用户确认采纳——客户端可调显示大小，大图有效清晰度更高。遗留：线上 r4 Worker 镜像不含本日批后校准，需 r5 重建重固定 manifest SHA 后按同一流程替换。）
-- [x] 将线上 controlled-real Worker 替换为 production-assured Worker 镜像（2026-08-18 完成，经用户确认切换）。镜像 `petpack-studio-worker:production-qa-20260818-r4` 以 gzip tar + SHA-256（`b6e1544e…`）校验传输，服务器 `docker load` 后 ID digest 与本地候选逐字节一致（`sha256:9252edd6b15f1ac53430ef4ec01b4a0a9d5bf5b04be4cd7d83ac805129822825`）；发布目录 `/opt/petpack/releases/production-worker-r1-20260818/`（当前版 compose，无 controlled-real 覆盖，`.env` 固定 `PETPACK_WORKER_COMPONENTS_MANIFEST_SHA256=18677e33…`）。启动日志 `mode: production, evidenceMode: production, concurrency: 7`，健康检查 healthy；切换后 Outbox 零积压、队列 0 等待/0 失败、公网 `/readyz` 200。SBOM/CVE Critical/High=0（`.tmp/release-audit/production-qa-20260818-r4/`）。回滚路径：r5 发布目录原样可重启 controlled-real Worker。遗留：`execution_dead=1` 为切换前历史死执行，待对账清理；正式 registry 化（当前为既定 tar+SHA 传输模式）列入 P1 基础设施项。
+- [ ] `execution_dead=11`、`queue_failed=5` 历史基线对账:逐条归类
+  (已修缺陷产物 / 预算耗尽正当死亡 / 待救援单),清理或调巡检阈值,
+  让告警从此只报增量。
+- [ ] 6 个 failed 真实单处置:柯基、222×2、11111、1111 用管理台逐单
+  救援或(退款验收后)退款,天体吧/哈哈/333 三个未支付单可过期清理。
+- [ ] 上线当日:确认队列零积压、7 容器 healthy、备份最新、巡检绿。
 
-## P1：生产闭环
+## 四、上线后第一周观察项
 
-- [x] 真实 ModelArk Seedream/Seedance endpoint 与 model registry 已配置到当前线上 Worker；只读检查确认值存在且不含 fixture/test 标识（不在文档或日志中记录实际 ID）。
-- [ ] 真实 ModelArk 成本、并发、超时、重试和幂等证据。
-- [ ] 3–4 张来源照→3 张母图→7 个动作→后处理→QA→PetPack→下载导入全链路报告。
-- [ ] 生产 COS 上传、私有读取、归档、下载和最小权限验证。
-- [ ] PostgreSQL/Redis 备份恢复、Outbox 重放、API/Outbox/Worker 硬中断恢复报告。
-- [ ] Kaipay V3：下单→支付→Webhook 验签→主动查单→订单 paid→工作流只启动一次→受控退款。
-- [ ] 队列积压、死信、过期租约、成本超限、容器 OOM 和磁盘告警。
-- [ ] 隐私政策、服务协议、AI 生成说明、保留期限、删除和退款补救规则。
+- 巡检日志 ALERT 行(现在会自动落盘);预检 429/超时率;
+  Kaipay 回调延迟触发查单兜底的频率;COS 用量与成本。
+- 边缘容量型限速(xcaddy rate-limit 插件或腾讯云 WAF)仍是部署侧待办,
+  当前依赖应用层每 IP 300/12 rpm。
 
-## 用户需要提供
+## 禁止事项(沿用)
 
-1. 确认是否上传并部署 r4 production-assured Worker 候选；该步骤只替换空闲 Worker，不创建生成任务。
-2. r4 部署健康后，确认下一次完整七动作真实批次的费用上限和是否允许真实 ModelArk 调用。
-
-## 禁止事项
-
-- 不单独重复生成已完成的动作。
-- 不用 controlled-real fixture 作为生产视觉证据。
+- 不单独重复生成已完成的动作;整批七动作原则不变。
 - 不把 `/readyz=200` 当作媒体生产链路已放行。
 - 不在日志、报告或测试输出中写出 API key、支付密钥、签名原文或私有 URL。
+- 正式定价未上线前,不做任何推广拉新(现在下单是真实的 0.01 元收费)。

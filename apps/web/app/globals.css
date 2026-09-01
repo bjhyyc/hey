@@ -1627,3 +1627,9 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 @media (max-width: 470px) {
   .primary-nav { gap: 12px; font-size: var(--text-small); }
 }
+
+/* Download page: the checksum is for verification, not decoration. */
+.download-notes { margin-top: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.download-sha { padding: 2px 6px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; user-select: all; }
+.failed-card-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.site-footer .footer-inner { display: flex; flex-wrap: wrap; gap: 8px 24px; }

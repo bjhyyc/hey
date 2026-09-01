@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { studioBrowserApi, type ProjectView } from "@/lib/studio-browser-api";
+import { SUPPORT_QQ, SUPPORT_QQ_URL } from "@/lib/support-channel";
 
 /**
  * The master is what the customer is being asked to approve, and the card shows
@@ -137,7 +138,14 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
     return <section className="workflow-card failed-card">
       <h3>制作没有完成</h3>
       <p>这个项目在生成阶段中断了，照片和订单都已保留。请联系我们处理并提供页面下方的项目编号，不要重复下单。</p>
-      <Link className="ghost-button" href="/projects">返回项目列表</Link>
+      <div className="failed-card-actions">
+        {SUPPORT_QQ ? (
+          <a className="primary-button inline-button" href={SUPPORT_QQ_URL} rel="noopener noreferrer" target="_blank">
+            联系客服 QQ {SUPPORT_QQ}
+          </a>
+        ) : null}
+        <Link className="ghost-button" href="/projects">返回项目列表</Link>
+      </div>
     </section>;
   }
   if (mode === "character") {

@@ -29,10 +29,10 @@ const translations = {
 
     // Pet window
     "pet.settings": "Open settings",
-    "pet.title": "Desktop Pet",
+    "pet.title": "Hey",
 
     // Panel tabs
-    "panel.title": "Desktop Pet Control Panel",
+    "panel.title": "Hey Control Panel",
     "panel.tabs.overview": "Overview",
     "panel.tabs.settings": "Settings",
     "panel.tabs.assets": "Assets",
@@ -558,7 +558,7 @@ const translations = {
     "system.language.zh": "中文",
     "system.quitApp": "Quit app",
     "system.about.title": "About",
-    "system.about.description": "A free and open-source desktop pet client.",
+    "system.about.description": "Hey - the desktop pet that brings your own pet back to your desk.",
     "system.about.website": "Official website",
     "system.about.changelog": "Changelog",
     "system.about.updates": "Updates",
@@ -631,10 +631,10 @@ const translations = {
 
     // 宠物窗口
     "pet.settings": "打开设置",
-    "pet.title": "桌面宠物",
+    "pet.title": "Hey",
 
     // 面板标签
-    "panel.title": "桌面宠物控制面板",
+    "panel.title": "Hey 控制面板",
     "panel.tabs.overview": "概览",
     "panel.tabs.settings": "设置",
     "panel.tabs.assets": "资源",
@@ -1160,7 +1160,7 @@ const translations = {
     "system.language.zh": "中文",
     "system.quitApp": "退出应用",
     "system.about.title": "关于",
-    "system.about.description": "免费开源的桌面宠物客户端。",
+    "system.about.description": "Hey —— 把思念带回桌面。开源桌宠客户端。",
     "system.about.website": "官方网站",
     "system.about.changelog": "更新日志",
     "system.about.updates": "软件更新",

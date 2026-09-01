@@ -1,15 +1,15 @@
 {
-  "name": "desktop-pet",
-  "version": "0.1.1",
+  "name": "hey-pet-client",
+  "version": "1.0.0",
   "private": true,
-  "description": "Cross-platform Electron desktop pet client",
+  "description": "Hey - the desktop pet that brings your own pet back to your desk",
   "author": "tao",
   "license": "GPL-3.0",
   "main": "src/main/main.js",
   "type": "commonjs",
   "build": {
-    "appId": "com.tao.desktoppet",
-    "productName": "Desktop Pet",
+    "appId": "com.heyirmy.hey",
+    "productName": "Hey",
     "files": [
       "dist/renderer/**/*",
       "src/**/*",
@@ -20,7 +20,8 @@
       "identity": null
     },
     "win": {
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
     },
     "linux": {
       "icon": "build/icon.png"
