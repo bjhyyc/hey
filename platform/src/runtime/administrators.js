@@ -170,7 +170,15 @@ function usage() {
 
 async function main({ argv = process.argv.slice(2), environment = process.env, logger = console } = {}) {
   const { createPostgresDatabase } = require("../persistence/postgres-database");
-  const database = createPostgresDatabase({ environment, logger });
+  const { hydrateEnvironmentFromSecretFiles } = require("./load-secret-files");
+  // Run inside the deployed API container, where credentials arrive as mounted
+  // files rather than as environment values - the same convention the runtime
+  // itself uses. Without this the command can only run somewhere a plaintext
+  // connection URL is lying around, which is the opposite of where it belongs.
+  const database = createPostgresDatabase({
+    environment: hydrateEnvironmentFromSecretFiles({ environment }),
+    logger
+  });
   try {
     if (argv.includes("--list")) {
       const result = await listAdministrators({ database });
