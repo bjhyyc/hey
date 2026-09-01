@@ -1265,6 +1265,10 @@ body {
 
 .site-shell { min-height: 100svh; display: grid; grid-template-rows: auto 1fr auto; }
 .shell { width: min(calc(100% - 104px), 1328px); margin-inline: auto; }
+/* The console is a working surface, not prose: failure codes, QA reasons and
+   IDs have to be readable whole. It keeps a comfortable gutter but drops the
+   reading-width cap that the customer pages are measured for. */
+
 .site-header {
   position: relative;
   z-index: 5;
@@ -1515,7 +1519,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 /* Support console (/admin/operations). The order list must scan like a queue —
    amount and state first, IDs second — and every disposal keeps its reason
    field adjacent to its confirm button so the audit habit costs no navigation. */
-.console-layout { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 14px; align-items: start; }
+.console-layout { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .console-search { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .console-search .primary-button, .console-search .ghost-button { min-height: 40px; }
 .console-order-list { display: grid; gap: 8px; margin-top: 12px; }
@@ -1531,7 +1535,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .console-detail { display: grid; gap: 18px; }
 .console-detail-header { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
 .console-detail-header h2 { margin: 0; font-size: var(--text-lead); }
-.console-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.console-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
 .console-summary article { padding: 12px 14px; display: grid; gap: 3px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--text-small); }
 .console-summary small { color: var(--muted); }
 .console-rescue { display: grid; gap: 10px; }
@@ -1562,10 +1566,6 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .console-timeline-source { padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; }
 .console-timeline-source.is-admin { color: var(--emerald); border-color: var(--emerald-line); }
 .console-timeline-source.is-payment { color: var(--warn); }
-@media (max-width: 900px) {
-  .console-layout { grid-template-columns: 1fr; }
-  .console-summary { grid-template-columns: 1fr; }
-}
 .console-override-button { min-height: 32px; padding: 0 12px; font-size: var(--text-small); }
 .console-rejected-videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .console-rejected-videos article { padding: 12px; display: grid; gap: 6px; background: var(--sunken); border: 1px solid var(--danger); border-radius: var(--radius-sm); font-size: var(--text-small); }
@@ -1580,3 +1580,39 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 .support-code { margin: 18px 0 0; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; color: var(--muted); font-size: var(--text-small); }
 .support-code code { padding: 3px 8px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
 .support-code .ghost-button { min-height: 30px; padding: 0 12px; font-size: var(--text-small); }
+
+/* Nothing in the console may hide its own text. Long QA reasons, failure codes
+   and IDs wrap onto as many lines as they need; the previous rules inherited
+   the customer pages' single-line, ellipsis-friendly habits and hid exactly
+   the words an operator opens this page to read. */
+.console-detail, .console-detail p, .console-detail span, .console-detail small, .console-detail strong {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.console-summary article { font-size: var(--text-body); line-height: 1.6; }
+.console-summary article span, .console-summary article strong { white-space: normal; }
+.console-order-list li button { gap: 5px; }
+.console-order-list li button strong { white-space: normal; line-height: 1.4; }
+.console-actions-table li { font-size: var(--text-body); line-height: 1.6; }
+.console-actions-table li small { font-size: var(--text-small); }
+.console-media-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.console-media-grid figcaption { font-size: var(--text-body); line-height: 1.5; }
+.console-media-grid figcaption small { font-size: var(--text-small); white-space: normal; }
+.console-rejected-videos { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.console-timeline li { font-size: var(--text-body); line-height: 1.6; align-items: baseline; }
+.console-timeline li > span:last-child { flex: 1 1 320px; min-width: 0; }
+.console-disposal textarea { min-height: 76px; line-height: 1.6; }
+.console-user { font-size: var(--text-body); }
+.console-user .form-message { line-height: 1.7; }
+/* The detail header's identifiers are the thing an operator copies out. */
+.console-detail-header .form-message { overflow-wrap: anywhere; line-height: 1.7; }
+@media (max-width: 1100px) {
+  .console-layout { grid-template-columns: 1fr; }
+}
+
+/* Declared late and with both class names so it beats the .page-main rules
+   further down the sheet, which cap every page at a 720px reading column. */
+.shell.shell-wide,
+main.shell-wide.page-main,
+main.shell-wide.page-main.compact-page,
+main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); max-width: none; }
