@@ -1723,3 +1723,10 @@ html { scroll-behavior: smooth; }
 @media (max-width: 560px) {
   .home-model-tag { width: 38px; padding: 0; justify-content: center; font-size: 0; }
 }
+
+/* FAQ: the interaction table mirrors the client's overview card. */
+.faq-interactions { display: grid; gap: 8px; margin: 0 0 12px; padding: 0; list-style: none; }
+.faq-interactions li { display: flex; align-items: baseline; gap: 10px; color: var(--muted); line-height: 1.7; }
+.faq-interactions li strong { color: var(--ink); font-weight: var(--weight-label); }
+.faq-interactions li span { color: var(--emerald); }
+.support-block ul:not(.faq-interactions) { margin: 0 0 10px; padding-left: 20px; color: var(--muted); line-height: 1.85; }

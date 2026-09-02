@@ -18,6 +18,9 @@ export default function DownloadClientPage() {
             <li><span>2</span>打开客户端，在概览页点击“导入素材包”。</li>
             <li><span>3</span>选择你的 <code>.petpack</code> 文件。</li>
           </ol>
+          <p className="form-message">
+            导入后宠物会按你的屏幕自动选好大小；它会做什么、怎么触发，见<a href="/faq#play">常见问题</a>。
+          </p>
           {CLIENT_DOWNLOAD_URL ? (
             <>
               <a className="primary-button form-submit" href={CLIENT_DOWNLOAD_URL}>

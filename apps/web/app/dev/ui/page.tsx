@@ -21,7 +21,7 @@ const ACTION_LABELS: Array<[string, string]> = [
   ["sleep-transition", "入睡"],
   ["sleep-loop", "睡眠循环"],
   ["stretch", "伸懒腰"],
-  ["hover-attention", "悬停回应"],
+  ["hover-attention", "舔脚"],
 ];
 
 function actions(states: string[]): ProjectView["actions"] {

@@ -185,6 +185,7 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
       </ol>
       <div className="workflow-notice">
         <p>下载链接短时有效，过期后回到本页重新点击即可，不会额外收费。</p>
+        <p>导入后客户端的概览页会告诉你它会做的五个动作和触发方式；也可以看<Link href="/faq#play">常见问题</Link>。</p>
       </div>
       <p>素材包已完成兼容验证，可以下载。</p>
       {/* Both downloads sit on one line: the client is needed before the pack

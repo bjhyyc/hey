@@ -77,6 +77,16 @@ const translations = {
     "overview.noEventsYet": "No events yet",
     "overview.actionsCount": "{count} action",
     "overview.actionsCountPlural": "{count} actions",
+    "overview.guideKicker": "How to play",
+    "overview.guideTitle": "Five things your pet does",
+    "overview.guideDescription": "The asset pack brings its own trigger rules - nothing to set up. Close this panel and try:",
+    "overview.guide.click": "<strong>Click</strong> - it sneezes",
+    "overview.guide.doubleClick": "<strong>Double-click</strong> - it rolls over",
+    "overview.guide.rightClick": "<strong>Right-click</strong> - it stretches, and it is the only way to wake it",
+    "overview.guide.hover": "<strong>Rest the cursor on it for {seconds}s</strong> - it licks a paw (once every {cooldown}s)",
+    "overview.guide.idle": "<strong>Leave it alone for {seconds}s</strong> - it lies down and sleeps",
+    "overview.guideSleepNote": "While it sleeps everything else is ignored on purpose - <strong>right-click is the only thing that wakes it</strong>.",
+    "overview.guideFootnote": "Drag to move it; size and opacity are in the Display tab. Left-click the tray icon to reopen this panel, right-click it for the menu.",
 
     // First-run onboarding
     "onboarding.kicker": "First run",
@@ -772,6 +782,16 @@ const translations = {
     "overview.noEventsYet": "尚无事件",
     "overview.actionsCount": "{count} 个动作",
     "overview.actionsCountPlural": "{count} 个动作",
+    "overview.guideKicker": "玩法",
+    "overview.guideTitle": "它会做这五个动作",
+    "overview.guideDescription": "素材包自带触发规则，不用设置。关闭面板试试：",
+    "overview.guide.click": "<strong>单击</strong> → 打喷嚏",
+    "overview.guide.doubleClick": "<strong>双击</strong> → 打滚",
+    "overview.guide.rightClick": "<strong>右键</strong> → 伸懒腰，也是唯一能叫醒它的操作",
+    "overview.guide.hover": "<strong>鼠标停在它身上 {seconds} 秒</strong> → 舔脚（{cooldown} 秒内不重复）",
+    "overview.guide.idle": "<strong>{seconds} 秒没人理</strong> → 趴下睡觉",
+    "overview.guideSleepNote": "睡着后其余操作都被刻意忽略——<strong>只有右键单击能叫醒它</strong>。",
+    "overview.guideFootnote": "按住拖动可以搬家；大小和透明度在「显示」页调整。托盘图标左键单击可重新打开本面板，右键是菜单。",
 
     // 首次启动引导
     "onboarding.kicker": "首次使用",

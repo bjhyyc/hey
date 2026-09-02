@@ -2302,3 +2302,67 @@ button.item-row {
   color: var(--accent);
   font-weight: 700;
 }
+
+/* Interaction guide for studio packs: shown on the overview right where the
+   pack was imported, so the five triggers are learned with the pet on screen. */
+.play-guide-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  border: 1px solid #f0d39a;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #fffdf6 0%, #fff4dc 100%);
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.play-guide-card .onboarding-kicker {
+  color: #b7791f;
+}
+
+.play-guide-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.play-guide-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.play-guide-list li::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d69e2e;
+  transform: translateY(-2px);
+}
+
+.play-guide-list strong {
+  color: var(--ink, #1f2937);
+}
+
+.play-guide-footnote {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.play-guide-sleep-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(214, 158, 46, 0.12);
+  color: var(--ink, #1f2937);
+  font-size: 12.5px;
+  line-height: 1.6;
+}

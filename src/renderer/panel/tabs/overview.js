@@ -7,6 +7,38 @@ import { renderHeader } from "../ui/header.js";
 import { t } from "../../../shared/i18n.js";
 import { getPanelOverviewStats, isOnboardingPending } from "../panel-state.js";
 import { DEFAULT_DISPLAY } from "../panel-state.js";
+import studioProfile from "../../../shared/studio-behavior-profile.browser.mjs";
+
+/**
+ * What a studio pack does and how to trigger it. The pack carries these
+ * rules itself (createStudioBehaviorRules), so this card only describes them;
+ * the timings come from the same profile the rules are built from.
+ */
+function renderInteractionGuide() {
+  const timing = studioProfile.defaultTiming;
+  const seconds = (ms) => Math.round(Number(ms) / 1000);
+  const items = [
+    ["click", t("overview.guide.click")],
+    ["doubleClick", t("overview.guide.doubleClick")],
+    ["rightClick", t("overview.guide.rightClick")],
+    ["hover", t("overview.guide.hover", { seconds: seconds(timing.hoverDelayMs), cooldown: seconds(timing.hoverCooldownMs) })],
+    ["idle", t("overview.guide.idle", { seconds: seconds(timing.idleTimeoutMs) })]
+  ];
+  return `
+    <section class="play-guide-card" aria-labelledby="play-guide-title" data-testid="play-guide">
+      <div class="onboarding-copy">
+        <span class="onboarding-kicker">${t("overview.guideKicker")}</span>
+        <h3 id="play-guide-title">${t("overview.guideTitle")}</h3>
+        <p>${t("overview.guideDescription")}</p>
+      </div>
+      <ul class="play-guide-list">
+        ${items.map(([key, text]) => `<li data-guide="${key}">${text}</li>`).join("")}
+      </ul>
+      <p class="play-guide-sleep-note" data-guide-note="sleep">${t("overview.guideSleepNote")}</p>
+      <p class="play-guide-footnote">${t("overview.guideFootnote")}</p>
+    </section>
+  `;
+}
 
 /**
  * Get display settings with defaults
@@ -285,6 +317,7 @@ export function renderOverview(config, runtimeState = null, uiState = {}) {
         ${importingPetpack ? t("common.importing") : t("overview.importPetpackAction")}
       </button>
     </section>
+    ${uiState.studioPackage ? renderInteractionGuide() : ""}
     ${renderOnboarding(config, uiState)}
     <div class="metric-grid">
       <div class="metric"><span>${t("overview.package")}</span><strong>${escapeHtml(stats.packageId)}</strong></div>

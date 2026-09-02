@@ -1,6 +1,7 @@
 const path = require("path");
 const { app, BrowserWindow } = require("electron");
 const { createLogger } = require("./services/logger");
+const { computePetWindowSize } = require("../shared/pet-layout");
 
 let petWindow;
 let panelWindow;
@@ -36,12 +37,19 @@ function getPetWindowSize(display = {}) {
   return Math.max(1, Math.round(PET_BASE_WINDOW_SIZE * getDisplayScale(display)));
 }
 
-async function createPetWindow({ display = {} } = {}) {
-  const size = getPetWindowSize(display);
-  logger.info("Creating pet window", { scale: display.scale, size });
+// The window follows the media it shows: square for the classic square
+// sprites, wider for a studio pack's 854x480 canvas. The renderer reports the
+// aspect once the media's metadata is known; until then the window is square.
+function getPetWindowDimensions(display = {}, mediaAspect = 1) {
+  return computePetWindowSize({ scale: getDisplayScale(display), aspect: mediaAspect });
+}
+
+async function createPetWindow({ display = {}, mediaAspect = 1 } = {}) {
+  const size = getPetWindowDimensions(display, mediaAspect);
+  logger.info("Creating pet window", { scale: display.scale, mediaAspect, size });
   petWindow = new BrowserWindow({
-    width: size,
-    height: size,
+    width: size.width,
+    height: size.height,
     transparent: true,
     frame: false,
     resizable: false,
@@ -97,4 +105,4 @@ function getWindows() {
   return { pet: petWindow, panel: panelWindow };
 }
 
-module.exports = { createPetWindow, createPanelWindow, getWindows, getPetWindowSize };
+module.exports = { createPetWindow, createPanelWindow, getWindows, getPetWindowDimensions, getPetWindowSize };

@@ -47,7 +47,7 @@ function logTrayFailure(action, error) {
   logger.warn(`Failed to ${action} tray`, error);
 }
 
-function createTray({ createMenu }) {
+function createTray({ createMenu, onOpenPanel } = {}) {
   let localTray = null;
   try {
     const icon = createTrayIcon();
@@ -77,13 +77,29 @@ function createTray({ createMenu }) {
     }
   }
 
+  function openMenu() {
+    refresh();
+    if (tray && !destroyed && typeof tray.popUpContextMenu === "function") {
+      tray.popUpContextMenu();
+    }
+  }
+
   try {
+    // A left click is the shortest path back to the control panel - the place
+    // people go to import a pack or resize the pet. The menu stays one right
+    // click away, which is where Windows users look for it anyway.
     tray.on("click", () => {
-      refresh();
-      if (tray && !destroyed && typeof tray.popUpContextMenu === "function") {
-        tray.popUpContextMenu();
+      if (typeof onOpenPanel === "function") {
+        try {
+          onOpenPanel();
+          return;
+        } catch (error) {
+          logTrayFailure("open the panel from", error);
+        }
       }
+      openMenu();
     });
+    tray.on("right-click", openMenu);
   } catch (error) {
     logTrayFailure("create", error);
     tray = null;

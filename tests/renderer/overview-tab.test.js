@@ -15,6 +15,35 @@ describe("overview tab", () => {
     expect(html).toContain("Choose asset pack");
   });
 
+  it("teaches the five studio interactions only while a studio pack is active", () => {
+    const config = {
+      currentPackageId: "hey-dog",
+      system: { onboardingVersion: 1 },
+      animations: { default: { id: "idle", asset: "assets/idle.webm" }, clips: [] },
+      triggerRules: []
+    };
+
+    const withGuide = renderOverview(config, null, { studioPackage: true });
+    expect(withGuide).toContain('data-testid="play-guide"');
+    expect(withGuide).toContain("Five things your pet does");
+    for (const key of ["click", "doubleClick", "rightClick", "hover", "idle"]) {
+      expect(withGuide).toContain(`data-guide="${key}"`);
+    }
+    // The timings are the studio profile's, not typed by hand.
+    expect(withGuide).toContain("Rest the cursor on it for 2s");
+    expect(withGuide).toContain("once every 20s");
+    expect(withGuide).toContain("Leave it alone for 22s");
+    // A sleeping pet ignores everything but a right click, so the guide says
+    // so twice: on the right-click line and as its own note.
+    expect(withGuide).toContain("it is the only way to wake it");
+    expect(withGuide).toContain('data-guide-note="sleep"');
+    expect(withGuide).toContain("right-click is the only thing that wakes it");
+    expect(withGuide).toContain("licks a paw");
+    expect(withGuide).not.toContain("a click wakes it");
+
+    expect(renderOverview(config, null, {})).not.toContain('data-testid="play-guide"');
+  });
+
   it("disables the primary asset-pack action while import is active", () => {
     const html = renderOverview({
       currentPackageId: "pet",

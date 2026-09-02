@@ -64,6 +64,17 @@ describe("desktop pet windows", () => {
     }));
   });
 
+  it("widens the pet window for a studio pack's 16:9 canvas instead of letterboxing it", async () => {
+    const { createPetWindow, getPetWindowDimensions } = loadWindowsModule();
+
+    await createPetWindow({ display: { scale: 1.5 }, mediaAspect: 854 / 480 });
+
+    // 232 * (854/480) + 88 = 500.8 per unit scale -> 751 at 150%; height stays 480.
+    expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({ width: 751, height: 480 }));
+    expect(getPetWindowDimensions({ scale: 1 }, 1)).toEqual({ width: 320, height: 320 });
+    expect(getPetWindowDimensions({ scale: 1 }, 0.75)).toEqual({ width: 320, height: 320 });
+  });
+
   it("passes the package version to sandboxed preloads", async () => {
     const { createPanelWindow, createPetWindow } = loadWindowsModule();
 

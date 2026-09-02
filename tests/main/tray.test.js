@@ -94,20 +94,44 @@ describe("createTray", () => {
     expect(() => controller.refresh()).not.toThrow();
   });
 
-  it("opens the context menu when the status tray icon is clicked", () => {
+  it("opens the control panel on a left click and the menu on a right click", () => {
+    const nativeTray = createNativeTray();
+    const createMenu = vi.fn(() => ({ id: "menu" }));
+    const onOpenPanel = vi.fn();
+    Tray.mockImplementation(() => nativeTray);
+    const { createTray } = loadTrayModule();
+
+    createTray({ createMenu, onOpenPanel });
+    const handlerFor = (name) => nativeTray.on.mock.calls.find(([eventName]) => eventName === name)?.[1];
+
+    handlerFor("click")();
+    expect(onOpenPanel).toHaveBeenCalledTimes(1);
+    expect(nativeTray.popUpContextMenu).not.toHaveBeenCalled();
+
+    handlerFor("right-click")();
+    expect(nativeTray.popUpContextMenu).toHaveBeenCalledTimes(1);
+    expect(nativeTray.setContextMenu).toHaveBeenLastCalledWith({ id: "menu" });
+    expect(onOpenPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the menu when opening the panel is unavailable or throws", () => {
     const nativeTray = createNativeTray();
     const createMenu = vi.fn(() => ({ id: "menu" }));
     Tray.mockImplementation(() => nativeTray);
     const { createTray } = loadTrayModule();
 
     createTray({ createMenu });
-    const clickHandler = nativeTray.on.mock.calls.find(([eventName]) => eventName === "click")?.[1];
-
-    expect(clickHandler).toEqual(expect.any(Function));
-    clickHandler();
-    expect(createMenu).toHaveBeenCalledTimes(2);
-    expect(nativeTray.setContextMenu).toHaveBeenLastCalledWith({ id: "menu" });
+    nativeTray.on.mock.calls.find(([eventName]) => eventName === "click")?.[1]();
     expect(nativeTray.popUpContextMenu).toHaveBeenCalledTimes(1);
+
+    Tray.mockImplementation(() => nativeTray);
+    const failing = createTray({
+      createMenu,
+      onOpenPanel: () => { throw new Error("panel unavailable"); }
+    });
+    expect(failing).not.toBeNull();
+    nativeTray.on.mock.calls.filter(([eventName]) => eventName === "click").at(-1)[1]();
+    expect(nativeTray.popUpContextMenu).toHaveBeenCalledTimes(2);
   });
 
   it("uses an icon-only macOS status item", () => {

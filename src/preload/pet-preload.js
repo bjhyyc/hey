@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("desktopPet", {
     loadRuntime: () => ipcRenderer.invoke("pet:load-runtime"),
     getDisplays: () => ipcRenderer.invoke("pet:get-displays"),
     applyDisplay: (display) => ipcRenderer.invoke("pet:apply-display", display),
+    reportMediaAspect: (aspect) => ipcRenderer.send("pet:report-media-aspect", aspect),
     resetPosition: (position) => ipcRenderer.invoke("pet:reset-position", position),
     setBounds: (bounds) => ipcRenderer.invoke("pet:set-bounds", bounds),
     setMousePassthrough: (enabled) => ipcRenderer.invoke("pet:set-mouse-passthrough", enabled),

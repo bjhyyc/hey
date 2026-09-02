@@ -1,5 +1,6 @@
 const { screen } = require("electron");
 const { createThrottledLogger } = require("./services/logger");
+const { spriteBoxWithinWindow } = require("../shared/pet-layout");
 
 const DEFAULT_INTERVAL_MS = 30;
 const logger = createThrottledLogger("global-mouse", 500);
@@ -30,13 +31,15 @@ function getSpriteBounds(windowBounds) {
     return { ...windowBounds };
   }
 
-  const baseSize = Math.min(232, windowBounds.width * 0.78, windowBounds.height - 92);
-  const size = Math.max(1, baseSize);
+  // The sprite is scale- and aspect-shaped inside the window; a fixed square
+  // missed a resized or widened pet, so hover never latched (2026-08-19). The
+  // shared layout resolves the same rectangle the renderer paints.
+  const box = spriteBoxWithinWindow({ width: windowBounds.width, height: windowBounds.height });
   return {
-    x: windowBounds.x + (windowBounds.width - size) / 2,
-    y: windowBounds.y + windowBounds.height - 28 - size,
-    width: size,
-    height: size
+    x: windowBounds.x + box.x,
+    y: windowBounds.y + box.y,
+    width: box.width,
+    height: box.height
   };
 }
 

@@ -10,7 +10,13 @@ body {
 }
 
 #pet-root {
-  --pet-sprite-size: min(var(--pet-scaled-sprite-size, 232px), 78vw, calc(100vh - var(--pet-vertical-padding, 92px)));
+  /* The sprite box follows the media's aspect (set by the renderer): its
+     height is the scaled 232 px, its width grows for wide studio canvases.
+     Both stay inside the window's padding so a stale window size can never
+     crop the pet. --pet-sprite-size keeps the height for the bubble offset. */
+  --pet-sprite-height: min(var(--pet-scaled-sprite-height, var(--pet-scaled-sprite-size, 232px)), calc(100vh - var(--pet-vertical-padding, 92px)));
+  --pet-sprite-width: min(var(--pet-scaled-sprite-width, var(--pet-scaled-sprite-size, 232px)), calc(100vw - 2 * var(--pet-padding-x, 34px)));
+  --pet-sprite-size: var(--pet-sprite-height);
   --pet-drag-visual-x: 0px;
   --pet-drag-visual-y: 0px;
   --message-bubble-gap: 10px;
@@ -30,8 +36,8 @@ body {
 
 #pet-sprite {
   display: block;
-  width: var(--pet-sprite-size);
-  height: var(--pet-sprite-size);
+  width: var(--pet-sprite-width);
+  height: var(--pet-sprite-height);
   cursor: grab;
   -webkit-user-drag: none;
   /* Keep transparent media edges clean. A CSS drop-shadow paints a large

@@ -19,7 +19,7 @@ const ACTION_LABELS: Record<string, string> = {
   "sleep-transition": "入睡",
   "sleep-loop": "睡眠循环",
   stretch: "伸懒腰",
-  "hover-attention": "悬停关注",
+  "hover-attention": "舔脚",
 };
 
 const STAGE_LABELS: Record<string, string> = {

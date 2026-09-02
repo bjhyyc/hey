@@ -23,6 +23,7 @@ const { SAMPLE_PETPACK_URL, installSamplePetpack } = require("./services/sample-
 const { checkForUpdates, getOfficialLink } = require("./services/app-updates");
 const { getLaunchAtLogin, setLaunchAtLogin } = require("./startup");
 const { validateManifest, validateCondition, validateAction } = require("../shared/manifest-validator");
+const { STUDIO_CANVAS_ASPECT, computePetWindowSize, recommendStudioScale } = require("../shared/pet-layout");
 const { isSafeRelativePath } = require("../shared/path-safety");
 const { SUPPORTED_ASSET_EXTENSIONS } = require("../shared/schema");
 const { DEFAULT_CONFIG } = require("../shared/defaults");
@@ -44,6 +45,7 @@ const CHANNELS = [
   "package:list",
   "package:switch",
   "pet:apply-display",
+  "pet:report-media-aspect",
   "pet:load-runtime",
   "pet:get-displays",
   "pet:reset-position",
@@ -72,6 +74,10 @@ const CHANNELS = [
 
 const logger = createLogger("ipc");
 const PET_BASE_WINDOW_SIZE = 320;
+// Aspect (width / height) of the media the pet window currently shows,
+// reported by the renderer once metadata is known. It shapes the window: a
+// studio pack's 854x480 canvas gets a wide window, classic sprites a square.
+let petMediaAspect = 1;
 const RULES_FILE_TYPE = "desktop-pet.triggerRules";
 const RULES_FILE_SCHEMA_VERSION = 1;
 
@@ -116,28 +122,110 @@ function getDisplayScale(display = {}) {
   return DEFAULT_CONFIG.display.scale;
 }
 
-function resizePetWindowForScale(petWindow, display = {}) {
+// The work area the window mostly sits on, so a resize can be kept on the
+// same screen the pet was already on.
+function findWorkAreaForBounds(bounds) {
+  const areas = getDisplayWorkAreas();
+  if (areas.length === 0) return null;
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  const containing = areas.find(({ workArea }) => centerX >= workArea.x && centerX < workArea.x + workArea.width &&
+    centerY >= workArea.y && centerY < workArea.y + workArea.height);
+  return (containing || areas[0]).workArea;
+}
+
+// A window that grew (a wide canvas, a bigger scale) must not push the pet
+// off the edge it was sitting near. Oversized windows are pinned to the top
+// left corner rather than centred, so the pet itself stays reachable.
+function clampBoundsToWorkArea(bounds) {
+  const workArea = findWorkAreaForBounds(bounds);
+  if (!workArea) return bounds;
+  const maxX = workArea.x + Math.max(0, workArea.width - bounds.width);
+  const maxY = workArea.y + Math.max(0, workArea.height - bounds.height);
+  return {
+    ...bounds,
+    x: Math.round(Math.min(maxX, Math.max(workArea.x, bounds.x))),
+    y: Math.round(Math.min(maxY, Math.max(workArea.y, bounds.y)))
+  };
+}
+
+function resizePetWindowForLayout(petWindow, { scale, reason } = {}) {
   if (!petWindow || typeof petWindow.getBounds !== "function" || typeof petWindow.setBounds !== "function") return;
-  if (!Object.prototype.hasOwnProperty.call(display, "scale")) return;
 
   const currentBounds = petWindow.getBounds();
-  const size = Math.max(1, Math.round(PET_BASE_WINDOW_SIZE * getDisplayScale(display)));
-  if (currentBounds.width === size && currentBounds.height === size) return;
+  const size = computePetWindowSize({ scale, aspect: petMediaAspect });
+  if (currentBounds.width === size.width && currentBounds.height === size.height) return;
 
+  // Keep the pet's feet where they are: the window grows or shrinks around
+  // its bottom-centre, so a bigger pet does not sink below the taskbar.
   const centerX = currentBounds.x + currentBounds.width / 2;
-  const centerY = currentBounds.y + currentBounds.height / 2;
-  const nextBounds = {
-    x: Math.round(centerX - size / 2),
-    y: Math.round(centerY - size / 2),
-    width: size,
-    height: size
-  };
-  logger.debug("Resizing pet window for display scale", {
-    scale: display.scale,
+  const bottomY = currentBounds.y + currentBounds.height;
+  const nextBounds = clampBoundsToWorkArea({
+    x: Math.round(centerX - size.width / 2),
+    y: Math.round(bottomY - size.height),
+    width: size.width,
+    height: size.height
+  });
+  logger.debug("Resizing pet window", {
+    reason,
+    scale,
+    mediaAspect: petMediaAspect,
     previousBounds: currentBounds,
     nextBounds
   });
   petWindow.setBounds(nextBounds);
+}
+
+function resizePetWindowForScale(petWindow, display = {}) {
+  if (!Object.prototype.hasOwnProperty.call(display, "scale")) return;
+  resizePetWindowForLayout(petWindow, { scale: getDisplayScale(display), reason: "display-scale" });
+}
+
+function normalizeReportedMediaAspect(aspect) {
+  const parsed = Number(aspect);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function isStudioManifest(manifest) {
+  return Boolean(manifest && typeof manifest === "object" && manifest.studioBehavior &&
+    typeof manifest.studioBehavior === "object" && manifest.studioBehavior.profile === "petpack-studio/v1");
+}
+
+function getPrimaryWorkArea() {
+  const primary = screen && typeof screen.getPrimaryDisplay === "function" ? screen.getPrimaryDisplay() : null;
+  const area = primary && (primary.workArea || primary.bounds);
+  if (area && Number.isFinite(area.width) && Number.isFinite(area.height) && area.width > 0 && area.height > 0) {
+    return { width: Math.round(area.width), height: Math.round(area.height) };
+  }
+  const first = getDisplayWorkAreas()[0];
+  return first ? { width: first.workArea.width, height: first.workArea.height } : null;
+}
+
+/**
+ * A freshly imported studio pack starts at a display scale chosen for this
+ * screen (see recommendStudioScale) instead of the classic 100%, which drew
+ * its wide canvas at roughly 60 px of pet. The customer can still move the
+ * slider afterwards; this only picks where it starts.
+ */
+function applyImportedStudioDisplayScale({ userDataDir, packageId, configStore, getWindows, workArea = getPrimaryWorkArea() } = {}) {
+  if (typeof packageId !== "string" || !isSafePackageId(packageId)) return null;
+  const manifestResult = readJsonFile(path.join(userDataDir, "packages", packageId, "manifest.json"));
+  if (!manifestResult.ok || !isStudioManifest(manifestResult.value)) return null;
+  if (!workArea) return null;
+  const scale = recommendStudioScale({
+    workAreaWidth: workArea.width,
+    workAreaHeight: workArea.height,
+    aspect: STUDIO_CANVAS_ASPECT
+  });
+  const loadedConfig = configStore.load();
+  const currentDisplay = loadedConfig && loadedConfig.display && typeof loadedConfig.display === "object"
+    ? loadedConfig.display
+    : {};
+  if (Number(currentDisplay.scale) === scale) return scale;
+  const savedConfig = configStore.save({ ...loadedConfig, display: { ...currentDisplay, scale } });
+  logger.info("Applied recommended display scale for imported studio pack", { packageId, scale, workArea });
+  if (typeof getWindows === "function") sendDisplayUpdate(getWindows, (savedConfig && savedConfig.display) || { ...currentDisplay, scale });
+  return scale;
 }
 
 function getDisplayWorkAreas() {
@@ -437,11 +525,18 @@ function listPackages(userDataDir, currentPackageId) {
       }
     }
   }
-  return [...packageIds].sort().map((packageId) => ({
-    packageId,
-    isCurrent: packageId === currentPackageId,
-    source: packageId === "default-pet" && !fs.existsSync(path.join(packagesDir, packageId)) ? "bundled" : "user"
-  }));
+  return [...packageIds].sort().map((packageId) => {
+    const manifestResult = fs.existsSync(path.join(packagesDir, packageId, "manifest.json"))
+      ? readJsonFile(path.join(packagesDir, packageId, "manifest.json"))
+      : { ok: false };
+    return {
+      packageId,
+      isCurrent: packageId === currentPackageId,
+      source: packageId === "default-pet" && !fs.existsSync(path.join(packagesDir, packageId)) ? "bundled" : "user",
+      // A studio pack carries its own interaction rules; the panel teaches them.
+      studio: manifestResult.ok && isStudioManifest(manifestResult.value)
+    };
+  });
 }
 
 function deletePackageDir(userDataDir, packageId) {
@@ -936,7 +1031,7 @@ function registerIpc({ getWindows, createPanelWindow, createPetWindow, configSto
     if (getPetWindow(getWindows)) return result;
     try {
       logger.info("Creating pet window after first import");
-      await createPetWindow({ display: configStore.load().display });
+      await createPetWindow({ display: configStore.load().display, mediaAspect: petMediaAspect });
     } catch (error) {
       logger.warn("Could not create pet window after import", { error: error.message || error });
     }
@@ -960,7 +1055,16 @@ function registerIpc({ getWindows, createPanelWindow, createPetWindow, configSto
     }
 
     logger.info("Importing petpack from picker");
-    return ensurePetWindowAfterImport(await importPetpack(result.filePaths[0], userDataDir));
+    const imported = await importPetpack(result.filePaths[0], userDataDir);
+    if (imported && imported.ok !== false && imported.packageId) {
+      try {
+        const recommendedScale = applyImportedStudioDisplayScale({ userDataDir, packageId: imported.packageId, configStore, getWindows });
+        if (recommendedScale !== null) imported.recommendedScale = recommendedScale;
+      } catch (error) {
+        logger.warn("Could not apply the recommended display scale after import", { error: error.message || error });
+      }
+    }
+    return ensurePetWindowAfterImport(imported);
   });
   replaceHandler("petpack:install-sample", async () => {
     logger.info("Downloading and importing sample petpack", { url: SAMPLE_PETPACK_URL });
@@ -1122,6 +1226,13 @@ function registerIpc({ getWindows, createPanelWindow, createPetWindow, configSto
     const nextDisplay = display && typeof display === "object" && !Array.isArray(display) ? display : {};
     sendDisplayUpdate(getWindows, nextDisplay);
   });
+  replaceListener("pet:report-media-aspect", (_event, aspect) => {
+    const nextAspect = normalizeReportedMediaAspect(aspect);
+    if (nextAspect === null || Math.abs(nextAspect - petMediaAspect) < 0.005) return;
+    petMediaAspect = nextAspect;
+    const display = configStore.load().display || {};
+    resizePetWindowForLayout(getPetWindow(getWindows), { scale: getDisplayScale(display), reason: "media-aspect" });
+  });
   replaceHandler("pet:reset-position", (_event, position = {}) => {
     const petWindow = getPetWindow(getWindows);
     if (!petWindow) return;
@@ -1269,6 +1380,7 @@ function registerIpc({ getWindows, createPanelWindow, createPetWindow, configSto
 
 module.exports = {
   CHANNELS,
+  applyImportedStudioDisplayScale,
   loadActivePackageRuntime,
   normalizeBounds,
   registerIpc,

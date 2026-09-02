@@ -475,7 +475,7 @@ describe("registerIpc", () => {
     expect(handlers.get("package:list")()).toEqual({
       ok: true,
       packages: [
-        { packageId: "default-pet", isCurrent: true, source: "bundled" }
+        { packageId: "default-pet", isCurrent: true, source: "bundled", studio: false }
       ]
     });
     expect(handlers.get("asset:list")(null, "default-pet").assets.map((asset) => asset.asset)).toEqual([
@@ -1118,8 +1118,62 @@ describe("registerIpc", () => {
       scale: 1.25,
       opacity: 0.8
     });
-    expect(petWindow.setBounds).toHaveBeenCalledWith({ x: 40, y: 120, width: 400, height: 400 });
+    // 320x320 at (80,160) grows around its bottom-centre (240, 480), so the
+    // pet's feet stay where they were: x 240-200, y 480-400.
+    expect(petWindow.setBounds).toHaveBeenCalledWith({ x: 40, y: 80, width: 400, height: 400 });
     expect(petWindow.setBounds).toHaveBeenCalledWith({ x: 12, y: 24, width: 320, height: 320 });
+  });
+
+  it("reshapes the pet window around its feet when the renderer reports a wide media aspect", () => {
+    const { registerIpc } = loadIpcModule();
+    mockConfigStore.load.mockReturnValue({ ...DEFAULT_CONFIG, display: { ...DEFAULT_CONFIG.display, scale: 1 } });
+
+    registerIpc({ getWindows, createPanelWindow });
+    handlers.get("pet:report-media-aspect")(null, 854 / 480);
+
+    // 320x320 at (80,160): bottom-centre stays at (240, 480), width 232*1.779+88
+    // = 501, and the widened window is clamped back onto the 1920x1080 screen
+    // instead of hanging off its left edge at x=-10.
+    expect(petWindow.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 160, width: 501, height: 320 });
+
+    petWindow.setBounds.mockClear();
+    handlers.get("pet:report-media-aspect")(null, "not-a-number");
+    handlers.get("pet:report-media-aspect")(null, 854 / 480);
+    expect(petWindow.setBounds).not.toHaveBeenCalled();
+  });
+
+  it("starts an imported studio pack at a display scale recommended for the screen", () => {
+    const { applyImportedStudioDisplayScale } = loadIpcModule();
+    const packageDir = path.join(userDataDir, "packages", "hey-dog");
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.writeFileSync(path.join(packageDir, "manifest.json"), JSON.stringify({
+      schemaVersion: 1,
+      packageId: "hey-dog",
+      studioBehavior: { profile: "petpack-studio/v1", actionClipIds: {}, timing: {} }
+    }));
+    mockConfigStore.load.mockReturnValue({ ...DEFAULT_CONFIG, display: { ...DEFAULT_CONFIG.display, scale: 1 } });
+    mockConfigStore.save.mockImplementation((config) => config);
+
+    const scale = applyImportedStudioDisplayScale({
+      userDataDir,
+      packageId: "hey-dog",
+      configStore: mockConfigStore,
+      getWindows,
+      workArea: { width: 1920, height: 1040 }
+    });
+
+    // 0.22 * 1040 / (232 * 0.45) = 2.19: a ~229 px pet on a 1080p desktop.
+    expect(scale).toBe(2.19);
+    expect(mockConfigStore.save).toHaveBeenCalledWith(expect.objectContaining({
+      display: expect.objectContaining({ scale: 2.19, x: DEFAULT_CONFIG.display.x })
+    }));
+    expect(petWindow.webContents.send).toHaveBeenCalledWith("pet:display-updated", expect.objectContaining({ scale: 2.19 }));
+
+    // A pack without studio behaviour keeps whatever scale the user had.
+    fs.writeFileSync(path.join(packageDir, "manifest.json"), JSON.stringify({ schemaVersion: 1, packageId: "hey-dog" }));
+    mockConfigStore.save.mockClear();
+    expect(applyImportedStudioDisplayScale({ userDataDir, packageId: "hey-dog", configStore: mockConfigStore, getWindows, workArea: { width: 1920, height: 1040 } })).toBeNull();
+    expect(mockConfigStore.save).not.toHaveBeenCalled();
   });
 
   it("returns display work areas for multi-screen movement wrapping", () => {

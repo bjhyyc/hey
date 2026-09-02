@@ -19,6 +19,7 @@ import { createPetMediaRenderer } from "./media-renderer.js";
 import { createPomodoroRuntime } from "./pomodoro-runtime.js";
 import { createAnimationMovementRunner } from "./animation-movement-runner.js";
 import { createDebugLogger, setDebugRulesEnabled } from "./debug-utils.js";
+import { computeSpriteBox, STUDIO_CANVAS_ASPECT } from "../../shared/pet-layout.browser.mjs";
 import {
   applyPetHiddenState,
   isPointInsideRect,
@@ -57,6 +58,34 @@ const spriteGreenCanvas = document.querySelector("#pet-sprite-green-canvas");
 const bubble = document.querySelector("#message-bubble");
 const pomodoroOverlay = document.querySelector("#pomodoro-overlay");
 const root = document.querySelector("#pet-root");
+
+// Width / height of the media on screen. The sprite box and, through the main
+// process, the window follow it: a studio pack's 854x480 canvas is shown wide
+// instead of letterboxed into the classic square.
+let mediaAspect = 1;
+
+function observeMediaAspect(element, intrinsic, reason) {
+  if (!intrinsic || !(intrinsic.width > 0) || !(intrinsic.height > 0)) return;
+  const nextAspect = intrinsic.width / intrinsic.height;
+  if (!Number.isFinite(nextAspect) || nextAspect <= 0 || Math.abs(nextAspect - mediaAspect) < 0.005) return;
+  mediaAspect = nextAspect;
+  logger.debug("media aspect changed", { reason, mediaAspect, intrinsic });
+  applyDisplay({});
+  if (window.desktopPet && window.desktopPet.pet && typeof window.desktopPet.pet.reportMediaAspect === "function") {
+    window.desktopPet.pet.reportMediaAspect(mediaAspect);
+  }
+}
+
+if (spriteVideo && typeof spriteVideo.addEventListener === "function") {
+  spriteVideo.addEventListener("loadedmetadata", () => {
+    observeMediaAspect(spriteVideo, { width: spriteVideo.videoWidth, height: spriteVideo.videoHeight }, "video-metadata");
+  });
+}
+if (spriteImage && typeof spriteImage.addEventListener === "function") {
+  spriteImage.addEventListener("load", () => {
+    observeMediaAspect(spriteImage, { width: spriteImage.naturalWidth, height: spriteImage.naturalHeight }, "image-load");
+  });
+}
 const logger = createRendererLogger("pet");
 const mediaRenderer = createPetMediaRenderer({
   container: sprite,
@@ -721,7 +750,10 @@ function applyDisplay(display = {}) {
   const scale = Number.isFinite(Number(currentDisplay.scale)) && Number(currentDisplay.scale) > 0
     ? Number(currentDisplay.scale)
     : 1;
-  root.style.setProperty("--pet-scaled-sprite-size", `${Math.round(232 * scale)}px`);
+  const spriteBox = computeSpriteBox({ scale, aspect: mediaAspect });
+  root.style.setProperty("--pet-scaled-sprite-size", `${spriteBox.height}px`);
+  root.style.setProperty("--pet-scaled-sprite-width", `${spriteBox.width}px`);
+  root.style.setProperty("--pet-scaled-sprite-height", `${spriteBox.height}px`);
   root.style.setProperty("--pet-padding-top", `${Math.round(64 * scale)}px`);
   root.style.setProperty("--pet-padding-x", `${Math.round(34 * scale)}px`);
   root.style.setProperty("--pet-padding-bottom", `${Math.round(28 * scale)}px`);
@@ -730,7 +762,9 @@ function applyDisplay(display = {}) {
   root.style.opacity = String(currentDisplay.opacity || 1);
   logger.debug("display applied", {
     scale,
-    scaledSpriteSize: Math.round(232 * scale),
+    mediaAspect,
+    spriteBox,
+    scaledSpriteSize: spriteBox.height,
     messageBubbleGap: Math.round(10 * scale),
     opacity: currentDisplay.opacity || 1
   });
@@ -1312,6 +1346,20 @@ function applyRuntime(runtime) {
     config: currentConfig || {},
     activePackage: runtime && runtime.package ? runtime.package : null
   });
+  // A studio pack always renders on the 854x480 character canvas, so the pet
+  // window can widen the instant the pack loads - deterministic, and it does
+  // not depend on which element (video vs keyed canvas) ends up visible.
+  const activeManifest = runtime && runtime.package && runtime.package.manifest;
+  const studioAspect = activeManifest && activeManifest.studioBehavior &&
+    activeManifest.studioBehavior.profile === "petpack-studio/v1"
+    ? STUDIO_CANVAS_ASPECT
+    : null;
+  if (studioAspect && Math.abs(studioAspect - mediaAspect) >= 0.005) {
+    mediaAspect = studioAspect;
+    if (window.desktopPet && window.desktopPet.pet && typeof window.desktopPet.pet.reportMediaAspect === "function") {
+      window.desktopPet.pet.reportMediaAspect(mediaAspect);
+    }
+  }
   debugRulesLog("applyRuntime", {
     packageId: currentConfig && currentConfig.currentPackageId,
     ruleCount: runtimeModel.rules.length,

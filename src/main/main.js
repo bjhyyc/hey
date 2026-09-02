@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { app, dialog, Menu, shell } = require("electron");
-const { registerIpc } = require("./ipc");
+const { applyImportedStudioDisplayScale, registerIpc } = require("./ipc");
 const { createDesktopPetMenu, createMenuActions } = require("./menu");
 const { createConfigStore } = require("./services/config-store");
 const { configureLogger, createLogger, shutdownLogger } = require("./services/logger");
@@ -60,6 +60,13 @@ async function importPetpackFromDialog() {
       ...config,
       currentPackageId: imported.packageId
     });
+    // The tray import is the panel import's twin: a studio pack starts at
+    // the scale recommended for this screen here as well.
+    try {
+      applyImportedStudioDisplayScale({ userDataDir, packageId: imported.packageId, configStore, getWindows });
+    } catch (error) {
+      logger.warn("Could not apply the recommended display scale after tray import", { error: error.message || error });
+    }
     notifyPackageChanged({ packageId: imported.packageId, reason: "import" });
   }
 
@@ -149,7 +156,10 @@ async function boot() {
   globalMouseTracker = createGlobalMouseTracker({ getPetWindow });
   globalMouseTracker.start();
   trayController = createTray({
-    createMenu: createNativeMenu
+    createMenu: createNativeMenu,
+    // The menu's own "open the control panel" action, so the tray's left
+    // click and its menu entry are the same code path.
+    onOpenPanel: () => menuActions.openPanel()
   });
   hideDockIcon();
   logger.info("Application boot completed");

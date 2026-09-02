@@ -310,7 +310,10 @@ function render() {
   const views = {
     overview: () => renderOverview(state.config, currentRuntimeState, {
       onboardingJustCompleted: state.onboardingJustCompleted,
-      savingKey: state.savingKey
+      savingKey: state.savingKey,
+      // A studio pack brings its own interaction rules; the overview teaches
+      // them right where the pack was just imported.
+      studioPackage: (state.packageList || []).some((entry) => entry && entry.isCurrent && entry.studio === true)
     }),
     assets: () => renderAssets(state, state.config),
     animations: () => renderAnimations(state, state.config),

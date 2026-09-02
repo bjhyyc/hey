@@ -58,7 +58,7 @@ export function ProductionFlow() {
           <strong>全程约 20 分钟</strong>，其中你真正动手的时间约 5 分钟，其余是等待生成。
         </p>
         <p>
-          你会得到：<strong>3 张形象母图</strong>（正面、45°、睡姿）和<strong>7 段动作视频</strong>（组成 5 个动作：打喷嚏、打滚、伸懒腰、悬停关注、睡觉，另含待机片段），
+          你会得到：<strong>3 张形象母图</strong>（正面、45°、睡姿）和<strong>7 段动作视频</strong>（组成 5 个动作：打喷嚏、打滚、伸懒腰、舔脚、睡觉，另含待机片段），
           打包成一个可导入 Hey 桌宠客户端的素材包。
         </p>
         <p className="flow-note">
