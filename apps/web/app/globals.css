@@ -1647,3 +1647,32 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 .support-value { margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; color: var(--muted); font-size: var(--text-small); }
 .support-value code { font-size: var(--text-body); letter-spacing: 0.04em; }
 .support-value .ghost-button { min-height: 30px; padding: 0 12px; font-size: var(--text-small); }
+
+/* Flow page: a numbered spine the eye can run down in a few seconds - the
+   step number, then who does it and how long, then one sentence. */
+.flow-steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 18px; }
+.flow-steps li { display: flex; gap: 14px; align-items: flex-start; }
+.flow-steps i {
+  flex: none; width: 30px; height: 30px; display: grid; place-items: center;
+  background: var(--sunken); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink); font-size: 12px; font-style: normal; font-weight: var(--weight-label); letter-spacing: 0.02em;
+}
+.flow-steps h2 { margin: 4px 0 5px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; color: var(--ink); font-size: var(--text-lead); font-weight: var(--weight-label); letter-spacing: var(--track-lead); }
+.flow-steps h2 em { color: var(--faint); font-size: var(--text-small); font-style: normal; font-weight: 400; letter-spacing: 0; }
+.flow-steps p { margin: 0; color: var(--muted); line-height: 1.8; font-size: var(--text-body); }
+.flow-summary { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--ink-05); display: grid; gap: 10px; }
+.flow-summary p { margin: 0; color: var(--muted); line-height: 1.8; }
+.flow-summary strong { color: var(--ink); font-weight: var(--weight-label); }
+.flow-summary a { color: var(--emerald); }
+.flow-note { font-size: var(--text-small); }
+.flow-actions { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* Home: the one link out of the upload card, for a visitor who wants to see
+   how much work this is before committing a photograph. */
+.home-flow-link {
+  margin: 12px auto 0; display: inline-flex; align-items: center; gap: 7px;
+  min-height: 36px; padding: 0 18px; border: 1px solid var(--ink-20, var(--line)); border-radius: 999px;
+  background: var(--surface); color: var(--ink); font-size: var(--text-body); text-decoration: none;
+}
+.home-flow-link svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.home-flow-link:hover { border-color: var(--ink-40); color: var(--ink); }

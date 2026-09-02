@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -358,6 +359,12 @@ export function HomeUploadEntry() {
         <p className="home-automation-note">
           无需编写复杂的动作提示词，无需在不同的 AI 视觉模型之间切换
         </p>
+        {/* The one thing a hesitating visitor wants before handing over a
+            photograph: how many steps this is and how long it takes. */}
+        <Link className="home-flow-link" href="/how-it-works">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 12h16M4 17h7" /><path d="M17 14l3 3-3 3" /></svg>
+          制作流程：5 步，15–25 分钟
+        </Link>
       </div>
     </section>
   );
