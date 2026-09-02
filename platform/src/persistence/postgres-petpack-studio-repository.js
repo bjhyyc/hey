@@ -2940,7 +2940,9 @@ class PostgresPetPackStudioRepository {
       const found = rows(await tx.query(
         `SELECT id, user_id, species, fingerprint, photo_sha256s, verdicts, passed,
                 model_id, prompt_version, created_at
-           FROM photo_precheck WHERE fingerprint = $1`,
+           FROM photo_precheck WHERE fingerprint = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
         [requiredString(fingerprint, "Precheck fingerprint")]
       ));
       return found.length > 0 ? mapPhotoPrecheck(found[0]) : null;

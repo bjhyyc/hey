@@ -249,8 +249,34 @@ class PetPackStudioService {
 
     const cached = await this.repository.findPhotoPrecheckByFingerprint(fingerprint);
     if (cached && cached.promptVersion === this.precheckVisionClient.promptVersion) {
-      this.logger.info?.("petpack.precheck.cache_hit", { userId: user.id, precheckId: cached.id, passed: cached.passed });
-      return this._precheckResponse(cached, { remainingToday: null });
+      // The verdict is reusable - it depends on the photographs alone - but the
+      // ROW is what checkout validates, and it demands one issued to this
+      // customer within PRECHECK_TTL_HOURS. Handing back an older row (or one
+      // belonging to somebody else who submitted the same photographs) let the
+      // customer through this screen and refused them at checkout. So a hit
+      // that checkout would not accept is re-issued as a fresh row instead:
+      // same verdict, no second model call, no quota spent.
+      const cachedAgeMs = Date.now() - new Date(cached.createdAt).getTime();
+      const usableAtCheckout = cached.userId === user.id &&
+        cachedAgeMs >= 0 && cachedAgeMs <= PRECHECK_TTL_HOURS * 3600 * 1000;
+      if (usableAtCheckout) {
+        this.logger.info?.("petpack.precheck.cache_hit", { userId: user.id, precheckId: cached.id, passed: cached.passed });
+        return this._precheckResponse(cached, { remainingToday: null });
+      }
+      const reissued = await this.repository.createPhotoPrecheck({
+        userId: user.id,
+        species: safeSpecies,
+        fingerprint,
+        photoSha256s: photoSet.map((photo) => photo.originalSha256),
+        verdicts: cached.verdicts,
+        passed: cached.passed,
+        modelId: cached.modelId,
+        promptVersion: cached.promptVersion
+      });
+      this.logger.info?.("petpack.precheck.cache_reissued", {
+        userId: user.id, precheckId: reissued.id, sourceId: cached.id, passed: reissued.passed
+      });
+      return this._precheckResponse(reissued, { remainingToday: null });
     }
 
     const used = await this.repository.countRecentPhotoPrechecks({ userId: user.id });

@@ -101,6 +101,45 @@ describe("photo precheck service", () => {
     expect(judgeSpy).toHaveBeenCalledTimes(1);
   });
 
+  // Production defect (2026-09-02): the fingerprint cache handed back the row
+  // it first stored, so a photo set checked more than a day earlier - or first
+  // checked by a different customer - passed this screen and was then refused
+  // at checkout, which demands a verdict issued to that customer within 24h.
+  it("re-issues a stale cached verdict as a fresh row this customer can check out with", async () => {
+    const { service, judgeSpy, stored } = buildService();
+    const first = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(first.passed).toBe(true);
+
+    const row = [...stored.values()][0];
+    row.createdAt = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+
+    const second = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(second.passed).toBe(true);
+    expect(second.precheckId).not.toBe(first.precheckId);
+    // The verdict is reused, so the vision model is not called a second time.
+    expect(judgeSpy).toHaveBeenCalledTimes(1);
+
+    await expect(service.createCheckout({
+      actor: ACTOR, planCode: "plan", displayName: "旺财", paymentMethod: "KAIPAY",
+      paymentChannel: "ALIPAY", idempotencyKey: "key-1", species: "cat",
+      precheckId: second.precheckId
+    })).resolves.toBeTruthy();
+  });
+
+  it("re-issues a cached verdict that belongs to another customer", async () => {
+    const { service, judgeSpy } = buildService();
+    const other = { id: "22222222-2222-4222-8222-222222222222", role: "user", status: "active" };
+    const first = await service.photoPrecheck({ actor: other, species: "cat", photos: photoSet() });
+    const second = await service.photoPrecheck({ actor: ACTOR, species: "cat", photos: photoSet() });
+    expect(second.precheckId).not.toBe(first.precheckId);
+    expect(judgeSpy).toHaveBeenCalledTimes(1);
+    await expect(service.createCheckout({
+      actor: ACTOR, planCode: "plan", displayName: "旺财", paymentMethod: "KAIPAY",
+      paymentChannel: "ALIPAY", idempotencyKey: "key-2", species: "cat",
+      precheckId: second.precheckId
+    })).resolves.toBeTruthy();
+  });
+
   it("fails slots with reasons when the report finds problems", async () => {
     const report = goodReport();
     report.photos[0].pet_present = false;

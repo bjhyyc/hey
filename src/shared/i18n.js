@@ -1210,6 +1210,9 @@ const translations = {
   }
 };
 
+// Pre-init fallback only: both windows call initLocale() on boot, and the
+// panel then applies the stored config.system.language. Kept as "en" so a
+// module imported without init (tests, tooling) reads the base dictionary.
 let currentLocale = "en";
 
 /**
@@ -1237,17 +1240,17 @@ export function getLocale() {
  * Initialize locale from storage or browser settings
  */
 export function initLocale() {
-  let locale = "en";
+  // A stored choice wins. Otherwise Chinese, which is what this product ships
+  // in; only an explicitly non-Chinese system falls back to English.
+  let locale = null;
 
   if (typeof localStorage !== "undefined") {
     locale = localStorage.getItem("locale");
   }
 
   if (!locale && typeof navigator !== "undefined") {
-    const browserLang = navigator.language || navigator.userLanguage;
-    if (browserLang.startsWith("zh")) {
-      locale = "zh";
-    }
+    const browserLang = navigator.language || navigator.userLanguage || "";
+    locale = browserLang && !browserLang.startsWith("zh") ? "en" : "zh";
   }
 
   if (locale && translations[locale]) {

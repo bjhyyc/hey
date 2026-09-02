@@ -11,7 +11,10 @@ const DEFAULT_CONFIG = {
   },
   system: {
     launchAtLogin: false,
-    language: "en",
+    // The product is Chinese-facing: heyirmy.com, the packs, the support
+    // channel. English stays available in the system tab, but it is not what a
+    // first run should open in.
+    language: "zh",
     onboardingVersion: 0,
     logging: {
       enabled: true,
