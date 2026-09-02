@@ -1337,10 +1337,10 @@ body:has(.pika-home) { overflow-x: hidden; background: var(--page); }
 .site-shell { min-height: 100svh; display: block; }
 body:has(.pika-home) .site-footer { margin-top: 0; border-top: 0; background: var(--page); }
 body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
-.pika-home { min-height: calc(100svh - 112px); overflow: hidden; background: var(--page); }
+.pika-home { min-height: calc(100svh - 70px); background: var(--page); }
 .home-minimal-shell {
   width: min(calc(100% - 104px), 1328px);
-  min-height: calc(100svh - 112px);
+  min-height: calc(100svh - 70px);
   margin-inline: auto;
   padding: 150px 0 90px;
 }
@@ -1674,5 +1674,24 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 /* The flow entry is the site's dark button - same fill, radius, type and
    amber label as every other primary action - and lightens one ink step on
    hover, which is the only thing it adds. */
-.home-flow-button { margin-top: 18px; text-decoration: none; }
-.home-flow-button:hover { background: var(--ink-84); }
+.home-flow-button { margin-top: 18px; background: var(--ink-84); text-decoration: none; }
+.home-flow-button:hover { background: var(--ink-70); }
+
+/* The home page's second screen: the flow, one scroll below the upload card.
+   scroll-margin keeps the heading clear of the sticky-feeling header when the
+   button jumps here. */
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+/* The first screen is exactly the viewport, so this section starts at the
+   fold; the top padding means even a few stray pixels of it show background
+   rather than the heading. */
+.home-flow-screen { padding: 44px 0 96px; background: var(--page); scroll-margin-top: 24px; }
+.home-flow-inner { width: min(calc(100% - 104px), 720px); margin-inline: auto; }
+.home-flow-inner h2 { margin: 0; color: var(--ink); font-size: var(--text-title); font-weight: var(--weight-heading); letter-spacing: var(--track-title); }
+.home-flow-lede { margin: 10px 0 26px; color: var(--muted); font-size: var(--text-body); line-height: 1.7; }
+.flow-steps h3 { margin: 4px 0 5px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; color: var(--ink); font-size: var(--text-lead); font-weight: var(--weight-label); letter-spacing: var(--track-lead); }
+.flow-steps h3 em { color: var(--faint); font-size: var(--text-small); font-style: normal; font-weight: 400; letter-spacing: 0; }
+@media (max-width: 780px) {
+  .home-flow-inner { width: min(calc(100% - 30px), 640px); }
+  .home-flow-screen { padding-bottom: 64px; }
+}

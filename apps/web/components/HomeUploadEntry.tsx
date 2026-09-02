@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -358,9 +357,10 @@ export function HomeUploadEntry() {
         </section>
         {/* The one thing a hesitating visitor wants before handing over a
             photograph: how many steps this is and how long it takes. */}
-        <Link className="primary-button inline-button home-flow-button" href="/how-it-works">
+        {/* Same-page anchor: the flow is the screen directly below. */}
+        <a className="primary-button inline-button home-flow-button" href="#flow">
           制作流程：5 步，约 20 分钟
-        </Link>
+        </a>
       </div>
     </section>
   );
