@@ -1,8 +1,8 @@
 {
   "schemaVersion": "petpack-studio-web-deployment/v1",
-  "createdAt": "2026-09-02T16:37:29.0000000Z",
-  "gitCommit": "f338ab17435e69d4e5f85ddbd585320b0fedadf5",
-  "sourceSha256": "239a8d879b07bb88e3ed823b3e4d28de38aa5dcf4ce0f42d31bec42eb9423313",
+  "createdAt": "2026-09-02T16:43:08.0000000Z",
+  "gitCommit": "75cd3e5cd6026a8c09ea8033b6de2b46447a9135",
+  "sourceSha256": "f7de758e49ba807b594395e5820b4957b0152691ddad62d2dcf8b6d3a963cb2e",
   "phoneAuthGate": true,
   "canonicalOrigin": "https://heyirmy.com"
 }
