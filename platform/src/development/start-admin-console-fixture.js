@@ -103,7 +103,7 @@ function createFixtureState() {
       order: {
         id: orderId,
         userId: shape.userId,
-        amountFen: 4900,
+        amountFen: 4800,
         currency: "CNY",
         paymentMethod: "KAIPAY",
         status: shape.orderStatus || "paid",
