@@ -1303,7 +1303,7 @@ body {
 .primary-nav-client { color: var(--ink); font-weight: var(--weight-heading); }
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .secondary-header-right .header-actions { margin-left: 0; }
-.header-login {
+.header-login, .home-flow-button {
   min-width: 76px;
   min-height: 48px;
   padding: 0 20px;
@@ -1330,7 +1330,7 @@ body {
   font-size: var(--text-body);
   font-weight: var(--weight-label);
 }
-.header-login:hover { background: var(--ink-05); }
+.header-login:hover, .home-flow-button:hover { background: var(--ink-05); }
 .header-purchase:hover { background: var(--amber-strong); }
 
 body:has(.pika-home) { overflow-x: hidden; background: var(--page); }
@@ -1488,7 +1488,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
 @media (max-width: 470px) {
   .site-header .header-inner { margin-inline: 15px; }
   .brand-hey { font-size: var(--text-title); }
-  .header-purchase, .header-login { min-height: 38px; padding: 0 14px; font-size: var(--text-small); }
+  .header-purchase, .header-login, .home-flow-button { min-height: 38px; padding: 0 14px; font-size: var(--text-small); }
   .home-minimal-shell { width: min(calc(100% - 24px), 640px); padding-top: 70px; }
   .home-center h1 { max-width: 340px; margin-inline: auto; font-size: var(--text-hero); }
   .home-upload { min-height: 145px; }
@@ -1671,4 +1671,4 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
    how much work this is before committing a photograph. It is a plain
    .ghost-button - the site's secondary control - so it matches the header and
    every other button rather than introducing a shape of its own. */
-.home-flow-button { margin-top: 14px; text-decoration: none; }
+.home-flow-button { margin-top: 18px; text-decoration: none; }

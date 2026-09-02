@@ -356,12 +356,9 @@ export function HomeUploadEntry() {
           </span>
         </div>
         </section>
-        <p className="home-automation-note">
-          无需编写复杂的动作提示词，无需在不同的 AI 视觉模型之间切换
-        </p>
         {/* The one thing a hesitating visitor wants before handing over a
             photograph: how many steps this is and how long it takes. */}
-        <Link className="ghost-button home-flow-button" href="/how-it-works">
+        <Link className="home-flow-button" href="/how-it-works">
           制作流程：5 步，15–25 分钟
         </Link>
       </div>
