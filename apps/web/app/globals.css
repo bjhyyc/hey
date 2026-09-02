@@ -1357,7 +1357,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
   font-weight: var(--weight-heading);
   letter-spacing: var(--track-display);
 }
-.home-promise { margin: 8px 0 0; color: var(--ink-52); font-size: var(--text-body); font-weight: var(--weight-body); line-height: 1.55; }
+.home-promise { margin: 8px 0 0; color: var(--ink-70); font-size: var(--text-body); font-weight: var(--weight-heading); line-height: 1.55; }
 .home-upload {
   width: min(100%, 720px);
   min-height: 178px;
