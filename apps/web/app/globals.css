@@ -1668,11 +1668,7 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 .flow-actions { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 10px; }
 
 /* Home: the one link out of the upload card, for a visitor who wants to see
-   how much work this is before committing a photograph. */
-.home-flow-link {
-  margin: 12px auto 0; display: inline-flex; align-items: center; gap: 7px;
-  min-height: 36px; padding: 0 18px; border: 1px solid var(--ink-20, var(--line)); border-radius: 999px;
-  background: var(--surface); color: var(--ink); font-size: var(--text-body); text-decoration: none;
-}
-.home-flow-link svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.home-flow-link:hover { border-color: var(--ink-40); color: var(--ink); }
+   how much work this is before committing a photograph. It is a plain
+   .ghost-button - the site's secondary control - so it matches the header and
+   every other button rather than introducing a shape of its own. */
+.home-flow-button { margin-top: 14px; text-decoration: none; }

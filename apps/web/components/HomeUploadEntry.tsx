@@ -361,8 +361,7 @@ export function HomeUploadEntry() {
         </p>
         {/* The one thing a hesitating visitor wants before handing over a
             photograph: how many steps this is and how long it takes. */}
-        <Link className="home-flow-link" href="/how-it-works">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 12h16M4 17h7" /><path d="M17 14l3 3-3 3" /></svg>
+        <Link className="ghost-button home-flow-button" href="/how-it-works">
           制作流程：5 步，15–25 分钟
         </Link>
       </div>
