@@ -1357,11 +1357,11 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
   font-weight: var(--weight-heading);
   letter-spacing: var(--track-display);
 }
-.home-promise { margin: 10px 0 0; color: var(--ink-52); font-size: var(--text-body); font-weight: var(--weight-body); line-height: 1.55; }
+.home-promise { margin: 8px 0 0; color: var(--ink-52); font-size: var(--text-body); font-weight: var(--weight-body); line-height: 1.55; }
 .home-upload {
   width: min(100%, 720px);
   min-height: 178px;
-  margin: 26px auto 0;
+  margin: 18px auto 0;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -1680,7 +1680,7 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 /* Same fill and border as the upload card above it, so the pair reads as one
    block rather than as a card with a foreign control under it. */
 .home-flow-button {
-  margin-top: 16px;
+  margin-top: 12px;
   min-height: 46px;
   padding: 0 20px;
   display: inline-flex;
