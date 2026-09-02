@@ -26,6 +26,7 @@ const STAGE_LABELS: Record<string, string> = {
   front_master: "正面母图",
   side_master: "45° 母图",
   sleep_master: "睡姿母图",
+  package: "打包（母图与七段视频不变）",
 };
 
 const RUN_STATE_LABELS: Record<string, string> = {
@@ -377,7 +378,9 @@ function OrderDetailPanel({
                 onClick={() => setPendingDisposal(entry.mode === "rerun" ? `rerun:${entry.stage}` : `grant:${entry.stage}`)}
                 type="button"
               >
-                {entry.mode === "rerun" ? `重跑${stageLabel(entry.stage)}` : `补发「${stageLabel(entry.stage)}」重生成次数`}
+                {entry.mode === "rerun"
+                  ? (entry.stage === "package" ? "恢复打包" : `重跑${stageLabel(entry.stage)}`)
+                  : `补发「${stageLabel(entry.stage)}」重生成次数`}
               </button>
             ))}
           </div>
@@ -388,7 +391,9 @@ function OrderDetailPanel({
               onSubmit={runDisposal((reason) =>
                 studioAdminApi.rerunStage(orderId, pendingDisposal.split(":").slice(1).join(":"), reason))}
               title={
-                pendingDisposal.startsWith("rerun:")
+                pendingDisposal === "rerun:package"
+                  ? "恢复打包：母图与七段视频不变，不产生生成费用"
+                  : pendingDisposal.startsWith("rerun:")
                   ? `授权重跑：${stageLabel(pendingDisposal.slice("rerun:".length))}（补发一次生成）`
                   : `补发「${stageLabel(pendingDisposal.slice("grant:".length))}」重生成次数`
               }

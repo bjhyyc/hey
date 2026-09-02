@@ -383,14 +383,16 @@ class PostgresTransactionalWorkflowStore {
 
   /**
    * The override flips the REJECTED image report in place: status becomes
-   * passed and the machine verdict moves whole under `overriddenVerdict`, with
-   * the authorization beside it. A second report for the same subject is not an
-   * option - `qa_report_image_subject_unique_idx` allows one image report per
-   * subject asset, and every worker path that resolves a master's report joins
-   * on that asset expecting exactly one row. Editing in place also keeps the
-   * bindings the customer's later confirmation claim re-validates
-   * (source/subject/policy/processor equality across candidate, generation,
-   * and report) exactly as the worker wrote them.
+   * passed, `ok`/`errors` flip, the machine verdict is kept under
+   * `overriddenVerdict` and the authorization sits beside it. Everything else
+   * the worker measured - kind, frame, appearance, chroma, processing,
+   * provenance - stays exactly where it was, because the packaging gate later
+   * re-reads this same report and refuses a run whose confirmed master carries
+   * no top-level `kind` and `provenance` (2026-09-02: seven passed videos died
+   * at that gate behind an override that had moved them). A second report for
+   * the same subject is not an option either - `qa_report_image_subject_unique_idx`
+   * allows one image report per subject asset, and every worker path that
+   * resolves a master's report joins on that asset expecting exactly one row.
    */
   async _overrideRejectedQaReport(tx, { generation, override }) {
     const authorization = {
@@ -400,10 +402,15 @@ class PostgresTransactionalWorkflowStore {
     const updated = await tx.query(
       `UPDATE qa_report
           SET status = 'passed',
-              report = jsonb_build_object(
+              report = report || jsonb_build_object(
                 'ok', true,
+                'errors', '[]'::jsonb,
                 'adminOverride', $4::jsonb,
-                'overriddenVerdict', report
+                'overriddenVerdict', jsonb_build_object(
+                  'ok', report->'ok',
+                  'errors', COALESCE(report->'errors', '[]'::jsonb),
+                  'warnings', COALESCE(report->'warnings', '[]'::jsonb)
+                )
               )
         WHERE run_id = $1
           AND subject_kind = 'image'
@@ -514,6 +521,57 @@ class PostgresTransactionalWorkflowStore {
         runId: committedRun.id,
         view,
         generationId,
+        state: committedRun.state
+      });
+      return committedRun;
+    });
+  }
+
+  /**
+   * Administrator resume of a run that died at the seven-action media gate
+   * (`production_evidence_provenance_invalid` and its neighbours). Nothing is
+   * regenerated: the masters, the seven passed videos and their reports are
+   * all still on record, so the run simply returns to media_processing and a
+   * fresh process-media job is queued. The gate's dead execution row is
+   * retargeted at that job - one run-level execution per job name is what the
+   * worker's claim expects to find - and the project leaves `failed` with it.
+   */
+  async commitAdminMediaProcessingResume({ previousRun = null, run, job } = {}) {
+    if (!run || typeof run !== "object") throw new Error("Next production run is required");
+    if (!previousRun || previousRun.id !== run.id) throw new Error("A packaging resume requires the persisted failed run");
+    const safeJob = assertWorkflowJob(job);
+    if (safeJob.name !== JOB_NAMES.PROCESS_MEDIA || safeJob.data.runId !== run.id) {
+      throw new Error("The packaging resume must queue this run's process-media job");
+    }
+    return this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      const transition = await this._updateRun(tx, previousRun, run);
+      const committedRun = { ...transition.run, completedActions: run.completedActions || [] };
+      await this._recordTransition(tx, { previousRun, run: committedRun });
+      const retargeted = await tx.query(
+        `UPDATE production_job_execution
+            SET job_id = $2, status = 'pending', attempts = 0, transient_attempts = 0,
+                lease_token = NULL, lease_owner = NULL, leased_until = NULL,
+                last_error_code = NULL, updated_at = now()
+          WHERE run_id = $1
+            AND job_name = $3
+            AND action_id IS NULL
+            AND status = 'dead'
+        RETURNING id`,
+        [committedRun.id, safeJob.options.jobId, JOB_NAMES.PROCESS_MEDIA]
+      );
+      if (!Array.isArray(retargeted.rows) || retargeted.rows.length !== 1) {
+        throw new Error("The run has no dead media-gate execution to resume");
+      }
+      await tx.query(
+        `UPDATE pet_project SET state = 'producing', updated_at = now()
+          WHERE id = $1 AND state = 'failed'`,
+        [committedRun.projectId]
+      );
+      await this._insertOutbox(tx, safeJob);
+      this.logger.warn?.("petpack.persistence.admin_media_processing_resumed", {
+        runId: committedRun.id,
+        jobId: safeJob.options.jobId,
         state: committedRun.state
       });
       return committedRun;

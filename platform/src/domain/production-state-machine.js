@@ -57,7 +57,10 @@ const ADMIN_RERUN_RESUME_STATES = Object.freeze({
   front_master: PRODUCTION_STATES.AWAKE_GENERATING,
   side_master: PRODUCTION_STATES.AWAKE_GENERATING,
   sleep_master: PRODUCTION_STATES.SLEEP_GENERATING,
-  action: PRODUCTION_STATES.VIDEO_GENERATING
+  action: PRODUCTION_STATES.VIDEO_GENERATING,
+  // The seven-action media gate: a run refused there still holds every
+  // master and video it needs, so the resume queues packaging again.
+  package: PRODUCTION_STATES.MEDIA_PROCESSING
 });
 
 /**
@@ -99,7 +102,8 @@ function adminRerunProductionRun(run, { stage, failedFromState } = {}) {
   }
   // stage === "action": the generation_action reset (queued state, cleared
   // provider fields, retry_count increment) is committed by the workflow store
-  // in the same transaction as this run transition.
+  // in the same transaction as this run transition. stage === "package": the
+  // dead media-gate execution is retargeted there too.
   return { ...run, state: resumeState, failureCode: null };
 }
 
@@ -122,7 +126,7 @@ function adminQaOverrideProductionRun(run, { stage, failedFromState } = {}) {
   if (!run || run.state !== PRODUCTION_STATES.FAILED) {
     throw adminRerunStageError("Only a failed production run can accept a QA override");
   }
-  const resumeState = ADMIN_RERUN_RESUME_STATES[stage];
+  const resumeState = stage === "package" ? null : ADMIN_RERUN_RESUME_STATES[stage];
   if (!resumeState) throw adminRerunStageError(`QA override does not support stage: ${stage}`);
   if (failedFromState !== resumeState) {
     throw adminRerunStageError(`The run failed from ${failedFromState || "an unknown state"}, not from the ${stage} stage`);

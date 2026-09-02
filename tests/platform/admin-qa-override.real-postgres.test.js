@@ -7,6 +7,7 @@ import storeModule from "../../platform/src/persistence/postgres-transactional-w
 import workflowModule from "../../platform/src/workflow/production-workflow.js";
 import adminOrdersModule from "../../platform/src/api/admin-orders-service.js";
 import stateMachineModule from "../../platform/src/domain/production-state-machine.js";
+import provenanceModule from "../../platform/src/qa/production-evidence-provenance.js";
 
 // The support-console disposals were unit-tested against a scripted database,
 // which is how a QA override that inserted a second image report for the same
@@ -28,6 +29,7 @@ const { PostgresTransactionalWorkflowStore } = storeModule;
 const { ProductionWorkflow, JOB_NAMES } = workflowModule;
 const { AdminOrdersService } = adminOrdersModule;
 const { PRODUCTION_STATES } = stateMachineModule;
+const { validateProductionEvidenceReport } = provenanceModule;
 
 const databaseUrl = process.env.PETPACK_TEST_POSTGRES_URL || "";
 const resetCommand = process.env.PETPACK_TEST_POSTGRES_RESET_COMMAND || "";
@@ -126,6 +128,16 @@ describe.skipIf(!databaseUrl)("support-console disposals against the production 
     expect(report.report.adminOverride.overriddenQaReportId).toBe(seed.sideAttemptOne.qa_report_id);
     expect(report.report.overriddenVerdict.ok).toBe(false);
     expect(report.report.overriddenVerdict.errors.length).toBeGreaterThan(0);
+    // The packaging gate later re-reads this report and requires the worker's
+    // evidence at the top level: identity, an empty error list, and the
+    // production provenance contract. 2026-09-02 lost a finished run here.
+    expect(report.report.kind).toBe("side");
+    expect(report.report.errors).toEqual([]);
+    expect(report.report.contractVersion).toBe("petpack-master-image-qa/v2");
+    expect(report.report.provenance.evidenceClass).toBe("production");
+    const provenance = validateProductionEvidenceReport(report.report, { production: true });
+    expect(provenance.errors).toEqual([]);
+    expect(provenance.ok).toBe(true);
 
     const candidate = await one(`SELECT qa_status, qa_report_id FROM image_candidate WHERE id = $1`, [seed.sideAttemptOne.image_candidate_id]);
     expect(candidate.qa_status).toBe("passed");

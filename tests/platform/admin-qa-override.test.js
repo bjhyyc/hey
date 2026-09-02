@@ -234,7 +234,11 @@ describe("workflow store QA override commits", () => {
     const reportOverride = executed.find((entry) => entry.sql.includes("UPDATE qa_report"));
     expect(reportOverride.sql).toContain("SET status = 'passed'");
     expect(reportOverride.sql).toContain("AND status = 'failed'");
-    expect(reportOverride.sql).toContain("'overriddenVerdict', report");
+    // The worker's report survives whole (kind, provenance, processing ...):
+    // the packaging gate re-reads it. Only the verdict keys are overlaid.
+    expect(reportOverride.sql).toContain("report = report || jsonb_build_object(");
+    expect(reportOverride.sql).toContain("'errors', '[]'::jsonb");
+    expect(reportOverride.sql).toContain("'overriddenVerdict', jsonb_build_object(");
     expect(reportOverride.params).toContain("run-1");
     expect(reportOverride.params).toContain("policy-v1");
     expect(reportOverride.params).toContain("processor-v1");

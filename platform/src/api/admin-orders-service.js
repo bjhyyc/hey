@@ -3,7 +3,7 @@ const { REQUIRED_ACTION_IDS } = require("../domain/action-catalog");
 const { PRODUCTION_STATES, ADMIN_RERUN_RESUME_STATES } = require("../domain/production-state-machine");
 const { createAdminOperationsView } = require("./admin-operations-service");
 
-const STAGE_PATTERN = /^(front_master|side_master|sleep_master|action:[a-z][a-z-]{0,31})$/;
+const STAGE_PATTERN = /^(front_master|side_master|sleep_master|package|action:[a-z][a-z-]{0,31})$/;
 const DEFAULT_MAX_ADMIN_RERUNS_PER_ORDER = 6;
 const DEFAULT_DELIVERY_REISSUE_SECONDS = 72 * 3600;
 
@@ -99,6 +99,7 @@ function parseStage(stage) {
     return { kind: "action", actionId, stage: value };
   }
   if (value === "sleep_master") return { kind: "sleep", stage: value };
+  if (value === "package") return { kind: "package", stage: value };
   return { kind: "master", view: value === "front_master" ? "front" : "side", stage: value };
 }
 
@@ -156,6 +157,10 @@ function availableRescueStages(context) {
     else stages.push({ stage: "front_master", mode: "rerun" }, { stage: "side_master", mode: "rerun" });
   } else if (failedFrom === PRODUCTION_STATES.SLEEP_GENERATING) {
     stages.push({ stage: "sleep_master", mode: "rerun" });
+  } else if (failedFrom === PRODUCTION_STATES.MEDIA_PROCESSING) {
+    // Refused at the media gate: every master and video is still on record,
+    // so the only disposal is to queue packaging again.
+    stages.push({ stage: "package", mode: "rerun" });
   } else if (failedFrom === PRODUCTION_STATES.VIDEO_GENERATING) {
     for (const action of context.actions) {
       if (action.state === "failed") stages.push({ stage: `action:${action.actionId}`, mode: "rerun" });
@@ -356,6 +361,13 @@ class AdminOrdersService {
       next = await this.workflow.adminRerunCharacterMaster({ run, view: parsed.view, failedFromState: context.failedFromState });
     } else if (parsed.kind === "sleep") {
       next = await this.workflow.adminRerunSleepMaster({ run, failedFromState: context.failedFromState });
+    } else if (parsed.kind === "package") {
+      // Newer than the other rescues; a workflow without it simply cannot
+      // offer this disposal rather than failing the whole service.
+      if (typeof this.workflow.adminResumeMediaProcessing !== "function") {
+        throw stageUnavailableError("This deployment cannot resume packaging");
+      }
+      next = await this.workflow.adminResumeMediaProcessing({ run, failedFromState: context.failedFromState });
     } else {
       const action = context.actions.find((candidate) => candidate.actionId === parsed.actionId);
       if (!action || action.state !== "failed") {
@@ -395,6 +407,7 @@ class AdminOrdersService {
     const safeReason = requiredString(reason, "Disposal reason", 200);
     const safeCandidateId = requiredString(candidateId, "Override candidate ID", 128);
     const parsed = parseStage(stage);
+    if (parsed.kind === "package") throw stageUnavailableError("Packaging has no QA verdict to override; resume it instead");
     const context = await this.repository.getAdminOrderRescueContext(requiredString(orderId, "Order ID"));
     if (!context) throw new Error("Order was not found");
     assertOrderEntitled(context.order);

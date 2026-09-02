@@ -670,6 +670,32 @@ class ProductionWorkflow {
   }
 
   /**
+   * Administrator resume of a run refused at the seven-action media gate. No
+   * provider call is made: the run returns to media_processing and a fresh
+   * process-media job is queued under a revision no earlier gate attempt used,
+   * so BullMQ accepts it and the retargeted execution row can be claimed.
+   */
+  async adminResumeMediaProcessing({ run, failedFromState }) {
+    if (typeof this.runStore.commitAdminMediaProcessingResume !== "function") {
+      throw new Error("The production run store does not support administrator packaging resumes");
+    }
+    const next = adminRerunProductionRun(run, { stage: "package", failedFromState });
+    const job = createWorkflowJob({
+      name: JOB_NAMES.PROCESS_MEDIA,
+      run: next,
+      inputRevision: `admin-resume:${Number(run.version)}`,
+      attempts: 3
+    });
+    const committed = await this.runStore.commitAdminMediaProcessingResume({ previousRun: run, run: next, job });
+    this.logger.warn?.("petpack.workflow.admin_media_processing_resumed", {
+      runId: run.id,
+      previousFailureCode: run.failureCode || null,
+      jobId: job.options.jobId
+    });
+    return committed;
+  }
+
+  /**
    * Hands one spent self-service regeneration back to a customer stuck at
    * character confirmation with their regeneration budget spent. No job is
    * queued: the customer presses 重新生成 themselves once the button returns.
