@@ -1,3 +1,5 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { app, dialog, Menu, shell } = require("electron");
 const { registerIpc } = require("./ipc");
 const { createDesktopPetMenu, createMenuActions } = require("./menu");
@@ -15,6 +17,7 @@ let globalMouseTracker;
 let trayController;
 let userDataDir;
 
+const BUNDLED_SAMPLE_PACKAGE_ID = "default-pet";
 const logger = createLogger("main");
 
 function getPetWindow() {
@@ -93,6 +96,22 @@ function hideDockIcon() {
   app.dock.hide();
 }
 
+/**
+ * Whether the customer has imported at least one pack of their own. The
+ * bundled sample does not count: it lives in the app resources, not here.
+ */
+function hasImportedPackage(userDataPath) {
+  try {
+    const packagesDir = path.join(userDataPath, "packages");
+    return fs.readdirSync(packagesDir, { withFileTypes: true })
+      // The bundled sample gets materialised here the moment anything edits it,
+      // so its presence says nothing about whether the customer has a pack.
+      .some((entry) => entry.isDirectory() && entry.name !== BUNDLED_SAMPLE_PACKAGE_ID);
+  } catch {
+    return false;
+  }
+}
+
 async function boot() {
   userDataDir = app.getPath("userData");
   configStore = createConfigStore(userDataDir);
@@ -118,9 +137,15 @@ async function boot() {
     refreshMenus
   });
 
-  registerIpc({ getWindows, createPanelWindow, configStore, openContextMenu });
-  await createPetWindow({ display: configStore.load().display });
-  await createPanelWindow({ show: showOnboarding });
+  registerIpc({ getWindows, createPanelWindow, createPetWindow, configStore, openContextMenu });
+  // Nothing is more off-key on first run than a stranger's cartoon pet sitting
+  // on the desktop. Until the customer imports their own pack there is no pet
+  // to show, so the app opens on the panel - the import screen - instead.
+  const ownsPack = hasImportedPackage(userDataDir);
+  if (ownsPack) {
+    await createPetWindow({ display: configStore.load().display });
+  }
+  await createPanelWindow({ show: showOnboarding || !ownsPack });
   globalMouseTracker = createGlobalMouseTracker({ getPetWindow });
   globalMouseTracker.start();
   trayController = createTray({

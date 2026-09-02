@@ -687,7 +687,7 @@ function sendInteractionsPausedUpdate(getWindows, enabled) {
   }
 }
 
-function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfigStore, openContextMenu } = {}) {
+function registerIpc({ getWindows, createPanelWindow, createPetWindow, configStore: injectedConfigStore, openContextMenu } = {}) {
   const userDataDir = app.getPath("userData");
   const configStore = injectedConfigStore || createConfigStore(userDataDir);
   const initialConfig = configStore.load() || DEFAULT_CONFIG;
@@ -930,6 +930,19 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
     }
     return result;
   });
+  async function ensurePetWindowAfterImport(result) {
+    if (!result || result.ok === false) return result;
+    if (typeof createPetWindow !== "function") return result;
+    if (getPetWindow(getWindows)) return result;
+    try {
+      logger.info("Creating pet window after first import");
+      await createPetWindow({ display: configStore.load().display });
+    } catch (error) {
+      logger.warn("Could not create pet window after import", { error: error.message || error });
+    }
+    return result;
+  }
+
   replaceHandler("petpack:import", async () => {
     const panelWindow = getPanelWindow(getWindows);
     const dialogOptions = {
@@ -947,7 +960,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
     }
 
     logger.info("Importing petpack from picker");
-    return importPetpack(result.filePaths[0], userDataDir);
+    return ensurePetWindowAfterImport(await importPetpack(result.filePaths[0], userDataDir));
   });
   replaceHandler("petpack:install-sample", async () => {
     logger.info("Downloading and importing sample petpack", { url: SAMPLE_PETPACK_URL });
@@ -961,7 +974,7 @@ function registerIpc({ getWindows, createPanelWindow, configStore: injectedConfi
         return result || { ok: false, error: "Sample petpack import failed" };
       }
       logger.info("Sample petpack imported", { packageId: result.packageId || "" });
-      return result;
+      return ensurePetWindowAfterImport(result);
     } catch (error) {
       logger.warn("Could not download and import sample petpack", { error: error.message || error });
       return { ok: false, error: error.message || String(error) };
