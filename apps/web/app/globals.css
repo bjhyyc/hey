@@ -1342,7 +1342,10 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
   width: min(calc(100% - 104px), 1328px);
   min-height: calc(100svh - 70px);
   margin-inline: auto;
-  padding: 150px 0 90px;
+  padding: 48px 0 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 .home-center { width: 100%; margin: 0; text-align: center; }
 .home-center h1 {
@@ -1354,11 +1357,11 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
   font-weight: var(--weight-heading);
   letter-spacing: var(--track-display);
 }
-.home-promise { margin: 15px 0 0; color: var(--ink-52); font-size: var(--text-body); font-weight: var(--weight-body); line-height: 1.55; }
+.home-promise { margin: 16px 0 0; color: var(--ink-52); font-size: var(--text-body); font-weight: var(--weight-body); line-height: 1.55; }
 .home-upload {
   width: min(100%, 720px);
   min-height: 178px;
-  margin: 40px auto 0;
+  margin: 44px auto 0;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -1477,7 +1480,7 @@ body:has(.pika-home) .footer-inner { padding-top: 13px; padding-bottom: 17px; }
      drop only the client download, which the home page and footer also carry. */
   .primary-nav { gap: 16px; }
   .primary-nav .primary-nav-client { display: none; }
-  .home-minimal-shell { width: min(calc(100% - 30px), 720px); min-height: calc(100svh - 70px); padding: 88px 0 80px; }
+  .home-minimal-shell { width: min(calc(100% - 30px), 720px); min-height: calc(100svh - 70px); padding: 32px 0 56px; }
   .pika-home { min-height: calc(100svh - 70px); }
   .page-main { padding-top: 50px; }
   .plan-card, .delivery-card { flex-direction: column; align-items: flex-start; }
@@ -1674,8 +1677,25 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 /* The flow entry is the site's dark button - same fill, radius, type and
    amber label as every other primary action - and lightens one ink step on
    hover, which is the only thing it adds. */
-.home-flow-button { margin-top: 18px; background: var(--ink-84); text-decoration: none; }
-.home-flow-button:hover { background: var(--ink-70); }
+/* Same fill and border as the upload card above it, so the pair reads as one
+   block rather than as a card with a foreign control under it. */
+.home-flow-button {
+  margin-top: 20px;
+  min-height: 46px;
+  padding: 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  background: var(--ink-05);
+  border: 1px solid var(--ink-05);
+  border-radius: var(--radius-md);
+  font-size: var(--text-body);
+  font-weight: var(--weight-label);
+  text-decoration: none;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.home-flow-button:hover { background: var(--ink-08); border-color: var(--ink-16); }
 
 /* The home page's second screen: the flow, one scroll below the upload card.
    scroll-margin keeps the heading clear of the sticky-feeling header when the
@@ -1694,4 +1714,12 @@ html { scroll-behavior: smooth; }
 @media (max-width: 780px) {
   .home-flow-inner { width: min(calc(100% - 30px), 640px); }
   .home-flow-screen { padding-bottom: 64px; }
+}
+
+/* The narrow-screen collapse for the model chips lives here, at the end: an
+   earlier @media rule already asked for it, but a later global .home-model-tag
+   declaration outranked it (same specificity, further down), so on a phone the
+   chips kept their labels and collided with the species switch. */
+@media (max-width: 560px) {
+  .home-model-tag { width: 38px; padding: 0; justify-content: center; font-size: 0; }
 }

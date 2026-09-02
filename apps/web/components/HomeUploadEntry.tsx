@@ -358,8 +358,8 @@ export function HomeUploadEntry() {
         {/* The one thing a hesitating visitor wants before handing over a
             photograph: how many steps this is and how long it takes. */}
         {/* Same-page anchor: the flow is the screen directly below. */}
-        <a className="primary-button inline-button home-flow-button" href="#flow">
-          制作流程：5 步，约 20 分钟
+        <a className="home-flow-button" href="#flow">
+          点击查看制作流程：5 步，约 20 分钟
         </a>
       </div>
     </section>
