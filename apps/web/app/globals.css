@@ -784,7 +784,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .legal-copy p { margin: 0 0 12px; }
 .legal-copy p:last-child { margin-bottom: 0; }
 .legal-copy strong { color: var(--ink); font-weight: var(--weight-label); }
-.legal-copy ul { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 5px; font-size: var(--text-body); }
+.legal-copy ul, .legal-copy ol { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 5px; font-size: var(--text-body); }
 .legal-copy a { color: var(--emerald); }
 
 .photo-slot-grid {

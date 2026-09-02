@@ -219,6 +219,7 @@ export function NewProjectForm() {
         我已知悉：成品由 AI 依据我的照片重新绘制，会尽量贴近毛色与神态，但不是照片复刻；
         本商品为按我提供的照片定制的数字内容，交付后不适用七天无理由退货。
         若文件损坏、无法导入或与我确认的母图明显不符，可免费重做或退款。
+        详见<a href="/terms" target="_blank" rel="noopener noreferrer">服务协议</a>与<a href="/ai-content" target="_blank" rel="noopener noreferrer">AI 生成说明</a>。
       </span>
     </label>
     <button className="primary-button form-submit" disabled={busy || !acknowledged} onClick={() => void submit()} type="button">
