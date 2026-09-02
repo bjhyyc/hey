@@ -6,8 +6,9 @@ import { PageShell } from "@/components/PageShell";
 // Written to be read in fifteen seconds: five numbered steps, each with who
 // does it and how long it takes, so a visitor can see the whole shape of the
 // service before paying. Every number here matches the running system - the
-// two free regenerations per master, the 10-20 minute automatic stretch, the
-// thirty-day download window.
+// two free regenerations per master and the 10-20 minute automatic stretch.
+// Price and the download window are stated where they are binding (checkout
+// and the terms), not repeated here.
 const STEPS = [
   {
     title: "上传照片",
@@ -19,7 +20,7 @@ const STEPS = [
     title: "付款",
     who: "你来做",
     time: "1 分钟",
-    copy: "预检通过才进入付款，支付宝扫码，¥48 一次买断这一份素材包。"
+    copy: "预检通过才进入付款，支付宝扫码，一次买断这一份素材包。"
   },
   {
     title: "确认形象",
@@ -37,7 +38,7 @@ const STEPS = [
     title: "下载导入",
     who: "你来做",
     time: "2 分钟",
-    copy: "下载素材包和 Hey 桌宠客户端，点一下导入就能用。下载链接 30 天内有效。"
+    copy: "下载素材包和 Hey 桌宠客户端，点一下导入就能用。"
   }
 ];
 
@@ -79,7 +80,6 @@ export default function HowItWorksPage() {
 
       <div className="flow-actions">
         <Link className="primary-button inline-button" href="/#start">开始制作</Link>
-        <Link className="ghost-button" href="/support">先问问客服</Link>
       </div>
     </PageShell>
   );
