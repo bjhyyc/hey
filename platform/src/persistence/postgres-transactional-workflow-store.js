@@ -382,38 +382,46 @@ class PostgresTransactionalWorkflowStore {
   }
 
   /**
-   * The override report is a NEW passed qa_report carrying the authorization;
-   * the rejected report is referenced, never edited. Its bindings copy the
-   * generation row exactly, because the customer's later confirmation claim
-   * re-validates source/subject/policy/processor equality across candidate,
-   * generation, and report.
+   * The override flips the REJECTED image report in place: status becomes
+   * passed and the machine verdict moves whole under `overriddenVerdict`, with
+   * the authorization beside it. A second report for the same subject is not an
+   * option - `qa_report_image_subject_unique_idx` allows one image report per
+   * subject asset, and every worker path that resolves a master's report joins
+   * on that asset expecting exactly one row. Editing in place also keeps the
+   * bindings the customer's later confirmation claim re-validates
+   * (source/subject/policy/processor equality across candidate, generation,
+   * and report) exactly as the worker wrote them.
    */
-  async _insertOverrideQaReport(tx, { generation, override, subjectKind, actionId = null }) {
-    const reportId = this.idFactory();
-    const report = {
-      ok: true,
-      adminOverride: {
-        ...override,
-        overriddenQaReportId: generation.qa_report_id || null
-      }
+  async _overrideRejectedQaReport(tx, { generation, override }) {
+    const authorization = {
+      ...override,
+      overriddenQaReportId: generation.qa_report_id || null
     };
-    const inserted = await tx.query(
-      `INSERT INTO qa_report
-        (id, project_id, run_id, action_id, subject_kind, status, policy_version,
-         report, source_media_asset_id, subject_media_asset_id, processor_version)
-       VALUES ($1, $2, $3, $4, $5, 'passed', $6, $7::jsonb, $8::uuid, $9::uuid, $10)
+    const updated = await tx.query(
+      `UPDATE qa_report
+          SET status = 'passed',
+              report = jsonb_build_object(
+                'ok', true,
+                'adminOverride', $4::jsonb,
+                'overriddenVerdict', report
+              )
+        WHERE run_id = $1
+          AND subject_kind = 'image'
+          AND status = 'failed'
+          AND subject_media_asset_id = $2::uuid
+          AND source_media_asset_id = $3::uuid
+          AND policy_version = $5
+          AND processor_version = $6
        RETURNING id`,
       [
-        reportId, generation.project_id, generation.run_id, actionId, subjectKind,
-        generation.processing_policy_version, serializeJson(report),
-        generation.provider_output_asset_id, generation.normalized_media_asset_id,
-        generation.processor_version
+        generation.run_id, generation.normalized_media_asset_id, generation.provider_output_asset_id,
+        serializeJson(authorization), generation.processing_policy_version, generation.processor_version
       ]
     );
-    if (!Array.isArray(inserted.rows) || inserted.rows.length !== 1) {
-      throw new Error("The QA override report could not be persisted");
+    if (!Array.isArray(updated.rows) || updated.rows.length !== 1) {
+      throw new Error("The rejected master's QA report could not be overridden");
     }
-    return reportId;
+    return updated.rows[0].id;
   }
 
   async _promoteOverriddenMasterCandidate(tx, { run, view, generationId, override }) {
@@ -443,11 +451,7 @@ class PostgresTransactionalWorkflowStore {
         FOR UPDATE OF generation`,
       [requireId(generationId, "Master generation ID"), run.id, view, assetKind]
     ), "The selected master attempt is not a QA-rejected candidate of this run with retained media");
-    const overrideReportId = await this._insertOverrideQaReport(tx, {
-      generation,
-      override,
-      subjectKind: "image"
-    });
+    const overrideReportId = await this._overrideRejectedQaReport(tx, { generation, override });
     const candidate = await tx.query(
       `UPDATE image_candidate
           SET qa_status = 'passed', qa_report_id = $2

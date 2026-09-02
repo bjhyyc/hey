@@ -204,7 +204,7 @@ describe("workflow store QA override commits", () => {
     })).rejects.toThrowError(/not a QA-rejected provider output/);
   });
 
-  it("promotes a rejected front master and copies its bindings into the override report", async () => {
+  it("promotes a rejected front master by flipping its rejected report in place", async () => {
     const generationRow = {
       id: "gen-1", project_id: "project-1", run_id: "run-1", order_id: "order-1",
       kind: "front", generation_attempt: 1, image_candidate_id: "candidate-1",
@@ -216,7 +216,7 @@ describe("workflow store QA override commits", () => {
       ["INSERT INTO production_run_event", { rows: [] }],
       ["UPDATE production_run", updatedRunRow],
       ["FROM master_image_generation generation", { rows: [generationRow] }],
-      ["INSERT INTO qa_report", { rows: [{ id: "override-report" }] }],
+      ["UPDATE qa_report", { rows: [{ id: "rejected-report-1" }] }],
       ["UPDATE image_candidate", { rows: [{ id: "candidate-1" }] }],
       ["UPDATE master_image_generation", { rows: [{ id: "gen-1" }] }]
     ]);
@@ -227,17 +227,30 @@ describe("workflow store QA override commits", () => {
       generationId: "gen-1",
       override: { actorId: "admin-1", reason: "肉眼复核" }
     });
-    const reportInsert = executed.find((entry) => entry.sql.includes("INSERT INTO qa_report"));
-    expect(reportInsert.params).toContain("policy-v1");
-    expect(reportInsert.params).toContain("processor-v1");
-    expect(reportInsert.params).toContain("asset-provider");
-    expect(reportInsert.params).toContain("asset-normalized");
-    const report = JSON.parse(reportInsert.params[6]);
-    expect(report.ok).toBe(true);
-    expect(report.adminOverride.overriddenQaReportId).toBe("rejected-report-1");
+    // One image report per subject asset is a schema invariant
+    // (qa_report_image_subject_unique_idx), so the override must edit the
+    // rejected report rather than insert a second one.
+    expect(executed.some((entry) => entry.sql.includes("INSERT INTO qa_report"))).toBe(false);
+    const reportOverride = executed.find((entry) => entry.sql.includes("UPDATE qa_report"));
+    expect(reportOverride.sql).toContain("SET status = 'passed'");
+    expect(reportOverride.sql).toContain("AND status = 'failed'");
+    expect(reportOverride.sql).toContain("'overriddenVerdict', report");
+    expect(reportOverride.params).toContain("run-1");
+    expect(reportOverride.params).toContain("policy-v1");
+    expect(reportOverride.params).toContain("processor-v1");
+    expect(reportOverride.params).toContain("asset-provider");
+    expect(reportOverride.params).toContain("asset-normalized");
+    const authorization = JSON.parse(reportOverride.params[3]);
+    expect(authorization.actorId).toBe("admin-1");
+    expect(authorization.reason).toBe("肉眼复核");
+    expect(authorization.overriddenQaReportId).toBe("rejected-report-1");
     const candidateUpdate = executed.find((entry) => entry.sql.includes("UPDATE image_candidate"));
     expect(candidateUpdate.sql).toContain("qa_status = 'passed'");
     expect(candidateUpdate.sql).toContain("qa_status = 'failed'");
+    // The promoted rows keep pointing at the same (now passed) report id.
+    expect(candidateUpdate.params).toContain("rejected-report-1");
+    const generationUpdate = executed.find((entry) => entry.sql.includes("UPDATE master_image_generation"));
+    expect(generationUpdate.params).toContain("rejected-report-1");
   });
 
   it("queues the side generation when a front override precedes any side attempt", async () => {
@@ -252,7 +265,7 @@ describe("workflow store QA override commits", () => {
       ["INSERT INTO production_run_event", { rows: [] }],
       ["UPDATE production_run", updatedRunRow],
       ["FROM master_image_generation generation", { rows: [generationRow] }],
-      ["INSERT INTO qa_report", { rows: [{ id: "override-report" }] }],
+      ["UPDATE qa_report", { rows: [{ id: "rejected-report-1" }] }],
       ["UPDATE image_candidate", { rows: [{ id: "candidate-1" }] }],
       ["UPDATE master_image_generation", { rows: [{ id: "gen-1" }] }],
       ["INSERT INTO outbox_job", { rows: [] }]
