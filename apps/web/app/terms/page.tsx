@@ -18,7 +18,7 @@ export default function TermsPage() {
         <h2>协议双方</h2>
         <p>
           本协议由你与 heyirmy.com 的运营方（以下简称“我们”）订立，适用于网站与 Hey 桌宠客户端。
-          网站备案号：蜀ICP备2026044501号；经营主体名称将在营业执照核发后于本页补充公示。
+          网站备案号：蜀ICP备2026044501号。
           下单即表示你已阅读并同意本协议、<a href="/privacy">隐私政策</a>与<a href="/ai-content">AI 生成内容说明</a>。
         </p>
 
