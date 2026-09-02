@@ -73,7 +73,7 @@ export default function TermsPage() {
 
         <h2>联系我们</h2>
         <p>
-          售后、退款、删除素材等请求请通过{contact}提出，并提供项目页底部的<strong>项目编号</strong>。
+          售后、退款、删除素材等请求请通过<a href="/support">联系客服</a>页面提出（{contact}），并提供项目页底部的<strong>项目编号</strong>。
           我们在工作日 24 小时内回复。
         </p>
 

@@ -1633,3 +1633,17 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 .download-sha { padding: 2px 6px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; user-select: all; }
 .failed-card-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
 .site-footer .footer-inner { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+
+/* Support page: the QQ number and group are values a customer copies into
+   another app, so they read as data with a control, not as running text. */
+.support-card { display: grid; gap: 26px; }
+.support-block h2 { margin: 0 0 8px; color: var(--ink); font-size: var(--text-lead); font-weight: var(--weight-label); letter-spacing: var(--track-lead); }
+.support-block p { margin: 0 0 10px; color: var(--muted); line-height: 1.85; }
+.support-block p:last-child { margin-bottom: 0; }
+.support-block strong { color: var(--ink); font-weight: var(--weight-label); }
+.support-block a { color: var(--emerald); }
+.support-block code { padding: 3px 8px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
+.support-hint { font-size: var(--text-small); }
+.support-value { margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; color: var(--muted); font-size: var(--text-small); }
+.support-value code { font-size: var(--text-body); letter-spacing: 0.04em; }
+.support-value .ghost-button { min-height: 30px; padding: 0 12px; font-size: var(--text-small); }
