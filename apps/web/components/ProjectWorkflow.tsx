@@ -181,19 +181,19 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
       <ol className="instruction-list compact-list">
         <li><span>1</span>下载 <code>.petpack</code> 文件</li>
         <li><span>2</span>安装并打开桌宠客户端</li>
-        <li><span>3</span>点击「导入我的 PetPack」，选择刚下载的文件</li>
+        <li><span>3</span>在概览页点击「导入素材包」，选择刚下载的文件</li>
       </ol>
       <div className="workflow-notice">
         <p>下载链接短时有效，过期后回到本页重新点击即可，不会额外收费。</p>
       </div>
-      <p>PetPack 已完成兼容验证，可以下载。</p>
+      <p>素材包已完成兼容验证，可以下载。</p>
       {/* Both downloads sit on one line: the client is needed before the pack
           is of any use, so it comes first, at a quieter weight. */}
       <div className="action-row">
         <Link className="ghost-button" href="/download-client" target="_blank">下载客户端</Link>
         <button className="primary-button" disabled={busy} onClick={() => void (async () => {
           setBusy(true); try { const result = await studioBrowserApi.createDownload(projectId); window.location.assign(result.downloadUrl); } catch (e) { setMessage(e instanceof Error ? e.message : "下载暂不可用"); setBusy(false); }
-        })()} type="button">{busy ? "正在准备…" : "下载 PetPack"}</button>
+        })()} type="button">{busy ? "正在准备…" : "下载素材包"}</button>
       </div></> : <p>素材包尚未完成。</p>}
       <p className="form-message">{message}</p>
     </section>;
@@ -229,6 +229,6 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
       </div>;
     })() : null}
     {view.failed ? <p className="error-state">制作遇到问题，已转入内部处理，不需要重新付款。</p> : null}
-    {view.downloadReady ? <Link className="primary-button inline-button" href={`/projects/${encodeURIComponent(projectId)}/delivery`}>下载 PetPack</Link> : <p className="form-message">页面会自动更新，关闭后稍后回来也不会丢失进度。</p>}
+    {view.downloadReady ? <Link className="primary-button inline-button" href={`/projects/${encodeURIComponent(projectId)}/delivery`}>下载素材包</Link> : <p className="form-message">页面会自动更新，关闭后稍后回来也不会丢失进度。</p>}
   </section>;
 }

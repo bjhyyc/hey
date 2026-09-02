@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderOverview } from "../../src/renderer/panel/tabs/overview";
 
 describe("overview tab", () => {
-  it("always shows the primary PetPack import action", () => {
+  it("always shows the primary asset-pack import action", () => {
     const html = renderOverview({
       currentPackageId: "pet",
       system: { onboardingVersion: 1 },
@@ -10,12 +10,12 @@ describe("overview tab", () => {
       triggerRules: []
     });
 
-    expect(html).toContain("Import PetPack");
+    expect(html).toContain("Import asset pack");
     expect(html).toContain('data-action="import-petpack"');
-    expect(html).toContain("Choose PetPack");
+    expect(html).toContain("Choose asset pack");
   });
 
-  it("disables the primary PetPack action while import is active", () => {
+  it("disables the primary asset-pack action while import is active", () => {
     const html = renderOverview({
       currentPackageId: "pet",
       system: { onboardingVersion: 1 },

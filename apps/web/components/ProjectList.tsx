@@ -29,7 +29,7 @@ const NEXT_STEP_ROUTES: Record<string, { path: string; hint: string }> = {
   photos: { path: "photos", hint: "去上传照片" },
   character: { path: "character", hint: "去确认形象" },
   progress: { path: "progress", hint: "查看制作进度" },
-  delivery: { path: "delivery", hint: "去下载 PetPack" },
+  delivery: { path: "delivery", hint: "去下载素材包" },
   failed: { path: "progress", hint: "查看处理说明" },
   payment: { path: "progress", hint: "查看订单状态" }
 };

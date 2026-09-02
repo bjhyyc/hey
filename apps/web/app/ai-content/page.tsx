@@ -13,7 +13,7 @@ export default function AiContentPage() {
       <article className="legal-copy">
         <h2>这些内容是 AI 生成的</h2>
         <p>
-          你购买的 PetPack 素材包——三张母图（正面、45°、睡姿）与七段动作视频（组成 5 个动作）——
+          你购买的素材包——三张母图（正面、45°、睡姿）与七段动作视频（组成 5 个动作）——
           <strong>全部由人工智能依据你上传的照片重新绘制与生成</strong>，不是照片本身，也不是实拍视频。
           图像由火山引擎 Seedream 模型生成，动作视频由 Seedance 模型生成。
         </p>

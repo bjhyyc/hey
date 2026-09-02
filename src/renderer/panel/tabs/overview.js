@@ -277,7 +277,7 @@ export function renderOverview(config, runtimeState = null, uiState = {}) {
     ${renderHeader(t("overview.title"), t("overview.description"))}
     <section class="petpack-import-card" aria-labelledby="petpack-import-title">
       <div class="petpack-import-copy">
-        <span class="petpack-import-kicker">PetPack</span>
+        <span class="petpack-import-kicker">${t("overview.importPetpackKicker")}</span>
         <h3 id="petpack-import-title">${t("overview.importPetpackTitle")}</h3>
         <p>${t("overview.importPetpackDescription")}</p>
       </div>
