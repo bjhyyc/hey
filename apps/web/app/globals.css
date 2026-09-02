@@ -1641,7 +1641,7 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 .support-block p { margin: 0 0 10px; color: var(--muted); line-height: 1.85; }
 .support-block p:last-child { margin-bottom: 0; }
 .support-block strong { color: var(--ink); font-weight: var(--weight-label); }
-.support-block a { color: var(--emerald); }
+.support-block a:not(.primary-button):not(.ghost-button) { color: var(--emerald); }
 .support-block code { padding: 3px 8px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
 .support-hint { font-size: var(--text-small); }
 .support-value { margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; color: var(--muted); font-size: var(--text-small); }

@@ -58,7 +58,7 @@ export default function SupportPage() {
               <QqChatButton uin={SUPPORT_QQ} webUrl={SUPPORT_QQ_URL} />
             </p>
             <p className="support-hint">
-              已经加过好友的话，上面的按钮会直接唤起电脑或手机上的 QQ 会话窗口。
+              已经加过好友的话，「尝试直接打开 QQ 会话」会唤起电脑或手机上的 QQ 会话窗口。
               如果 QQ 提示「无法发起临时会话」，说明还不是好友——腾讯已把陌生人临时会话并入付费的企点，
               加一下好友就能正常聊了。
             </p>
