@@ -441,6 +441,20 @@ function createHttpApi({ adminOrdersService }) {
   });
 }
 
+describe("delivery reissue window semantics", () => {
+  it("extends with GREATEST so a reissue can never shorten an open window", async () => {
+    // Live test on 2026-09-03 truncated a 30-day window to 72 hours because
+    // the UPDATE blindly wrote now()+extend. The SQL must keep the later of
+    // the two expiries.
+    const { createRequire } = await import("node:module");
+    const require2 = createRequire(import.meta.url);
+    const source = require2("node:fs").readFileSync(
+      require2.resolve("../../platform/src/persistence/postgres-petpack-studio-repository.js"), "utf8");
+    const site = source.slice(source.indexOf("async extendDeliveryWindow"), source.indexOf("async extendDeliveryWindow") + 1600);
+    expect(site).toContain("GREATEST(expires_at, now() + ($2 * interval '1 second'))");
+  });
+});
+
 describe("admin orders HTTP surface", () => {
   const orderId = "3f2b8c1e-8d4a-4f6b-9c2d-1a2b3c4d5e6f";
 

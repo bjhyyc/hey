@@ -1936,7 +1936,10 @@ class PostgresPetPackStudioRepository {
     return this._transaction(async (tx) => {
       const updated = rows(await tx.query(
         `UPDATE delivery
-            SET expires_at = now() + ($2 * interval '1 second'),
+            -- A reissue reopens or extends the window; it must never shorten
+            -- one that is still open (a live test truncated a 30-day window
+            -- to 72 hours on 2026-09-03, hence the GREATEST).
+            SET expires_at = GREATEST(expires_at, now() + ($2 * interval '1 second')),
                 updated_at = now()
           WHERE order_id = $1
             AND status = 'ready'
