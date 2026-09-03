@@ -25,7 +25,7 @@
 - [x] `/how-it-works` 制作流程页(5 步 + 谁做/耗时,首页上传卡下方入口)。
 - [x] 下载地址烘焙:`https://hey-download-1462360313.cos.ap-shanghai.myqcloud.com/client/Hey-Setup-1.0.0.exe` + SHA + 版本(r39)。
 
-## 二、上线测试进行中(2026-09-02)
+## 二、上线测试完成，已全面开放(2026-09-03)
 
 **当前生产状态(我已设置好,可直接开测)**
 - 价格:`hey-petpack-standard-48-20260902` 临时改为 **10 分(¥0.1)**,名称
@@ -40,6 +40,15 @@
 - run:deliverable=6、failed=6、awaiting_character_confirmation=1、video_generating=1
   (后两条分别停了 14 天和 13 天,是历史卡单,不是本次测试产生的)
 - order:paid=14、pending_payment=5
+
+**已全面开放执行记录(2026-09-03)**
+- 价格已回 **¥48**(4800 分)、名称去掉「上线测试价」;退款开关保持开启。
+- 测试期无陌生人订单;两条历史卡单已置 `internal_test_abandoned`。
+- 退款闭环已真实走通(柯基 1 分单):Kaipay 侧退款成功→本地补记收敛 `refunded`,
+  过程中修了三个契约缺口(仓储状态白名单缺 REFUNDED / requestNo 冲突语义 / providerMessage),
+  线上镜像 `refund-loop-20260903`。恢复打包按钮的 HTTP 层 400 也已修(`admin-console-fix-20260903` 起)。
+- `execution_dead=11`/`queue_failed=5` 逐条归类为历史基线(见
+  `docs/operations/dead-execution-baseline-20260903.md`),巡检阈值同步,当前 ok:true。
 
 **测试顺序**
 1. 上传 `petpack-studio-web-r47.zip` 到 CloudBase 并部署。
