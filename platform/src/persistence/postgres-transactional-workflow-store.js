@@ -705,10 +705,16 @@ class PostgresTransactionalWorkflowStore {
           WHERE run_id = $1
             AND action_id = $2
             AND state = 'failed'
-            AND provider_task_id IS NOT NULL
         RETURNING retry_count`,
         [committedRun.id, actionId, safeAssetId, serializeJson(safeOverride)]
       );
+      // No provider_task_id condition here: a retry-exhausted action - the
+      // main rescue case - has its provider fields cleared by the retry reset,
+      // and the guard above already proves attribution through the rejected
+      // report. Requiring the task id made the video override impossible for
+      // exactly the actions it exists for (found live, 2026-09-03). The
+      // worker's processing claim needs run=video_generating, state=succeeded
+      // and the provider_output_asset_id this update writes; not the task id.
       if (!Array.isArray(reset.rows) || reset.rows.length !== 1) {
         throw new Error("The failed action could not be staged for an override processing pass");
       }

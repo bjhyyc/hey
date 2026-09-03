@@ -184,6 +184,9 @@ describe("workflow store QA override commits", () => {
     expect(actionUpdate.sql).toContain("state = 'succeeded'");
     expect(actionUpdate.sql).toContain("admin_qa_override = $4::jsonb");
     expect(actionUpdate.sql).toContain("state = 'failed'");
+    // A retry-exhausted action has provider_task_id cleared; conditioning the
+    // reset on it made the override unusable for its main rescue case.
+    expect(actionUpdate.sql).not.toContain("provider_task_id");
     const outbox = executed.find((entry) => entry.sql.includes("INSERT INTO outbox_job"));
     expect(outbox.params[3]).toContain("process-video-action");
   });
