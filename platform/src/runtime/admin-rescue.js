@@ -15,6 +15,8 @@
  */
 
 const { AdminOrdersService } = require("../api/admin-orders-service");
+const { loadKaipayConfig } = require("../providers/kaipay-payment-provider");
+const { createPaymentProvider } = require("../providers/payment-provider-factory");
 const { loadModelRegistry } = require("../config/model-registry");
 const { PostgresPetPackStudioRepository } = require("../persistence/postgres-petpack-studio-repository");
 const { createPostgresDatabase } = require("../persistence/postgres-database");
@@ -23,7 +25,13 @@ const { ProductionWorkflow } = require("../workflow/production-workflow");
 const { hydrateEnvironmentFromSecretFiles } = require("./load-secret-files");
 
 function usage() {
-  return "usage: admin-rescue.js --order <orderId> --stage <front_master|side_master|sleep_master|package|action:<id>> --reason \"<why>\"";
+  return [
+    "usage: admin-rescue.js --order <orderId> --stage <front_master|side_master|sleep_master|package|action:<id>> --reason \"<why>\"",
+    "       admin-rescue.js --order <orderId> --refund --reason \"<why>\"",
+    "The refund form composes the real Kaipay provider; the request is idempotent",
+    "(refund row ID = refundRequestNo), so retrying a refund the console already",
+    "initiated repeats the same provider request rather than starting a second one."
+  ].join("\n");
 }
 
 function argument(argv, flag) {
@@ -44,7 +52,7 @@ async function resolveAdministrator(database) {
   return { id: rows[0].id, role: "admin" };
 }
 
-async function runRescue({ database, environment, orderId, stage, reason, logger }) {
+async function runRescue({ database, environment, orderId, stage, reason, refund = false, logger }) {
   const repository = new PostgresPetPackStudioRepository({
     database,
     paymentNotificationEncryptionKey: environment.PETPACK_PAYMENT_NOTIFICATION_ENCRYPTION_KEY,
@@ -57,6 +65,17 @@ async function runRescue({ database, environment, orderId, stage, reason, logger
     modelRegistry: loadModelRegistry(environment),
     logger
   });
+  // The real payment provider is composed only for the refund form, so a
+  // plain rerun cannot touch Kaipay even by accident.
+  const paymentProvider = refund
+    ? createPaymentProvider({
+        config: loadKaipayConfig(environment),
+        fetchImpl: globalThis.fetch,
+        eventStore: repository,
+        orderStore: repository,
+        logger
+      })
+    : null;
   const adminOrders = new AdminOrdersService({
     repository,
     workflow,
@@ -67,11 +86,12 @@ async function runRescue({ database, environment, orderId, stage, reason, logger
         throw new Error("admin-rescue does not sign previews");
       }
     },
-    paymentProvider: null,
-    refundEnabled: false,
+    paymentProvider,
+    refundEnabled: refund,
     logger
   });
   const actor = await resolveAdministrator(database);
+  if (refund) return adminOrders.refundOrder({ actor, orderId, reason });
   return adminOrders.rerunStage({ actor, orderId, stage, reason });
 }
 
@@ -79,14 +99,15 @@ async function main({ argv = process.argv.slice(2), environment = process.env, l
   const orderId = argument(argv, "--order");
   const stage = argument(argv, "--stage");
   const reason = argument(argv, "--reason");
-  if (!orderId || !stage || !reason) {
+  const refund = argv.includes("--refund");
+  if (!orderId || !reason || (refund ? stage !== null : !stage)) {
     logger.info?.(usage());
     return null;
   }
   const hydrated = hydrateEnvironmentFromSecretFiles({ environment });
   const database = createPostgresDatabase({ environment: hydrated, logger });
   try {
-    const result = await runRescue({ database, environment: hydrated, orderId, stage, reason, logger });
+    const result = await runRescue({ database, environment: hydrated, orderId, stage, reason, refund, logger });
     logger.info?.(JSON.stringify(result));
     return result;
   } finally {

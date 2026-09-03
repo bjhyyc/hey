@@ -478,11 +478,44 @@ describe("admin orders HTTP surface", () => {
     expect(reissue.status).toBe(200);
   });
 
+  it("routes the packaging resume as a rerun stage but never as an override", async () => {
+    // The console's 恢复打包 died at this layer with 400 on 2026-09-03: only
+    // the service's stage pattern had learned `package`, and the CLI test that
+    // validated the disposal called the service directly, skipping this parse.
+    const adminOrdersService = {
+      searchOrders: vi.fn(),
+      getOrderDetail: vi.fn(),
+      rerunStage: vi.fn(async () => ({ mode: "rerun_authorized", stage: "package", run: { id: "run-1", state: "media_processing" } })),
+      qaOverrideStage: vi.fn(),
+      reissueDelivery: vi.fn()
+    };
+    const api = createHttpApi({ adminOrdersService });
+
+    const packageRerun = await api.handle({
+      method: "POST",
+      path: `/api/admin/orders/${orderId}/rerun`,
+      headers: {},
+      body: JSON.stringify({ stage: "package", reason: "打包门修复后恢复" })
+    });
+    expect(packageRerun.status).toBe(202);
+    expect(adminOrdersService.rerunStage).toHaveBeenCalledWith(expect.objectContaining({ stage: "package" }));
+
+    const packageOverride = await api.handle({
+      method: "POST",
+      path: `/api/admin/orders/${orderId}/qa-override`,
+      headers: {},
+      body: JSON.stringify({ stage: "package", candidateId: orderId, reason: "r" })
+    });
+    expect(packageOverride.status).toBe(400);
+    expect(adminOrdersService.qaOverrideStage).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed search and rerun input before the service runs", async () => {
     const adminOrdersService = {
       searchOrders: vi.fn(),
       getOrderDetail: vi.fn(),
       rerunStage: vi.fn(),
+      qaOverrideStage: vi.fn(),
       reissueDelivery: vi.fn()
     };
     const api = createHttpApi({ adminOrdersService });

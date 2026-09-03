@@ -372,7 +372,14 @@ function parseAdminOperationsQuery(searchParams) {
 }
 
 const ADMIN_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ADMIN_RERUN_STAGE_PATTERN = /^(front_master|side_master|sleep_master|action:[a-z][a-z-]{0,31})$/;
+// The rerun disposal also resumes a run refused at the packaging gate; a QA
+// override has no packaging verdict to flip, so its pattern stays without
+// `package`. These duplicate the service's own validation on purpose (defense
+// in depth), which is exactly why they must be extended together: 2026-09-03
+// the console's 恢复打包 died here with 400 while the service and a CLI test
+// happily accepted the stage.
+const ADMIN_RERUN_STAGE_PATTERN = /^(front_master|side_master|sleep_master|package|action:[a-z][a-z-]{0,31})$/;
+const ADMIN_OVERRIDE_STAGE_PATTERN = /^(front_master|side_master|sleep_master|action:[a-z][a-z-]{0,31})$/;
 
 function parseAdminOrdersSearchQuery(searchParams) {
   const allowed = new Set(["orderId", "projectId"]);
@@ -397,7 +404,7 @@ function parseAdminRerunBody(body) {
 function parseAdminQaOverrideBody(body) {
   assertExactKeys(body, { allowed: ["stage", "candidateId", "reason"] });
   const stage = requireString(body.stage, { maxLength: 64 });
-  if (!ADMIN_RERUN_STAGE_PATTERN.test(stage)) throw badRequest("放行环节无效");
+  if (!ADMIN_OVERRIDE_STAGE_PATTERN.test(stage)) throw badRequest("放行环节无效");
   const candidateId = requireString(body.candidateId, { maxLength: 64 });
   if (!ADMIN_UUID_PATTERN.test(candidateId)) throw badRequest("候选 ID 必须是 UUID");
   return { stage, candidateId, reason: requireString(body.reason, { maxLength: 200 }) };
