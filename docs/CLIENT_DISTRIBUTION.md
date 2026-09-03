@@ -1,8 +1,8 @@
 # 客户端分发方案
 
-产物:`dist/Hey Setup 1.0.0.exe`(104741329 字节,NSIS 一键安装,x64)
+产物:`dist/Hey Setup 1.0.0.exe`(104749963 字节,NSIS 一键安装,x64)
 上传用副本(去掉空格,与下载 URL 逐字一致):`dist/Hey-Setup-1.0.0.exe`
-SHA-256:`89a676ebbe973949bf16fc7aeeb4c72ab450e3f92ee4ced176cca60bff60fc7c`
+SHA-256:`abca8a92d97bde66d9a4ff9634117fd251abd735613a76b04063296157c30c9a`
 品牌:productName `Hey`,appId `com.heyirmy.hey`,窗口标题/关于页均已品牌化。
 已验证(2026-09-02):静默安装 → `%LOCALAPPDATA%\Programs\hey-pet-client\Hey.exe`
 (ProductName Hey 1.0.0)→ 启动窗口标题 Hey → 静默卸载退出码 0;asar 内容核对无误。
@@ -19,7 +19,7 @@ https://hey-download-1462360313.cos.ap-shanghai.myqcloud.com/client/Hey-Setup-1.
 即生效,**不需要**在 CloudBase 配任何构建参数:
 
 - `NEXT_PUBLIC_CLIENT_DOWNLOAD_URL` = 上面的 URL
-- `NEXT_PUBLIC_CLIENT_DOWNLOAD_SHA256` = `89a676eb…fc7c`
+- `NEXT_PUBLIC_CLIENT_DOWNLOAD_SHA256` = `abca8a92…0c9a`
 - `NEXT_PUBLIC_CLIENT_VERSION` = `1.0.0`
 
 因此存储桶名、地域、对象键三者缺一不可:桶 `hey-download`(APPID 1462360313)、
@@ -47,7 +47,7 @@ https://hey-download-1462360313.cos.ap-shanghai.myqcloud.com/client/Hey-Setup-1.
    ```
    Get-FileHash "$env:USERPROFILE\Downloads\Hey-Setup-1.0.0.exe" -Algorithm SHA256
    ```
-   哈希应为 `89A676EBBE973949BF16FC7AEEB4C72AB450E3F92EE4CED176CCA60BFF60FC7C`。
+   哈希应为 `ABCA8A92D97BDE66D9A4FF9634117FD251ABD735613A76B04063296157C30C9A`。
 7. (可选,建议上线后再做)该桶「域名与传输管理」→ 开启默认 CDN 加速域名,
    或绑定 `download.heyirmy.com`(CNAME 到 CDN)。届时把 Dockerfile 里的
    `NEXT_PUBLIC_CLIENT_DOWNLOAD_URL` 默认值改为新域名并重新打包 web 即可。

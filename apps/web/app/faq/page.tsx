@@ -91,7 +91,7 @@ export default function FaqPage() {
         <section className="support-block" id="pay">
           <h2>怎么付款？</h2>
           <p>
-            下单时选择支付宝或微信支付，扫码完成。一个项目对应一笔订单、一份素材包。
+            下单后用<strong>支付宝</strong>扫码完成付款。一个项目对应一笔订单、一份素材包。
           </p>
         </section>
 
