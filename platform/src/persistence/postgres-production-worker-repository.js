@@ -996,7 +996,14 @@ class PostgresProductionWorkerRepository {
       if (row.run_state !== PRODUCTION_STATES.VIDEO_GENERATING || row.action_state !== "succeeded") {
         throw new Error("Video action is not ready for media processing");
       }
-      if (!row.provider_task_id || !row.provider_output_asset_id || !row.source_object_key || !row.source_sha256 || !row.source_byte_size) {
+      // An administrator override re-enters processing on an action whose
+      // provider fields were cleared by the retry reset; the archived source
+      // named by provider_output_asset_id attests the artifact, and the task
+      // id (a polling handle) has no role in processing. Requiring it blocked
+      // the first live video override (2026-09-03) until the id was restored
+      // by hand from the usage ledger. Ordinary passes keep the strict shape.
+      if ((!row.provider_task_id && !row.admin_qa_override) ||
+          !row.provider_output_asset_id || !row.source_object_key || !row.source_sha256 || !row.source_byte_size) {
         throw new Error("Video action has no intact archived provider source");
       }
       if (!row.first_master_object_key || !row.first_master_sha256 || !row.first_master_byte_size ||
