@@ -239,7 +239,10 @@ function normalizeKaipayV3Route(event, adapterVersion) {
 function optionalPaymentStatus(value) {
   if (value === undefined || value === null || value === "") return null;
   const normalized = requiredString(value, "Payment provider status").toUpperCase();
-  if (!["PAID", "PENDING", "EXPIRED", "FAILED"].includes(normalized)) throw new Error("Payment provider status is not canonical");
+  // REFUNDED joined the list on 2026-09-03: the refund reconciliation poll
+  // records the queried provider status, and this whitelist silently froze
+  // every refunded order at "Payment provider status is not canonical".
+  if (!["PAID", "PENDING", "EXPIRED", "FAILED", "REFUNDED"].includes(normalized)) throw new Error("Payment provider status is not canonical");
   return normalized;
 }
 

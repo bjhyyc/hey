@@ -336,6 +336,46 @@ describe("Kaipay payment contract", () => {
     }));
   });
 
+  it("canonicalizes a provider-refunded order so the refund poll can converge", async () => {
+    // 2026-09-03: the first real refund completed at Kaipay, and the
+    // reconciliation poll then died recording the queried status - REFUNDED
+    // was missing from the repository's status whitelist. The provider layer
+    // must deliver state "refunded" with a payment event key end to end.
+    const state = stores(order({ paymentPayMethod: null }));
+    const client = {
+      createCheckout: vi.fn(),
+      queryOrder: vi.fn(async () => ({
+        platformOrderId: "order-1",
+        providerOrderId: "kp-order-1",
+        amountFen: 1990,
+        currency: "CNY",
+        paymentMethod: "KAIPAY",
+        paymentChannel: "ALIPAY",
+        providerCode: "alipay",
+        payMethod: "alipay",
+        scene: "web",
+        status: "REFUNDED",
+        nextAction: { type: "none" }
+      })),
+      refund: vi.fn()
+    };
+    const provider = new KaipayPaymentProvider({
+      config: productionConfig(),
+      kaipayClient: client,
+      notificationProtocol: { verify: vi.fn(), acknowledge: vi.fn() },
+      ...state
+    });
+    const result = await provider.queryStatus({ platformOrderId: "order-1" });
+    expect(result.state).toBe("refunded");
+    expect(typeof result.paymentEventKey).toBe("string");
+    expect(result.paymentEventKey.length).toBe(64);
+    expect(state.eventStore.appendIdempotent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "payment_status_queried",
+      state: "refunded",
+      providerStatus: "REFUNDED"
+    }));
+  });
+
   it("never infers a missing payMethod for Fuyou or combines a partial frozen route with config", async () => {
     const queryOrder = vi.fn();
     const provider = new KaipayPaymentProvider({

@@ -95,6 +95,40 @@ describe("AdminOrdersService.refundOrder", () => {
     expect(audits[0].eventType).toBe("admin_refund_requested");
   });
 
+  it("treats Kaipay's refundRequestNo conflict as already-registered and moves to the poll", async () => {
+    // Learned from the first real refund (2026-09-03): Kaipay answered the
+    // console's first click, our response handling failed, and every replay of
+    // the same refundRequestNo came back business code 7 ("已被其他退款请求
+    // 占用"). The conflict proves our request number is registered there, so
+    // the order must advance to refund_pending instead of erroring forever.
+    const conflict = Object.assign(new Error("Kaipay refund was not accepted"), {
+      code: "kaipay_business_error",
+      providerCode: 7,
+      providerMessage: "refundRequestNo 已被其他退款请求占用"
+    });
+    const { service, repository, audits } = createService({
+      providerOverrides: { refund: vi.fn(async () => { throw conflict; }) }
+    });
+    const outcome = await service.refundOrder({ actor: admin, orderId: "order-1", reason: "重试首次500的退款" });
+    expect(outcome.mode).toBe("refund_requested");
+    expect(repository.applyAdminRefundRequested).toHaveBeenCalledWith(expect.objectContaining({
+      refundId: "refund-row-1",
+      providerRefundId: null
+    }));
+    expect(audits[0].eventType).toBe("admin_refund_requested");
+    expect(audits[0].metadata.alreadyAtProvider).toBe(true);
+
+    // Any other business code still fails loudly.
+    const other = Object.assign(new Error("Kaipay refund was not accepted"), {
+      code: "kaipay_business_error",
+      providerCode: 3
+    });
+    const failing = createService({ providerOverrides: { refund: vi.fn(async () => { throw other; }) } });
+    await expect(failing.service.refundOrder({ actor: admin, orderId: "order-1", reason: "r" }))
+      .rejects.toThrowError(/not accepted/);
+    expect(failing.repository.applyAdminRefundRequested).not.toHaveBeenCalled();
+  });
+
   it("requires a reason to initiate but not to poll", async () => {
     const { service, paymentProvider } = createService();
     await expect(service.refundOrder({ actor: admin, orderId: "order-1" })).rejects.toThrowError(/reason is required/i);

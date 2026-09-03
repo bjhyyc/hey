@@ -323,6 +323,10 @@ async function readBoundedJsonResponse(response, operation) {
     const error = new Error(`Kaipay ${operation} was not accepted`);
     error.code = "kaipay_business_error";
     error.providerCode = Number.isSafeInteger(Number(parsed.code)) ? Number(parsed.code) : null;
+    // Kaipay explains the business code in `msg` ("refundRequestNo 已被其他退款
+    // 请求占用", …). Carry a bounded copy: 2026-09-03 the first real refund
+    // failure was undiagnosable because only the numeric code survived.
+    error.providerMessage = typeof parsed.msg === "string" ? parsed.msg.replace(/[\r\n ]/g, " ").slice(0, 200) : null;
     throw error;
   }
   return requireV3Data(parsed.data, `Kaipay ${operation} data`);

@@ -537,15 +537,33 @@ class AdminOrdersService {
     if (staged.amountFen !== order.amountFen) {
       throw refundUnavailableError("The staged refund amount does not match the order; partial refunds are not supported");
     }
-    const providerResult = await this.paymentProvider.refund({
-      platformOrderId: order.id,
-      // The refund row ID doubles as the stable unique refundRequestNo, so a
-      // retry after a transport failure repeats the same provider request.
-      refundId: staged.refundId,
-      amountFen: staged.amountFen,
-      reason: safeReason,
-      idempotencyKey: `admin-refund:${order.id}`
-    });
+    let providerResult;
+    try {
+      providerResult = await this.paymentProvider.refund({
+        platformOrderId: order.id,
+        // The refund row ID doubles as the stable unique refundRequestNo, so a
+        // retry after a transport failure repeats the same provider request.
+        refundId: staged.refundId,
+        amountFen: staged.amountFen,
+        reason: safeReason,
+        idempotencyKey: `admin-refund:${order.id}`
+      });
+    } catch (error) {
+      // Kaipay treats a replayed refundRequestNo as a conflict, not an
+      // idempotent replay (business code 7, "refundRequestNo 已被其他退款请求
+      // 占用" - learned from the first real refund on 2026-09-03, where the
+      // refund succeeded at the provider while our response handling failed).
+      // The conflict therefore proves OUR request number is already registered
+      // there, so the order advances to refund_pending and the ordinary
+      // reconciliation poll converges on the provider's verdict.
+      if (error?.code !== "kaipay_business_error" || error?.providerCode !== 7) throw error;
+      this.logger.warn?.("petpack.admin.refund_already_at_provider", {
+        orderId: order.id,
+        refundId: staged.refundId,
+        providerMessage: error?.providerMessage || null
+      });
+      providerResult = { providerRefundId: null, alreadyAtProvider: true };
+    }
     await this.repository.applyAdminRefundRequested({
       orderId: order.id,
       refundId: staged.refundId,
@@ -561,7 +579,8 @@ class AdminOrdersService {
         reason: safeReason,
         refundId: staged.refundId,
         amountFen: staged.amountFen,
-        alreadyStaged: staged.alreadyRequested === true
+        alreadyStaged: staged.alreadyRequested === true,
+        alreadyAtProvider: providerResult.alreadyAtProvider === true
       }
     });
     this.logger.warn?.("petpack.admin.refund_requested", {
