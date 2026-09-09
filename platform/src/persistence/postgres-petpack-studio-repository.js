@@ -2923,10 +2923,16 @@ class PostgresPetPackStudioRepository {
     const id = this.idFactory();
     return this._transaction(async (tx) => {
       const inserted = rows(await tx.query(
+        // A fingerprint may hold many rows since migration 022: the verdict is
+        // reusable but the ROW is what checkout validates, so a cache hit that
+        // checkout would refuse is re-issued as a fresh row for this customer.
+        // The old upsert returned the EXISTING row - the very thing 022 set out
+        // to stop - and, once 022 dropped the unique constraint, every insert
+        // failed outright ("no unique or exclusion constraint matching the ON
+        // CONFLICT specification"), taking the whole pre-check screen with it.
         `INSERT INTO photo_precheck
            (id, user_id, species, fingerprint, photo_sha256s, verdicts, passed, model_id, prompt_version)
          VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9)
-         ON CONFLICT (fingerprint) DO UPDATE SET fingerprint = photo_precheck.fingerprint
          RETURNING id, user_id, species, fingerprint, photo_sha256s, verdicts, passed,
                    model_id, prompt_version, created_at`,
         [
