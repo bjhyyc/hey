@@ -14,40 +14,19 @@ import type { ProjectView } from "@/lib/studio-browser-api";
 // shows "redo" - so the components are fed fixtures here instead. Delete or
 // ignore in production; the route is excluded from the production build below.
 
-const ACTION_LABELS: Array<[string, string]> = [
-  ["idle", "待机"],
-  ["sneeze", "打喷嚏"],
-  ["roll", "打滚"],
-  ["sleep-transition", "入睡"],
-  ["sleep-loop", "睡眠循环"],
-  ["stretch", "伸懒腰"],
-  ["hover-attention", "舔脚"],
-];
 
-function actions(states: string[]): ProjectView["actions"] {
-  return ACTION_LABELS.map(([actionId, label], index) => {
-    const stateLabel = states[index] ?? "排队中";
-    return {
-      actionId,
-      label,
-      stateLabel,
-      regenerated: stateLabel === "未通过",
-      complete: stateLabel === "已完成",
-    };
-  });
-}
 
 const LIST_ITEMS = [
   { project: { id: "a", displayName: "团团", state: "deliverable", updatedAt: "2026-08-19T04:29:00Z" },
-    order: { status: "paid" }, productionState: "deliverable", downloadReady: true, failed: false, nextStep: "delivery" },
+    order: { status: "paid" }, regeneratingCharacter: false, downloadReady: true, failed: false, nextStep: "delivery" },
   { project: { id: "b", displayName: "毛毛", state: "video_generating", updatedAt: "2026-08-19T03:10:00Z" },
-    order: { status: "paid" }, productionState: "video_generating", downloadReady: false, failed: false, nextStep: "progress" },
+    order: { status: "paid" }, regeneratingCharacter: false, downloadReady: false, failed: false, nextStep: "progress" },
   { project: { id: "c", displayName: "橘子", state: "awaiting_photos", updatedAt: "2026-08-18T21:02:00Z" },
-    order: { status: "paid" }, productionState: "awaiting_photos", downloadReady: false, failed: false, nextStep: "photos" },
+    order: { status: "paid" }, regeneratingCharacter: false, downloadReady: false, failed: false, nextStep: "photos" },
   { project: { id: "d", displayName: "小黑", state: "awaiting_confirmation", updatedAt: "2026-08-18T20:41:00Z" },
-    order: { status: "paid" }, productionState: "awaiting_confirmation", downloadReady: false, failed: false, nextStep: "character" },
+    order: { status: "paid" }, regeneratingCharacter: false, downloadReady: false, failed: false, nextStep: "character" },
   { project: { id: "e", displayName: "豆豆", state: "failed", updatedAt: "2026-08-18T19:15:00Z" },
-    order: { status: "paid" }, productionState: "failed", downloadReady: false, failed: true, nextStep: "progress" },
+    order: { status: "paid" }, regeneratingCharacter: false, downloadReady: false, failed: true, nextStep: "progress" },
 ];
 
 const MASTER_PREVIEW = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><ellipse cx='210' cy='205' rx='72' ry='58' fill='%23b9c6bd'/><circle cx='210' cy='128' r='46' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>母图预览</text></svg>";
@@ -63,7 +42,7 @@ const FIXTURES: Record<string, ProjectView> = {
       { id: "p3", label: "生成七个动作", state: "active" },
       { id: "p4", label: "抠图与打包", state: "pending" },
     ],
-    actions: actions(["已完成", "已完成", "生成中", "抠像中", "未通过", "已生成", "排队中"]),
+    actionProgress: { percent: 40 },
     downloadReady: false,
     failed: false,
   },
@@ -77,7 +56,7 @@ const FIXTURES: Record<string, ProjectView> = {
       { id: "p3", label: "生成七个动作", state: "active" },
       { id: "p4", label: "抠图与打包", state: "pending" },
     ],
-    actions: actions(["已完成", "已完成", "已完成", "未通过", "排队中", "排队中", "排队中"]),
+    actionProgress: { percent: 40 },
     downloadReady: false,
     failed: true,
   },
@@ -86,113 +65,7 @@ const FIXTURES: Record<string, ProjectView> = {
     order: { id: "o4", status: "paid", amountFen: 1 },
     characterCandidates: { front: null, side: null, canConfirm: false },
     progress: [],
-    actions: [],
-    downloadReady: false,
-    failed: false,
-  },
-  charPartial: {
-    project: { id: "charPartial", displayName: "团团", state: "producing" },
-    order: { id: "o5", status: "paid", amountFen: 1 },
-    characterCandidates: {
-      front: { id: "f1", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 2, attempts: [] },
-      side: null,
-      canConfirm: false,
-    },
-    progress: [],
-    actions: [],
-    downloadReady: false,
-    failed: false,
-  },
-  charReady: {
-    project: { id: "charReady", displayName: "团团", state: "producing" },
-    order: { id: "o6", status: "paid", amountFen: 1 },
-    characterCandidates: {
-      front: { id: "f2", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: true, remainingRegenerations: 1, attempts: [] },
-      side: { id: "s2", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0, attempts: [] },
-      canConfirm: true,
-    },
-    progress: [],
-    actions: [],
-    downloadReady: false,
-    failed: false,
-  },
-  charRegenerating: {
-    // The state the confirm button used to freeze in: both candidates still
-    // present from the previous round, but the run is generating again so the
-    // customer cannot confirm yet.
-    project: { id: "charRegenerating", displayName: "团团", state: "producing" },
-    order: { id: "o8", status: "paid", amountFen: 1 },
-    characterCandidates: {
-      front: { id: "f3", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 1, attempts: [] },
-      side: { id: "s3", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 2, attempts: [] },
-      canConfirm: false,
-    },
-    productionState: "awake_generating",
-    progress: [],
-    actions: [],
-    downloadReady: false,
-    failed: false,
-  },
-  charPastConfirmation: {
-    // Long past the character step: canConfirm is false here too, and the page
-    // used to tell the owner a master was still being regenerated.
-    project: { id: "charPastConfirmation", displayName: "团团", state: "producing" },
-    order: { id: "o10", status: "paid", amountFen: 1 },
-    characterCandidates: {
-      front: { id: "f4", view: "front", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0, attempts: [] },
-      side: { id: "s4", view: "side", previewUrl: MASTER_PREVIEW, canRegenerate: false, remainingRegenerations: 0, attempts: [] },
-      canConfirm: false,
-    },
-    productionState: "video_generating",
-    progress: [],
-    actions: [],
-    downloadReady: false,
-    failed: false,
-  },
-  charChoose: {
-    // Regenerations spent, three versions on record: the customer should be
-    // able to keep the best one rather than whichever came last.
-    project: { id: "charChoose", displayName: "团团", state: "producing" },
-    order: { id: "o9", status: "paid", amountFen: 1 },
-    characterCandidates: {
-      front: {
-        id: "f-v3", view: "front", previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e0dee6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 3 版</text></svg>",
-        canRegenerate: false, remainingRegenerations: 0,
-        attempts: [
-          { id: "f-v1", generationAttempt: 1, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e6dfd6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 1 版</text></svg>", isCurrent: false },
-          { id: "f-v2", generationAttempt: 2, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 2 版</text></svg>", isCurrent: false },
-          { id: "f-v3", generationAttempt: 3, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e0dee6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 3 版</text></svg>", isCurrent: true }
-        ]
-      },
-      // Two versions beside the three above, so the slots can be seen holding
-      // their size rather than stretching to fill the row.
-      side: {
-        id: "s-v2", view: "side", previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 2 版</text></svg>",
-        canRegenerate: true, remainingRegenerations: 1,
-        attempts: [
-          { id: "s-v1", generationAttempt: 1, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23e6dfd6'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 1 版</text></svg>", isCurrent: false },
-          { id: "s-v2", generationAttempt: 2, previewUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='300'><rect width='420' height='300' fill='%23dfe6e1'/><circle cx='210' cy='150' r='70' fill='%23b9c6bd'/><text x='210' y='285' font-family='sans-serif' font-size='15' fill='%230d0d0d59' text-anchor='middle'>第 2 版</text></svg>", isCurrent: true }
-        ]
-      },
-      canConfirm: true,
-    },
-    productionState: "awaiting_character_confirmation",
-    progress: [],
-    actions: [],
-    downloadReady: false,
-    failed: false,
-  },
-  deliveredProgress: {
-    project: { id: "deliveredProgress", displayName: "团团", state: "deliverable" },
-    order: { id: "o7", status: "paid", amountFen: 1 },
-    characterCandidates: { front: null, side: null, canConfirm: false },
-    progress: [
-      { id: "p1", label: "照片已接收", state: "completed" },
-      { id: "p2", label: "母图已确认", state: "completed" },
-      { id: "p3", label: "生成七个动作", state: "completed" },
-      { id: "p4", label: "抠图与打包", state: "completed" },
-    ],
-    actions: actions(["已完成", "已完成", "已完成", "已完成", "已完成", "已完成", "已完成"]),
+    actionProgress: { percent: 40 },
     downloadReady: true,
     failed: false,
   },
@@ -206,7 +79,7 @@ const FIXTURES: Record<string, ProjectView> = {
       { id: "p3", label: "生成七个动作", state: "completed" },
       { id: "p4", label: "抠图与打包", state: "completed" },
     ],
-    actions: actions(["已完成", "已完成", "已完成", "已完成", "已完成", "已完成", "已完成"]),
+    actionProgress: { percent: 40 },
     downloadReady: true,
     failed: false,
   },

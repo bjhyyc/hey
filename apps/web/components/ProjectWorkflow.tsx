@@ -54,23 +54,23 @@ function Candidate({ candidate, label, onRegenerate, busy, selectedId, onSelect 
     <div className="candidate-preview">
       {previewUrl ? (
         <button
-          aria-label={`放大查看${label}母图`}
+          aria-label={`放大查看${label}形象图`}
           className="candidate-preview-open"
           onClick={() => setZoomed(true)}
           type="button"
         >
-          <img alt={`${label}母图`} src={previewUrl} />
+          <img alt={`${label}形象图`} src={previewUrl} />
         </button>
       ) : <span>正在生成 {label}</span>}
     </div>
     {zoomed && previewUrl
-      ? <MasterLightbox alt={`${label}母图`} onClose={() => setZoomed(false)} src={previewUrl} />
+      ? <MasterLightbox alt={`${label}形象图`} onClose={() => setZoomed(false)} src={previewUrl} />
       : null}
     {/* Regenerating replaces the picture on screen but keeps every earlier
         version on record, so once there is more than one, let the customer
         keep whichever is best rather than whichever came last. */}
     {attempts.length > 1 ? (
-      <div className="candidate-attempts" role="radiogroup" aria-label={`选择${label}母图版本`}>
+      <div className="candidate-attempts" role="radiogroup" aria-label={`选择${label}形象图版本`}>
         {attempts.map((attempt) => {
           const active = (selectedId ?? candidate?.id) === attempt.id;
           return (
@@ -150,10 +150,10 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
           shoot them only creates doubt the customer cannot act on. Tell them
           what to look at, and what each control does. */}
       <div className="workflow-notice">
-        <p><strong>看这两张像不像你的宠物</strong>：五官、毛色、花色位置。七个动作都会照着它们生成。</p>
+        <p><strong>看这两张像不像你的宠物</strong>：五官、毛色、花色位置。所有动作都会照着它们生成。</p>
         <p>AI 是依据你的照片重新绘制，会尽量贴近，但不是照片复刻。不满意可以单独重新生成某一张。</p>
       </div>
-      {front && side && !canConfirm && view.productionState === "awake_generating"
+      {front && side && !canConfirm && view.regeneratingCharacter
         ? <p className="regenerating-note">正在重新生成，通常 1~2 分钟；完成后这里会自动更新。</p>
         : null}
       <div className="candidate-grid">
@@ -172,7 +172,7 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
           window.location.assign(`/projects/${encodeURIComponent(projectId)}/progress`);
         } catch (error) { setMessage(error instanceof Error ? error.message : "确认失败"); setBusy(false); }
       })()} type="button">{busy ? "正在确认…" : "就用这个形象，开始制作"}</button>
-      <p className="form-message">{message || "点击即表示你认可这个形象；七个动作将照此生成，中途无法更换"}</p>
+      <p className="form-message">{message || "点击即表示你认可这个形象；所有动作将照此生成，中途无法更换"}</p>
     </section>;
   }
   if (mode === "delivery") {
@@ -204,31 +204,15 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
       <i>{step.state === "completed" ? "✓" : index + 1}</i><span>{step.label || "处理中"}</span>
       {step.state === "active" ? <em aria-hidden="true" className="progress-live" /> : null}
     </li>)}</ol>
-    {view.actions.length > 0 ? (() => {
-      const doneCount = view.actions.filter((action) => action.complete).length;
-      // The API sends fixed Chinese state labels; colour and motion key off
-      // them so a working step reads as alive, a finished one as settled and a
-      // redo as attention-worthy rather than broken.
-      const stateTone = (action: ProjectView["actions"][number]) => {
-        if (action.complete) return "done";
-        if (action.stateLabel.includes("生成中") || action.stateLabel.includes("抠像中")) return "working";
-        if (action.stateLabel.includes("未通过")) return "redo";
-        return "queued";
-      };
-      return <div className="action-progress">
+    {view.actionProgress ? (
+      <div className="action-progress">
         <div className="action-progress-heading">
-          <p>七个动作　<strong>{doneCount}/{view.actions.length}</strong></p>
-          <div aria-hidden="true" className="action-progress-bar"><i style={{ width: `${Math.round((doneCount / view.actions.length) * 100)}%` }} /></div>
+          <p>动作制作　<strong>{view.actionProgress.percent}%</strong></p>
+          <div aria-hidden="true" className="action-progress-bar"><i style={{ width: `${view.actionProgress.percent}%` }} /></div>
         </div>
-        <ul>{view.actions.map((action) => {
-          const tone = stateTone(action);
-          return <li className={`tone-${tone}`} key={action.actionId}>
-            <span><i aria-hidden="true" className={`action-dot dot-${tone}`} />{action.label}</span>
-            <small>{action.regenerated && !action.complete ? `${action.stateLabel}（质量不达标，正在重做）` : action.stateLabel}</small>
-          </li>;
-        })}</ul>
-      </div>;
-    })() : null}
+        <p className="action-progress-note">每个动作都会自动检查效果，不合格的会自动重做，所以进度偶尔会停一会儿。</p>
+      </div>
+    ) : null}
     {view.failed ? <p className="error-state">制作遇到问题，已转入内部处理，不需要重新付款。</p> : null}
     {view.downloadReady ? <Link className="primary-button inline-button" href={`/projects/${encodeURIComponent(projectId)}/delivery`}>下载素材包</Link> : <p className="form-message">页面会自动更新，关闭后稍后回来也不会丢失进度。</p>}
   </section>;

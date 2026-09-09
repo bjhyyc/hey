@@ -3,13 +3,17 @@ const {
   PRODUCTION_STATES
 } = require("../domain/production-state-machine");
 
+// What the customer is told while they wait. These are deliberately the three
+// things they care about - their character is settled, the animations are being
+// made, the pack is being assembled - and deliberately NOT the production
+// stages behind them. The internal pipeline (which masters are drawn in what
+// order, how a video is bounded, what the quality gates measure, how many
+// segments make an action) is the product's own know-how, and a progress
+// screen that narrates it hands a competitor the recipe for free.
 const USER_PROGRESS_STEPS = Object.freeze([
   { id: "character-confirmed", label: "宠物形象已确认" },
-  { id: "sleep-lock", label: "正在锁定睡眠姿态" },
-  { id: "videos", label: "正在生成 7 个视频" },
-  { id: "media-qa", label: "正在抠图与统一尺寸" },
-  { id: "validate", label: "正在验证 PetPack" },
-  { id: "package", label: "正在打包下载" }
+  { id: "animations", label: "正在制作动作" },
+  { id: "package", label: "正在生成素材包" }
 ]);
 
 function getProgressStepState(runState) {
@@ -21,34 +25,17 @@ function getProgressStepState(runState) {
     case PRODUCTION_STATES.AWAITING_CHARACTER_CONFIRMATION:
       break;
     case PRODUCTION_STATES.SLEEP_GENERATING:
-      complete.add("character-confirmed");
-      active = "sleep-lock";
-      break;
     case PRODUCTION_STATES.AWAITING_PROMPT_GATE:
     case PRODUCTION_STATES.VIDEO_GENERATING:
       complete.add("character-confirmed");
-      complete.add("sleep-lock");
-      active = "videos";
+      active = "animations";
       break;
     case PRODUCTION_STATES.MEDIA_PROCESSING:
-      complete.add("character-confirmed");
-      complete.add("sleep-lock");
-      complete.add("videos");
-      active = "media-qa";
-      break;
     case PRODUCTION_STATES.PACKAGING:
-      complete.add("character-confirmed");
-      complete.add("sleep-lock");
-      complete.add("videos");
-      complete.add("media-qa");
-      active = "package";
-      break;
     case PRODUCTION_STATES.VALIDATING:
       complete.add("character-confirmed");
-      complete.add("sleep-lock");
-      complete.add("videos");
-      complete.add("media-qa");
-      active = "validate";
+      complete.add("animations");
+      active = "package";
       break;
     case PRODUCTION_STATES.DELIVERABLE:
       USER_PROGRESS_STEPS.forEach((step) => complete.add(step.id));
@@ -63,43 +50,22 @@ function getProgressStepState(runState) {
   }));
 }
 
-// The seven actions in the order the customer sees them, with the wording used
-// everywhere else in the product rather than the internal action IDs.
-const ACTION_LABELS = Object.freeze({
-  idle: "待机",
-  sneeze: "打喷嚏",
-  roll: "打滚",
-  stretch: "伸懒腰",
-  "hover-attention": "抬头看你",
-  "sleep-transition": "入睡",
-  "sleep-loop": "睡眠循环"
-});
-const ACTION_ORDER = Object.freeze([
-  "idle", "sneeze", "roll", "stretch", "hover-attention", "sleep-transition", "sleep-loop"
-]);
-const ACTION_STATE_LABELS = Object.freeze({
-  queued: "排队中",
-  running: "生成中",
-  succeeded: "已生成",
-  processed: "抠像中",
-  qa_passed: "已完成",
-  failed: "未通过"
-});
-
-function createActionProgress(actions) {
-  const byId = new Map((Array.isArray(actions) ? actions : []).map((action) => [action.actionId, action]));
-  return ACTION_ORDER.filter((actionId) => byId.has(actionId)).map((actionId) => {
-    const action = byId.get(actionId);
-    return {
-      actionId,
-      label: ACTION_LABELS[actionId] || actionId,
-      state: action.state,
-      stateLabel: ACTION_STATE_LABELS[action.state] || action.state,
-      // A redo is worth showing: it is the quality gate working, not a fault.
-      regenerated: Number(action.retryCount || 0) > 0,
-      complete: action.state === "qa_passed"
-    };
-  });
+/**
+ * How far the animation work has got, as a single percentage.
+ *
+ * It used to be a per-action list: every clip named, its own state, and a "重做"
+ * badge whenever a quality gate rejected a take. That told the customer nothing
+ * they could act on - they wait either way - while telling anyone reading the
+ * response exactly how the pack is assembled and where it tends to fail. The
+ * percentage is what the customer actually wants; the composition stays ours.
+ */
+function createActionProgressSummary(actions) {
+  const list = Array.isArray(actions) ? actions : [];
+  if (list.length === 0) return null;
+  const done = list.filter((action) => action.state === "qa_passed").length;
+  // Rounded to a 5% step so the number cannot be used to count the segments.
+  const percent = Math.min(100, Math.max(0, Math.round((done / list.length) * 20) * 5));
+  return { percent };
 }
 
 function createUserProjectView({ project, order, run, characterCandidates, delivery, actions } = {}) {
@@ -130,13 +96,15 @@ function createUserProjectView({ project, order, run, characterCandidates, deliv
       side,
       canConfirm: paidAndConfirming && Boolean(front && side)
     },
-    // The page needs to tell "a master is being regenerated" apart from "this
-    // run is long past the character step": both leave canConfirm false, and
-    // without the run's own state the character page told an owner whose videos
-    // were already generating that a master was still coming.
-    productionState: run && run.state ? run.state : null,
+    // The character page needs one bit: is a master still being drawn (so
+    // "coming shortly") or is the run long past that step (so the page should
+    // move on)? Both leave canConfirm false. It used to read the run's raw
+    // state, which meant shipping the whole internal stage vocabulary -
+    // sleep_generating, awaiting_prompt_gate, media_processing, validating - to
+    // every browser. One boolean answers the question and names nothing.
+    regeneratingCharacter: Boolean(run && run.state === PRODUCTION_STATES.AWAKE_GENERATING),
     progress: getProgressStepState(run && run.state),
-    actions: createActionProgress(actions),
+    actionProgress: createActionProgressSummary(actions),
     downloadReady: Boolean(delivery && delivery.status === "ready"),
     failed: Boolean(run && run.state === PRODUCTION_STATES.FAILED)
   };
@@ -174,7 +142,8 @@ function createUserProjectSummary({ project, order, run, delivery } = {}) {
       paymentMethod: order.paymentMethod,
       amountFen: order.amountFen
     } : null,
-    productionState: run ? run.state : null,
+    // `nextStep` already says what the customer should do; the run's internal
+    // stage name would only narrate the pipeline in the project list.
     downloadReady: Boolean(delivery && ["ready", "downloaded"].includes(delivery.status)),
     failed: Boolean(run && run.state === PRODUCTION_STATES.FAILED),
     nextStep: getProjectNextStep({ order, run, delivery })

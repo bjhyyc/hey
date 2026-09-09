@@ -8,6 +8,7 @@ import {
   requireHttpsPaymentUrl,
 } from "@/lib/kaipay-payment-ui";
 import { loadHomePhotoDraft } from "@/lib/home-photo-draft";
+import { declaredPriceDisplay, priceDisplay } from "@/lib/pricing";
 import {
   loadPrecheckPass,
   precheckPassCoversPhotos,
@@ -20,7 +21,7 @@ import {
   type KaipayPaymentChannel,
 } from "@/lib/studio-browser-api";
 
-type QrPayment = { projectId: string; imageUrl: string; paymentChannel: KaipayPaymentChannel };
+type QrPayment = { projectId: string; imageUrl: string; paymentChannel: KaipayPaymentChannel; amountFen: number | null };
 
 export function NewProjectForm() {
   const router = useRouter();
@@ -98,6 +99,7 @@ export function NewProjectForm() {
     action: Extract<KaipayNextAction, { type: "qr_code" }>,
     projectId: string,
     selectedPaymentChannel: KaipayPaymentChannel,
+    chargedAmountFen: number | null,
   ) {
     const presentation = kaipayQrPresentation(selectedPaymentChannel);
     let imageUrl = action.qrCodeImageUrl ? requireHttpsPaymentUrl(action.qrCodeImageUrl) : "";
@@ -106,7 +108,7 @@ export function NewProjectForm() {
       imageUrl = await toDataURL(action.qrCode, { errorCorrectionLevel: "M", margin: 2, width: 280 });
     }
     if (!imageUrl) throw new Error(presentation.missingQrMessage);
-    setQrPayment({ projectId, imageUrl, paymentChannel: selectedPaymentChannel });
+    setQrPayment({ projectId, imageUrl, paymentChannel: selectedPaymentChannel, amountFen: chargedAmountFen });
     setMessage(presentation.scanMessage);
     setBusy(false);
   }
@@ -115,6 +117,7 @@ export function NewProjectForm() {
     action: KaipayNextAction | undefined,
     projectId: string,
     selectedPaymentChannel: KaipayPaymentChannel,
+    chargedAmountFen: number | null,
   ) {
     if (!action) throw new Error("支付服务没有返回下一步操作，请稍后重试");
     if (action.type === "redirect") {
@@ -122,7 +125,7 @@ export function NewProjectForm() {
       return;
     }
     if (action.type === "qr_code") {
-      await renderQrAction(action, projectId, selectedPaymentChannel);
+      await renderQrAction(action, projectId, selectedPaymentChannel, chargedAmountFen);
       return;
     }
     if (action.type === "poll" || action.type === "none") {
@@ -151,7 +154,7 @@ export function NewProjectForm() {
         species,
         ...(precheckPass && precheckCovered ? { precheckId: precheckPass.precheckId } : {}),
       });
-      await handleNextAction(result.checkout.nextAction, result.project.id, paymentChannel);
+      await handleNextAction(result.checkout.nextAction, result.project.id, paymentChannel, result.order?.amountFen ?? null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "暂时无法创建项目");
       setBusy(false);
@@ -160,9 +163,22 @@ export function NewProjectForm() {
 
   if (qrPayment) {
     const presentation = kaipayQrPresentation(qrPayment.paymentChannel);
+    // The amount the server quoted for this order - never a page constant.
+    const price = priceDisplay(qrPayment.amountFen);
     return <section className="workflow-card payment-qr-card">
       <h2>扫码完成付款</h2>
+      {price ? (
+        <div className="payment-amount" aria-label={`应付 ${price.payable} 元`}>
+          <span className="payment-amount-payable"><i>¥</i>{price.payable}</span>
+          {price.listPrice ? (
+            <span className="payment-amount-discount">
+              原价 <s>¥{price.listPrice}</s> · {price.discountLabel}折
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <img alt={presentation.imageAlt} className="payment-qr-image" height="280" src={qrPayment.imageUrl} width="280" />
+      {price ? <p className="payment-amount-confirm">请核对金额：本单应付 <strong>¥{price.payable}</strong>，付款后不再收取其它费用</p> : null}
       <p className="form-message" aria-live="polite">{message}</p>
       <button className="primary-button form-submit" onClick={() => void studioBrowserApi.refreshPaymentStatus(qrPayment.projectId).then((result) => {
         if (result.order?.status === "paid") router.push(`/projects/${encodeURIComponent(qrPayment.projectId)}/photos`);
@@ -173,6 +189,16 @@ export function NewProjectForm() {
 
   return <section aria-labelledby="payment-title" className="payment-picker">
     <div><h2 id="payment-title">确认信息并付款</h2></div>
+    {(() => {
+      const price = declaredPriceDisplay();
+      if (!price) return null;
+      return <div className="payment-amount payment-amount-inline">
+        <span className="payment-amount-payable"><i>¥</i>{price.payable}</span>
+        {price.listPrice ? (
+          <span className="payment-amount-discount">原价 <s>¥{price.listPrice}</s> · {price.discountLabel}折</span>
+        ) : null}
+      </div>;
+    })()}
     <div className="workflow-notice">
       <p><strong>一次付费包含全部制作</strong>：形象生成与确认、睡姿、七个动作视频、抠图校正和打包下载。</p>
       <p>两张形象母图各有 2 次免费重新生成机会；付款后上传照片，全程通常 10–20 分钟。付款遇到问题请勿重复下单。</p>

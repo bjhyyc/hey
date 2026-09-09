@@ -35,17 +35,13 @@ export type ProjectView = {
     side: CharacterCandidate | null;
     canConfirm: boolean;
   };
-  // The run's own state, so the page can tell a master being regenerated apart
-  // from a run that is long past the character step.
-  productionState?: string | null;
+  // One bit, not the run's stage name: is a character master still being drawn
+  // (so "coming shortly") or is the run long past that step?
+  regeneratingCharacter?: boolean;
   progress: Array<{ id?: string; label?: string; state?: string }>;
-  actions: Array<{
-    actionId: string;
-    label: string;
-    stateLabel: string;
-    regenerated: boolean;
-    complete: boolean;
-  }>;
+  // How far the animation work has got. The server deliberately sends a
+  // rounded percentage rather than the clip list it used to send.
+  actionProgress?: { percent: number } | null;
   downloadReady: boolean;
   failed: boolean;
 };

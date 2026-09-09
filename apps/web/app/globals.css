@@ -1730,3 +1730,14 @@ html { scroll-behavior: smooth; }
 .faq-interactions li strong { color: var(--ink); font-weight: var(--weight-label); }
 .faq-interactions li span { color: var(--emerald); }
 .support-block ul:not(.faq-interactions) { margin: 0 0 10px; padding-left: 20px; color: var(--muted); line-height: 1.85; }
+
+/* Payment amount: the charge is the first thing the eye lands on, with the
+   discount stated beside it rather than in place of it. */
+.payment-amount { display: flex; align-items: baseline; justify-content: center; flex-wrap: wrap; gap: 10px 14px; margin: 0 0 18px; }
+.payment-amount-inline { justify-content: flex-start; margin: 2px 0 16px; }
+.payment-amount-payable { color: var(--ink); font-size: 40px; font-weight: var(--weight-label); line-height: 1; letter-spacing: -0.02em; }
+.payment-amount-payable i { margin-right: 3px; font-size: 22px; font-style: normal; font-weight: var(--weight-label); }
+.payment-amount-discount { color: var(--muted); font-size: var(--text-small); }
+.payment-amount-discount s { color: var(--muted); text-decoration-thickness: 1px; }
+.payment-amount-confirm { margin: 12px 0 0; color: var(--muted); font-size: var(--text-small); line-height: 1.7; }
+.payment-amount-confirm strong { color: var(--ink); font-weight: var(--weight-label); }

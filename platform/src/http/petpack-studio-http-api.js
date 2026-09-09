@@ -558,7 +558,6 @@ function serializeProjectList(value) {
         paymentMethod: safeString(item.order.paymentMethod, { maxLength: 16 }),
         amountFen: safeInteger(item.order.amountFen)
       }) : null,
-      productionState: item?.productionState === null ? null : safeString(item?.productionState, { maxLength: 64 }),
       downloadReady: safeBoolean(item?.downloadReady),
       failed: safeBoolean(item?.failed),
       nextStep: safeString(item?.nextStep, { maxLength: 32 })
@@ -609,19 +608,18 @@ function serializeProjectView(value) {
       side: serializeCandidate(candidates.side),
       canConfirm: safeBoolean(candidates.canConfirm)
     },
-    productionState: safeString(value?.productionState, { maxLength: 64 }),
+    regeneratingCharacter: safeBoolean(value?.regeneratingCharacter),
     progress: Array.isArray(value?.progress) ? value.progress.map((step) => compactObject({
       id: safeString(step?.id, { maxLength: 128 }),
       label: safeString(step?.label, { maxLength: 256 }),
       state: safeString(step?.state, { maxLength: 32 })
     })) : [],
-    actions: Array.isArray(value?.actions) ? value.actions.map((action) => ({
-      actionId: safeString(action?.actionId, { maxLength: 64 }),
-      label: safeString(action?.label, { maxLength: 64 }),
-      stateLabel: safeString(action?.stateLabel, { maxLength: 32 }),
-      regenerated: safeBoolean(action?.regenerated),
-      complete: safeBoolean(action?.complete)
-    })) : [],
+    // Only how far along the animation work is. The clip list, each clip's
+    // state and the quality-gate redos used to travel to the browser, where
+    // anyone could read the pack's composition straight out of the response.
+    actionProgress: value?.actionProgress
+      ? compactObject({ percent: safeInteger(value.actionProgress.percent) })
+      : undefined,
     downloadReady: safeBoolean(value?.downloadReady),
     failed: safeBoolean(value?.failed)
   };
