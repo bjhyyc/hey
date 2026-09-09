@@ -167,6 +167,23 @@ function adminQaOverrideProductionRun(run, { stage, failedFromState } = {}) {
 }
 
 /**
+ * A customer looked at a delivered pack and one clip is wrong - something no
+ * quality gate can decide for them. The run goes back to video generation for
+ * that clip alone; the pack it already produced is superseded by the store in
+ * the same transaction, and the customer keeps their existing download until
+ * the replacement validates.
+ */
+function adminRedoDeliveredAction(run, { actionId } = {}) {
+  if (!run || run.state !== PRODUCTION_STATES.DELIVERABLE) {
+    throw adminRerunStageError("Only a delivered production run can have a clip redone");
+  }
+  if (!REQUIRED_ACTION_IDS.includes(actionId)) {
+    throw adminRerunStageError(`Redo does not support action: ${actionId}`);
+  }
+  return { ...run, state: PRODUCTION_STATES.VIDEO_GENERATING, failureCode: null };
+}
+
+/**
  * Hands one spent self-service regeneration back to the customer, so the
  * "重新生成" button reappears on their confirmation page. Mirrors what
  * `characterRegenerationAbandoned` already does when a regeneration produced
@@ -338,6 +355,7 @@ function canAdvanceFromVideoGeneration(run) {
 }
 
 module.exports = {
+  adminRedoDeliveredAction,
   ADMIN_RERUN_RESUME_STATES,
   CHARACTER_MASTER_VIEWS,
   MAX_USER_REGENERATIONS_PER_VIEW,

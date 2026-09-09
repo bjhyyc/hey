@@ -79,7 +79,7 @@ function deepFreeze(value) {
  * SHA-256 until it is re-reviewed and re-pinned.
  */
 const PRODUCTION_CALIBRATION = deepFreeze({
-  calibrationVersion: "hey-production-calibration/1.2.0",
+  calibrationVersion: "hey-production-calibration/1.3.0",
   chroma: {
     key: INPUT_CHROMA,
     rgb: [...INPUT_CHROMA_RGB],
@@ -180,7 +180,19 @@ const PRODUCTION_CALIBRATION = deepFreeze({
       // continues to catch true deformation.
       roll: { maxGroundDeltaPx: 32, maxCanvasScaleDelta: 0.65, maxRelativeScaleJitter: 0.65, minAdjacentMaskIoU: 0.6, maxRowSpanHoleRatio: 0.25, minEdgeMarginPx: 16, maxHorizontalOffsetPx: 200 },
       "sleep-transition": { maxGroundDeltaPx: 64, maxCanvasScaleDelta: 0.4, maxRelativeScaleJitter: 0.4, minAdjacentMaskIoU: 0.65, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 4 },
-      "sleep-loop": { maxGroundDeltaPx: 6, maxCanvasScaleDelta: 0.15, maxRelativeScaleJitter: 0.05, minAdjacentMaskIoU: 0.98, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 24 },
+      // Breathing amplitude is the whole content of this clip, and the gate was
+      // the one thing not measuring it against the rule the prompt states: "胸腹
+      // 最大位移不超过可见躯干高度 1%（480p 约 2 像素）". maxRelativeScaleJitter
+      // compares each frame's apparent scale - sqrt of the subject's bounding
+      // box area - against the first frame, so a rise of h% in a lying pose
+      // moves it about h/2%; the prompt's 1% therefore lands near 0.01. The old
+      // 0.05 admitted roughly a 10% swell in bounding-box height, which is the
+      // exaggerated belly a customer reported on 2026-09-09 after it passed.
+      // 0.02 keeps twice the prompt's own headroom for keying noise on dense
+      // fur and still refuses anything that reads as heaving.
+      // maxCanvasScaleDelta stays at 0.15: it compares frames against the
+      // sleeping master, where an honest redraw legitimately differs more.
+      "sleep-loop": { maxGroundDeltaPx: 6, maxCanvasScaleDelta: 0.15, maxRelativeScaleJitter: 0.02, minAdjacentMaskIoU: 0.98, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 24 },
       stretch: { maxGroundDeltaPx: 64, maxCanvasScaleDelta: 0.8, maxRelativeScaleJitter: 1.4, minAdjacentMaskIoU: 0.7, maxRowSpanHoleRatio: 0.25, minEdgeMarginPx: 0 },
       "hover-attention": { maxGroundDeltaPx: 8, maxCanvasScaleDelta: 0.25, maxRelativeScaleJitter: 0.25, minAdjacentMaskIoU: 0.85, maxRowSpanHoleRatio: 0.2, minEdgeMarginPx: 24 }
     },
@@ -233,7 +245,10 @@ const PRODUCTION_QA_POLICY_BODY = deepFreeze({
   // outcomes, so the version moves with the semantics.
   // 1.3.0 recalibrated the roll motion envelope from the first real order's
   // accepted takes; roll outcomes are not comparable across it.
-  version: "hey-production-qa/1.6.0",
+  // 1.7.0 tightened the sleep-loop breathing amplitude to the rule its own
+  // prompt states, after a delivered pack showed an exaggerated belly and
+  // passed; sleep-loop outcomes are not comparable across it.
+  version: "hey-production-qa/1.7.0",
   // Composition margins recalibrated to the user-approved large framing:
   // the subject may approach the canvas edges; genuine clipping remains
   // guarded by the chroma transparent-border gate.

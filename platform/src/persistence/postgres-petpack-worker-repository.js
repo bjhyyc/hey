@@ -819,7 +819,12 @@ class PostgresPetpackWorkerRepository {
         actions
       });
       if (computed.revisionSha256 !== snapshot.revision_sha256) throw new Error("PetPack input snapshot checksum is invalid");
-      const existing = rows(await tx.query("SELECT id FROM petpack_build WHERE run_id = $1", [run.run_id]));
+      // A superseded build is the pack the customer already has while its
+      // replacement is being made; only a live one means this run is mid-flight.
+      const existing = rows(await tx.query(
+        "SELECT id FROM petpack_build WHERE run_id = $1 AND status <> 'superseded'",
+        [run.run_id]
+      ));
       if (existing.length > 0) throw new Error("Unfinalized package execution found an existing build");
       const lease = await this._leaseExecution(tx, execution, claim);
       if (lease.exhausted) await this._failRun(tx, run, "package_build_attempts_exhausted");
@@ -1441,12 +1446,20 @@ class PostgresPetpackWorkerRepository {
                  CASE WHEN $4::int IS NULL THEN NULL ELSE now() + make_interval(days => $4::int) END)
          ON CONFLICT (order_id) DO UPDATE
             SET status = 'ready',
+                petpack_build_id = EXCLUDED.petpack_build_id,
                 expires_at = CASE
                   WHEN delivery.status = 'pending' THEN EXCLUDED.expires_at
                   ELSE delivery.expires_at
                 END,
                 updated_at = now()
-         WHERE delivery.petpack_build_id = EXCLUDED.petpack_build_id
+         -- Normally the delivery already points at this exact build. A redo is
+         -- the one case it points elsewhere: at the superseded pack the customer
+         -- has been downloading meanwhile. The window is not reset - they keep
+         -- the days they had.
+         WHERE (delivery.petpack_build_id = EXCLUDED.petpack_build_id
+                OR EXISTS (SELECT 1 FROM petpack_build superseded
+                            WHERE superseded.id = delivery.petpack_build_id
+                              AND superseded.status = 'superseded'))
            AND delivery.status IN ('pending', 'ready')
          RETURNING id`,
         [deliveryId, run.order_id, build.id, days]

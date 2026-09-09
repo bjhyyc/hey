@@ -107,6 +107,8 @@ function describeOutcome(mode?: string, runState?: string): string {
   switch (mode) {
     case "rerun_authorized":
       return "已授权重跑，生成需要几分钟，稍后刷新查看。";
+    case "redo_authorized":
+      return "已开始重做这个动作。客户当前的素材包仍可下载，新包做好后会自动替换，下载有效期不变。";
     case "qa_overridden":
       return "已放行，该素材重新进入后续流程。";
     case "regeneration_granted":
@@ -375,10 +377,12 @@ function OrderDetailPanel({
                 className="ghost-button"
                 disabled={busy || (entry.mode === "rerun" && rescue.rerunBudgetExhausted)}
                 key={entry.stage}
-                onClick={() => setPendingDisposal(entry.mode === "rerun" ? `rerun:${entry.stage}` : `grant:${entry.stage}`)}
+                onClick={() => setPendingDisposal(`${entry.mode === "redo" ? "redo" : entry.mode === "rerun" ? "rerun" : "grant"}:${entry.stage}`)}
                 type="button"
               >
-                {entry.mode === "rerun"
+                {entry.mode === "redo"
+                  ? `重做${stageLabel(entry.stage)}`
+                  : entry.mode === "rerun"
                   ? (entry.stage === "package" ? "恢复打包" : `重跑${stageLabel(entry.stage)}`)
                   : `补发「${stageLabel(entry.stage)}」重生成次数`}
               </button>
@@ -391,7 +395,9 @@ function OrderDetailPanel({
               onSubmit={runDisposal((reason) =>
                 studioAdminApi.rerunStage(orderId, pendingDisposal.split(":").slice(1).join(":"), reason))}
               title={
-                pendingDisposal === "rerun:package"
+                pendingDisposal.startsWith("redo:")
+                  ? `重做${stageLabel(pendingDisposal.slice("redo:".length))}：客户已下载的素材包保持可用，新包做好后自动替换`
+                  : pendingDisposal === "rerun:package"
                   ? "恢复打包：母图与七段视频不变，不产生生成费用"
                   : pendingDisposal.startsWith("rerun:")
                   ? `授权重跑：${stageLabel(pendingDisposal.slice("rerun:".length))}（补发一次生成）`

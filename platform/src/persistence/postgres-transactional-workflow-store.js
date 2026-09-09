@@ -369,6 +369,114 @@ class PostgresTransactionalWorkflowStore {
     });
   }
 
+  /**
+   * Administrator redo of ONE clip in a pack that has already been delivered,
+   * for the case the quality gates cannot catch: the customer looked at it and
+   * did not like it.
+   *
+   * The delivered pack is superseded, not erased - its build row keeps the
+   * manifest, checksum, builder/validator versions and both QA reports that
+   * attest the bytes the customer already has, and the delivery keeps pointing
+   * at it so their download works throughout. What must go is the input
+   * snapshot: petpack_input_action binds each clip's generation_action,
+   * media_asset and qa_report with global uniques, and six of the seven clips
+   * are the same rows, so the replacement can only be frozen once the old
+   * snapshot releases them.
+   *
+   * The chosen action then resets exactly as an authorized rerun resets a
+   * failed one, and the run re-enters video generation. Everything after that
+   * is the ordinary pipeline.
+   */
+  async commitAdminDeliveredActionRedo({ previousRun = null, run, actionId, override, jobFactory } = {}) {
+    if (!run || typeof run !== "object") throw new Error("Next production run is required");
+    if (!previousRun || previousRun.id !== run.id) throw new Error("A delivered-pack redo requires the persisted run");
+    assertActionId(actionId);
+    const safeOverride = this._assertOverride(override);
+    if (typeof jobFactory !== "function") throw new Error("A delivered-pack redo requires a job factory");
+    return this.database.transaction(async (transaction) => {
+      const tx = requireTransactionQuery(transaction);
+      const transition = await this._updateRun(tx, previousRun, run);
+      const committedRun = { ...transition.run, completedActions: run.completedActions || [] };
+      await this._recordTransition(tx, { previousRun, run: committedRun });
+
+      // Step the delivered pack aside. Only a validated build may be redone:
+      // anything else means the run is mid-flight and this is the wrong tool.
+      const superseded = await tx.query(
+        `UPDATE petpack_build
+            SET status = 'superseded', input_snapshot_id = NULL, updated_at = now()
+          WHERE run_id = $1 AND status = 'validated'
+        RETURNING id, input_snapshot_id`,
+        [committedRun.id]
+      );
+      if (!Array.isArray(superseded.rows) || superseded.rows.length !== 1) {
+        throw new Error("The run has no validated pack to redo");
+      }
+      await tx.query(
+        `DELETE FROM petpack_input_action
+          WHERE snapshot_id IN (SELECT id FROM petpack_input_snapshot WHERE run_id = $1)`,
+        [committedRun.id]
+      );
+      await tx.query("DELETE FROM petpack_input_snapshot WHERE run_id = $1", [committedRun.id]);
+
+      // The packaging executions ran to completion for the superseded pack;
+      // the replacement needs its own, so their job IDs must not collide.
+      await tx.query(
+        `DELETE FROM production_job_execution
+          WHERE run_id = $1 AND action_id IS NULL
+            AND job_name IN ('petpack.process-media', 'petpack.build-package',
+                             'petpack.validate-package', 'petpack.prepare-delivery')`,
+        [committedRun.id]
+      );
+
+      const reset = await tx.query(
+        `UPDATE generation_action
+            SET state = 'queued',
+                retry_count = retry_count + 1,
+                provider_task_id = NULL,
+                provider_request_id = NULL,
+                provider_poll_count = 0,
+                provider_output_asset_id = NULL,
+                media_asset_id = NULL,
+                qa_report_id = NULL,
+                processing_policy_version = NULL,
+                processor_version = NULL,
+                admin_qa_override = NULL,
+                updated_at = now()
+          WHERE run_id = $1 AND action_id = $2 AND state = 'qa_passed'
+        RETURNING retry_count`,
+        [committedRun.id, actionId]
+      );
+      if (!Array.isArray(reset.rows) || reset.rows.length !== 1) {
+        throw new Error("The delivered action could not be reset for a redo");
+      }
+      // The execution rows for this action are spent too - the redo generates,
+      // polls, processes and finalizes it again under fresh job IDs.
+      await tx.query(
+        "DELETE FROM production_job_execution WHERE run_id = $1 AND action_id = $2",
+        [committedRun.id, actionId]
+      );
+      await tx.query(
+        `UPDATE pet_project SET state = 'producing', updated_at = now()
+          WHERE id = $1 AND state <> 'producing'`,
+        [committedRun.projectId]
+      );
+
+      const safeJob = assertWorkflowJob(jobFactory(Number(reset.rows[0].retry_count)));
+      if (safeJob.data.runId !== committedRun.id || safeJob.data.actionId !== actionId) {
+        throw new Error("The redo job must belong to the reset action");
+      }
+      await this._insertOutbox(tx, safeJob);
+      this.logger.warn?.("petpack.persistence.admin_delivered_redo_committed", {
+        runId: committedRun.id,
+        actionId,
+        supersededBuildId: superseded.rows[0].id,
+        actorId: safeOverride.actorId,
+        retryCount: Number(reset.rows[0].retry_count)
+      });
+      return committedRun;
+    });
+  }
+
   _assertOverride(override) {
     if (!override || typeof override.actorId !== "string" || !override.actorId.trim() ||
         typeof override.reason !== "string" || !override.reason.trim()) {

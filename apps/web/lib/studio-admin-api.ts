@@ -22,7 +22,7 @@ export type AdminOperationItem = {
 
 export type AdminQaSummary = { status: string | null; reasons: string[] } | null;
 
-export type AdminRescueStage = { stage: string; mode: "rerun" | "regeneration_grant" };
+export type AdminRescueStage = { stage: string; mode: "rerun" | "regeneration_grant" | "redo" };
 
 export type AdminOrderDetail = {
   order: {

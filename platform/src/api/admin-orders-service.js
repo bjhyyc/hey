@@ -146,6 +146,13 @@ function availableRescueStages(context) {
     }
     return stages;
   }
+  // A delivered pack can still be wrong in a way no gate can judge: the owner
+  // looked at one clip and did not like it. Offer each clip as a redo.
+  if (run.state === PRODUCTION_STATES.DELIVERABLE) {
+    return context.actions
+      .filter((action) => action.state === "qa_passed")
+      .map((action) => ({ stage: `action:${action.actionId}`, mode: "redo" }));
+  }
   if (run.state !== PRODUCTION_STATES.FAILED) return [];
   const failedFrom = context.failedFromState;
   if (failedFrom === PRODUCTION_STATES.AWAKE_GENERATING) {
@@ -339,6 +346,33 @@ class AdminOrdersService {
       return { mode: "regeneration_granted", stage: parsed.stage, run: { id: next.id, state: next.state } };
     }
 
+    // The redo of a delivered clip is the one disposal that does not start
+    // from a failed run, so it is decided before that guard.
+    if (run.state === PRODUCTION_STATES.DELIVERABLE) {
+      if (parsed.kind !== "action") {
+        throw stageUnavailableError("A delivered pack can only have one of its actions redone");
+      }
+      if (typeof this.workflow.adminRedoDeliveredAction !== "function") {
+        throw stageUnavailableError("This deployment cannot redo a delivered action");
+      }
+      const delivered = context.actions.find((candidate) => candidate.actionId === parsed.actionId);
+      if (!delivered || delivered.state !== "qa_passed") {
+        throw stageUnavailableError(`Action ${parsed.actionId} is not part of the delivered pack`);
+      }
+      const redone = await this.workflow.adminRedoDeliveredAction({
+        run,
+        actionId: parsed.actionId,
+        override: { actorId: admin.id, reason: safeReason }
+      });
+      await this._recordDisposal({
+        actor: admin,
+        context,
+        eventType: "admin_delivered_action_redo",
+        metadata: { stage: parsed.stage, reason: safeReason, runId: run.id, actionId: parsed.actionId }
+      });
+      this.logger.warn?.("petpack.admin.delivered_action_redo", { orderId: context.order.id, actionId: parsed.actionId });
+      return { mode: "redo_authorized", stage: parsed.stage, run: { id: redone.id, state: redone.state } };
+    }
     if (run.state !== PRODUCTION_STATES.FAILED) {
       throw stageUnavailableError(`Only a failed production run can be rerun; the run state is ${run.state}`);
     }

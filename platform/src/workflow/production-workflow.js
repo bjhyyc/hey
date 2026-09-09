@@ -6,6 +6,7 @@ const {
   assertCharacterMasterView,
   PRODUCTION_STATES,
   adminGrantCharacterRegeneration,
+  adminRedoDeliveredAction,
   adminQaOverrideProductionRun,
   adminRerunProductionRun,
   canAdvanceFromVideoGeneration,
@@ -666,6 +667,35 @@ class ProductionWorkflow {
       sourceAssetId,
       previousFailureCode: run.failureCode || null
     });
+    return committed;
+  }
+
+  /**
+   * Redo one clip of a pack the customer already has. The quality gates cannot
+   * judge "the belly heaves too much" - only the owner can - so this spends one
+   * provider call on that clip and lets the ordinary pipeline rebuild and
+   * revalidate the pack around it.
+   */
+  async adminRedoDeliveredAction({ run, actionId, override }) {
+    assertActionId(actionId);
+    if (typeof this.runStore.commitAdminDeliveredActionRedo !== "function") {
+      throw new Error("The production run store does not support delivered-pack redos");
+    }
+    const next = adminRedoDeliveredAction(run, { actionId });
+    const committed = await this.runStore.commitAdminDeliveredActionRedo({
+      previousRun: run,
+      run: next,
+      actionId,
+      override,
+      jobFactory: (retryCount) => createWorkflowJob({
+        name: JOB_NAMES.GENERATE_VIDEO,
+        run: next,
+        inputRevision: `${actionId}:delivered-redo:${retryCount}`,
+        actionId,
+        attempts: this.modelRegistry.modelArk.video.maxRetries + 1
+      })
+    });
+    this.logger.warn?.("petpack.workflow.admin_delivered_redo", { runId: run.id, actionId });
     return committed;
   }
 
