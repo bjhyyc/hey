@@ -268,6 +268,27 @@ function normalizeClaimedPetpackArtifact(value) {
   };
 }
 
+/**
+ * Whether a finished build may take over the order's existing delivery row.
+ *
+ * Normally the delivery already points at this exact build and the write is
+ * idempotent. Pointing anywhere else means something is wrong - with one
+ * exception, which is the whole point of the delivered-pack redo: the delivery
+ * still points at this run's *superseded* pack, the one the customer has been
+ * downloading all the while the replacement was being made, and this is the
+ * moment it moves across. A build from another run, or a delivery that was
+ * revoked or has expired, is still refused. The delivery upsert repeats this
+ * condition in SQL so the two cannot drift apart.
+ *
+ * `delivery` carries the bound build's status and run from the same read.
+ */
+function deliveryMayBindToBuild({ delivery, buildId, runId } = {}) {
+  if (!delivery) return true;
+  if (!["pending", "ready"].includes(delivery.status)) return false;
+  if (delivery.petpack_build_id === buildId) return true;
+  return delivery.bound_build_status === "superseded" && delivery.bound_build_run_id === runId;
+}
+
 class PostgresPetpackWorkerRepository {
   constructor({ database, idFactory = crypto.randomUUID, logger = console } = {}) {
     this.database = requireDatabase(database);
@@ -948,7 +969,10 @@ class PostgresPetpackWorkerRepository {
            validation_policy_version, validator_version, validator_identity)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, 'built', $10, $11::jsonb,
                  $12, $13, $14)
-         ON CONFLICT (run_id) DO UPDATE
+         -- Inferring on the partial index, not on the run alone: a superseded
+         -- build keeps its row for provenance and must not capture this
+         -- conflict, while a retry of the live build still lands on its own row.
+         ON CONFLICT (run_id) WHERE status <> 'superseded' DO UPDATE
            SET updated_at = petpack_build.updated_at
          WHERE petpack_build.project_id = EXCLUDED.project_id
            AND petpack_build.order_id = EXCLUDED.order_id
@@ -1003,6 +1027,11 @@ class PostgresPetpackWorkerRepository {
           WHERE build.run_id = $1
             AND build.project_id = $2
             AND build.order_id = $3
+            -- A run has one build in flight, but after a delivered-pack redo it
+            -- also keeps the superseded one the customer is still downloading.
+            -- Every "the build for this run" lookup means the live one; the
+            -- partial unique index from migration 023 is what makes that one.
+            AND build.status <> 'superseded'
           FOR UPDATE OF build, asset`,
         [run.run_id, run.project_id, run.order_id]
       ), "PetPack build was not found for validation");
@@ -1106,7 +1135,10 @@ class PostgresPetpackWorkerRepository {
                 asset.deleted_at, asset.expires_at
            FROM production_job_execution execution
            JOIN production_run run ON run.id = execution.run_id
-           JOIN petpack_build build ON build.run_id = run.id
+           JOIN petpack_build build
+             ON build.run_id = run.id
+            -- The live build, not the superseded pack a redo left in place.
+            AND build.status <> 'superseded'
            JOIN media_asset asset
              ON asset.id = build.media_asset_id
             AND asset.project_id = run.project_id
@@ -1210,7 +1242,10 @@ class PostgresPetpackWorkerRepository {
                 asset.deleted_at, asset.expires_at
            FROM production_job_execution execution
            JOIN production_run run ON run.id = execution.run_id
-           JOIN petpack_build build ON build.run_id = run.id
+           JOIN petpack_build build
+             ON build.run_id = run.id
+            -- The live build, not the superseded pack a redo left in place.
+            AND build.status <> 'superseded'
            JOIN media_asset asset
              ON asset.id = build.media_asset_id
             AND asset.project_id = run.project_id
@@ -1344,8 +1379,15 @@ class PostgresPetpackWorkerRepository {
       ), "Active delivery execution lease was not found");
       const run = await this._loadRun(tx, execution.run_id);
       const existingDelivery = rows(await tx.query(
-        `SELECT id, order_id, petpack_build_id, status
-           FROM delivery WHERE order_id = $1 FOR UPDATE`,
+        `SELECT delivery.id, delivery.order_id, delivery.petpack_build_id, delivery.status,
+                -- What the delivery points at today. During a redo that is the
+                -- superseded pack the customer has been downloading, and the
+                -- rebind below is allowed only for exactly that.
+                bound.status AS bound_build_status, bound.run_id AS bound_build_run_id
+           FROM delivery
+           LEFT JOIN petpack_build bound ON bound.id = delivery.petpack_build_id
+          WHERE delivery.order_id = $1
+          FOR UPDATE OF delivery`,
         [run.order_id]
       ));
       if (run.run_state !== PRODUCTION_STATES.VALIDATING || run.order_status !== "paid") {
@@ -1412,6 +1454,10 @@ class PostgresPetpackWorkerRepository {
             AND import_qa.validator_version = build.validator_version
             AND import_qa.processor_version = build.validator_version
           WHERE build.run_id = $1 AND build.project_id = $2 AND build.order_id = $3
+            -- The pack being delivered now. A superseded one carries the same
+            -- passed reports - it was delivered once - so without this the redo
+            -- would find two builds here and refuse to hand over either.
+            AND build.status <> 'superseded'
           FOR UPDATE OF build, asset, package_qa, import_qa`,
         [run.run_id, run.project_id, run.order_id, PETPACK_CONTENT_TYPE]
       ), "Validated PetPack build was not found for delivery");
@@ -1434,8 +1480,7 @@ class PostgresPetpackWorkerRepository {
           build.import_qa_processor_version !== build.validator_version) {
         throw new Error("PetPack delivery evidence is incomplete or inconsistent");
       }
-      if (existingDelivery.length === 1 && (existingDelivery[0].petpack_build_id !== build.id ||
-          !["pending", "ready"].includes(existingDelivery[0].status))) {
+      if (!deliveryMayBindToBuild({ delivery: existingDelivery[0], buildId: build.id, runId: run.run_id })) {
         throw new Error("An existing delivery cannot be rebound or revived");
       }
       const deliveryId = existingDelivery[0]?.id || this.idFactory();
@@ -1459,10 +1504,11 @@ class PostgresPetpackWorkerRepository {
          WHERE (delivery.petpack_build_id = EXCLUDED.petpack_build_id
                 OR EXISTS (SELECT 1 FROM petpack_build superseded
                             WHERE superseded.id = delivery.petpack_build_id
-                              AND superseded.status = 'superseded'))
+                              AND superseded.status = 'superseded'
+                              AND superseded.run_id = $5))
            AND delivery.status IN ('pending', 'ready')
          RETURNING id`,
-        [deliveryId, run.order_id, build.id, days]
+        [deliveryId, run.order_id, build.id, days, run.run_id]
       ));
       if (delivery.length !== 1) throw new Error("Ready PetPack delivery could not be created idempotently");
       const order = rows(await tx.query(
@@ -1490,6 +1536,7 @@ module.exports = {
   PRODUCTION_MEDIA_SNAPSHOT_EVIDENCE_CONTRACT_VERSION,
   PostgresPetpackWorkerRepository,
   assertRunWorkflowJob,
+  deliveryMayBindToBuild,
   createProductionMediaEvidenceRevision,
   mapActionRow,
   mapMasterEvidenceRow,

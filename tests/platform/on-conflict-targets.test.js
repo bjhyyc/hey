@@ -38,6 +38,14 @@ function stripComments(sql) {
   return sql.replace(/--[^\n]*/g, " ");
 }
 
+// PostgreSQL admits a partial unique index as an inference target only when the
+// statement repeats the index's predicate, and it compares the two semantically.
+// Comparing normalized text is narrower than Postgres is, so it can only reject
+// a statement Postgres would accept - never the other way round.
+function normalizePredicate(text) {
+  return String(text).replace(/::[a-z_]+/gi, "").replace(/["'\s()]/g, "").toLowerCase();
+}
+
 function columnKey(columns) {
   // An inference target is a SET of columns; order does not matter to Postgres.
   return columns
@@ -78,12 +86,17 @@ function matchingParen(text, openIndex) {
 }
 
 /**
- * The uniqueness each table carries after every migration is applied in order:
- * a map of table -> Set of sorted column keys, honouring later drops.
+ * The uniqueness each table carries after every migration is applied in order.
+ * `unique` maps table -> Set of sorted column keys usable as a bare inference
+ * target; `partial` maps table -> Set of "<columns>|<predicate>" keys, which a
+ * statement may only infer on by repeating that predicate. Later drops are
+ * honoured in both.
  */
 function buildUniqueness() {
   const unique = new Map();
+  const partial = new Map();
   const byConstraintName = new Map();
+  const partialByIndexName = new Map();
   const add = (table, columns, constraintName, { primaryKey = false } = {}) => {
     const key = columnKey(columns);
     if (!key) return;
@@ -132,14 +145,22 @@ function buildUniqueness() {
       });
     }
 
-    // CREATE UNIQUE INDEX ... ON table (...) [WHERE ...]. A partial index can
-    // only back an ON CONFLICT that repeats its predicate; none of ours do, so
-    // partial indexes deliberately do not count as plain inference targets.
+    // CREATE UNIQUE INDEX ... ON table (...) [WHERE ...]. A full index is a
+    // plain inference target; a partial one is filed under its predicate, so
+    // only a statement repeating that predicate can claim it.
     const uniqueIndex =
       /CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([a-z0-9_]+)\s+ON\s+([a-z0-9_.]+)\s*(?:USING\s+[a-z]+\s*)?\(([^)]*)\)([^;]*)/gi;
     while ((match = uniqueIndex.exec(text)) !== null) {
-      if (/\bWHERE\b/i.test(match[4])) continue;
-      add(match[2].replace(/^public\./, "").toLowerCase(), match[3].split(","), match[1]);
+      const table = match[2].replace(/^public\./, "").toLowerCase();
+      const predicate = /\bWHERE\b([\s\S]*)$/i.exec(match[4]);
+      if (predicate) {
+        const key = `${columnKey(match[3].split(","))}|${normalizePredicate(predicate[1])}`;
+        if (!partial.has(table)) partial.set(table, new Set());
+        partial.get(table).add(key);
+        partialByIndexName.set(`${table}.${match[1].toLowerCase()}`, key);
+        continue;
+      }
+      add(table, match[3].split(","), match[1]);
     }
 
     // Drops remove the target again.
@@ -158,9 +179,14 @@ function buildUniqueness() {
         const table = name.slice(0, name.length - indexName.length - 1);
         if (unique.has(table)) unique.get(table).delete(key);
       }
+      for (const [name, key] of partialByIndexName.entries()) {
+        if (!name.endsWith(`.${indexName}`)) continue;
+        const table = name.slice(0, name.length - indexName.length - 1);
+        if (partial.has(table)) partial.get(table).delete(key);
+      }
     }
   }
-  return unique;
+  return { unique, partial };
 }
 
 /** Every `INSERT INTO <table> ... ON CONFLICT (<columns>)` the code issues. */
@@ -175,13 +201,15 @@ function collectInferenceTargets() {
       let match;
       while ((match = inserts.exec(source)) !== null) {
         const table = match[1].toLowerCase();
-        const conflict = /ON\s+CONFLICT\s*\(([^)]*)\)/i.exec(match[2]);
+        const conflict = /ON\s+CONFLICT\s*\(([^)]*)\)([\s\S]*?)\bDO\b/i.exec(match[2]);
         if (!conflict) continue;
+        const predicate = /^\s*WHERE\b([\s\S]*)$/i.exec(conflict[2]);
         targets.push({
           file: path.relative(ROOT, file).replace(/\\/g, "/"),
           table,
           columns: conflict[1].split(",").map((column) => column.trim()),
-          key: columnKey(conflict[1].split(","))
+          key: columnKey(conflict[1].split(",")),
+          predicate: predicate ? normalizePredicate(predicate[1]) : null
         });
       }
     }
@@ -190,8 +218,11 @@ function collectInferenceTargets() {
 }
 
 describe("ON CONFLICT inference targets match the shipped schema", () => {
-  const uniqueness = buildUniqueness();
+  const { unique: uniqueness, partial } = buildUniqueness();
   const targets = collectInferenceTargets();
+  const isBacked = (target) => (target.predicate
+    ? Boolean(partial.get(target.table)?.has(`${target.key}|${target.predicate}`))
+    : Boolean(uniqueness.get(target.table)?.has(target.key)));
 
   it("finds the inference targets and the uniqueness to check them against", () => {
     expect(targets.length).toBeGreaterThan(20);
@@ -203,12 +234,34 @@ describe("ON CONFLICT inference targets match the shipped schema", () => {
   });
 
   it("every ON CONFLICT target is backed by a unique constraint or index", () => {
-    const unbacked = targets.filter((target) => !uniqueness.get(target.table)?.has(target.key));
+    const unbacked = targets.filter((target) => !isBacked(target));
     const detail = unbacked
-      .map((target) => `${target.file}: INSERT INTO ${target.table} ON CONFLICT (${target.columns.join(", ")})`)
+      .map((target) => `${target.file}: INSERT INTO ${target.table} ON CONFLICT (${target.columns.join(", ")})`
+        + (target.predicate ? ` WHERE ${target.predicate}` : ""))
       .join("\n");
     expect(detail).toBe("");
     expect(unbacked).toEqual([]);
+  });
+
+  it("holds a partial index to its predicate", () => {
+    // The delivered-pack redo's lesson. petpack_build lost its full UNIQUE
+    // (run_id) so a superseded build could keep its row beside a live one; what
+    // remains is unique only WHERE status <> 'superseded'. A writer saying just
+    // ON CONFLICT (run_id) would now fail to plan, and this must catch that.
+    const runId = columnKey(["run_id"]);
+    expect(uniqueness.get("petpack_build")?.has(runId)).toBe(false);
+    expect(isBacked({ table: "petpack_build", key: runId, predicate: null })).toBe(false);
+    expect(isBacked({
+      table: "petpack_build",
+      key: runId,
+      predicate: normalizePredicate("status <> 'superseded'")
+    })).toBe(true);
+    // And a predicate the index does not carry is not a way in.
+    expect(isBacked({
+      table: "petpack_build",
+      key: runId,
+      predicate: normalizePredicate("status <> 'built'")
+    })).toBe(false);
   });
 
   it("refuses an inference target a migration has dropped", () => {
