@@ -4,10 +4,17 @@ import stateMachineModule from "../../platform/src/domain/production-state-machi
 import workflowModule from "../../platform/src/workflow/production-workflow.js";
 import storeModule from "../../platform/src/persistence/postgres-transactional-workflow-store.js";
 
-// A run refused at the seven-action media gate still holds every master and
-// video it needs. The administrator's disposal for it is a resume: back to
-// media_processing, a fresh process-media job, and the gate's dead execution
-// row retargeted at that job - no provider call, no regeneration.
+// A run that died on its way to a finished pack still holds every master and
+// video it needs. The administrator's disposal for it is a resume: back to the
+// state it fell out of, a fresh job for that step, and its dead execution row
+// retargeted at that job - no provider call, no regeneration.
+//
+// There are two such states, because the work after the last video is two
+// steps. A run refused at the seven-action media gate has to freeze its
+// snapshot again. A run that died building the archive - which is how the first
+// real delivered-pack redo ended, on petpack_build_commit_failed - keeps the
+// snapshot the gate froze, so it resumes at the build and reuses those frozen
+// inputs rather than being dragged back through work that succeeded.
 
 const { PRODUCTION_STATES, adminRerunProductionRun, adminQaOverrideProductionRun } = stateMachineModule;
 const { ProductionWorkflow, JOB_NAMES } = workflowModule;
@@ -65,14 +72,22 @@ const updatedRunRow = (sql, params) => ({
   }]
 });
 
-function resumeJob(jobId = "petpack:resume-1") {
+function resumeJob(jobId = "petpack:resume-1", name = JOB_NAMES.PROCESS_MEDIA) {
   return {
-    name: JOB_NAMES.PROCESS_MEDIA,
+    name,
     data: { runId: "run-1" },
     options: { jobId, attempts: 3 },
     dedupeKey: jobId
   };
 }
+
+// The same run one step later: the media gate passed and froze the snapshot,
+// then the build died. This is order 4a0aefd3's redo.
+const buildFailedRun = Object.freeze({
+  ...refusedRun,
+  failureCode: "petpack_build_commit_failed",
+  version: 18
+});
 
 describe("package resume state machine", () => {
   it("returns a run refused at the media gate to media_processing", () => {
@@ -87,10 +102,27 @@ describe("package resume state machine", () => {
     expect(next.sleepGenerationAttempts).toBe(refusedRun.sleepGenerationAttempts);
   });
 
+  it("returns a run that died building the archive to packaging", () => {
+    const next = adminRerunProductionRun(buildFailedRun, {
+      stage: "package",
+      failedFromState: PRODUCTION_STATES.PACKAGING
+    });
+    // Not media_processing: the snapshot the gate froze is still valid and the
+    // build reads it from the database, so redoing the gate would be work for
+    // nothing - and would have to delete and rewrite rows that are correct.
+    expect(next.state).toBe(PRODUCTION_STATES.PACKAGING);
+    expect(next.failureCode).toBeNull();
+    expect(next.sideGenerationAttempts).toBe(buildFailedRun.sideGenerationAttempts);
+  });
+
   it("refuses the package stage for a run that died elsewhere", () => {
     expect(() => adminRerunProductionRun(refusedRun, {
       stage: "package",
       failedFromState: PRODUCTION_STATES.VIDEO_GENERATING
+    })).toThrowError(/not from the package stage/);
+    expect(() => adminRerunProductionRun(refusedRun, {
+      stage: "package",
+      failedFromState: PRODUCTION_STATES.VALIDATING
     })).toThrowError(/not from the package stage/);
   });
 
@@ -129,7 +161,27 @@ describe("workflow store packaging resume", () => {
     expect(outbox.params[4]).toBe("petpack:resume-1");
   });
 
-  it("refuses when the run has no dead media-gate execution to resume", async () => {
+  it("retargets the dead build execution when the run resumes at packaging", async () => {
+    const { store, executed } = scriptedStore([
+      ["INSERT INTO production_run_event", { rows: [] }],
+      ["UPDATE production_run", updatedRunRow],
+      ["UPDATE production_job_execution", { rows: [{ id: "execution-dead-build" }] }],
+      ["UPDATE pet_project", { rows: [] }],
+      ["INSERT INTO outbox_job", { rows: [] }]
+    ]);
+    const next = { ...buildFailedRun, state: PRODUCTION_STATES.PACKAGING, failureCode: null };
+    const job = resumeJob("petpack:resume-build-1", JOB_NAMES.BUILD_PACKAGE);
+    const committed = await store.commitAdminMediaProcessingResume({ previousRun: buildFailedRun, run: next, job });
+    expect(committed.state).toBe(PRODUCTION_STATES.PACKAGING);
+    // The dead row it revives is the build's, not the gate's - reviving the
+    // gate's would leave the build with nothing to claim.
+    const execution = executed.find((entry) => entry.sql.includes("UPDATE production_job_execution"));
+    expect(execution.params).toEqual(["run-1", "petpack:resume-build-1", JOB_NAMES.BUILD_PACKAGE]);
+    const outbox = executed.find((entry) => entry.sql.includes("INSERT INTO outbox_job"));
+    expect(outbox.params[2]).toBe(JOB_NAMES.BUILD_PACKAGE);
+  });
+
+  it("refuses when the run has no dead execution to resume", async () => {
     const { store } = scriptedStore([
       ["INSERT INTO production_run_event", { rows: [] }],
       ["UPDATE production_run", updatedRunRow],
@@ -137,22 +189,30 @@ describe("workflow store packaging resume", () => {
     ]);
     const next = { ...refusedRun, state: PRODUCTION_STATES.MEDIA_PROCESSING, failureCode: null };
     await expect(store.commitAdminMediaProcessingResume({ previousRun: refusedRun, run: next, job: resumeJob() }))
-      .rejects.toThrowError(/no dead media-gate execution/);
+      .rejects.toThrowError(/no dead petpack\.process-media execution/);
   });
 
-  it("only queues this run's process-media job", async () => {
+  it("queues the job belonging to the state the run is going back to", async () => {
     const { store } = scriptedStore([]);
-    const next = { ...refusedRun, state: PRODUCTION_STATES.MEDIA_PROCESSING, failureCode: null };
+    // Resuming at the gate may only queue process-media...
+    const atGate = { ...refusedRun, state: PRODUCTION_STATES.MEDIA_PROCESSING, failureCode: null };
     await expect(store.commitAdminMediaProcessingResume({
       previousRun: refusedRun,
-      run: next,
-      job: { ...resumeJob(), name: JOB_NAMES.BUILD_PACKAGE }
-    })).rejects.toThrowError(/process-media job/);
+      run: atGate,
+      job: resumeJob("petpack:resume-1", JOB_NAMES.BUILD_PACKAGE)
+    })).rejects.toThrowError(/petpack\.process-media job/);
     await expect(store.commitAdminMediaProcessingResume({
       previousRun: refusedRun,
-      run: next,
+      run: atGate,
       job: { ...resumeJob(), data: { runId: "run-2" } }
-    })).rejects.toThrowError(/process-media job/);
+    })).rejects.toThrowError(/petpack\.process-media job/);
+    // ...and resuming at the build may only queue build-package.
+    const atBuild = { ...buildFailedRun, state: PRODUCTION_STATES.PACKAGING, failureCode: null };
+    await expect(store.commitAdminMediaProcessingResume({
+      previousRun: buildFailedRun,
+      run: atBuild,
+      job: resumeJob("petpack:resume-build-1", JOB_NAMES.PROCESS_MEDIA)
+    })).rejects.toThrowError(/petpack\.build-package job/);
   });
 });
 
@@ -189,5 +249,27 @@ describe("workflow packaging resume", () => {
       failedFromState: PRODUCTION_STATES.MEDIA_PROCESSING
     });
     expect(calls[1].job.options.jobId).not.toBe(job.options.jobId);
+  });
+
+  it("queues the build again for a run that died building the archive", async () => {
+    const calls = [];
+    const runStore = {
+      commitTransition: async ({ run }) => ({ ...run, version: 19 }),
+      commitAdminMediaProcessingResume: async (input) => { calls.push(input); return { ...input.run, version: 19 }; }
+    };
+    const workflow = new ProductionWorkflow({
+      runStore,
+      queue: { enqueue: async () => {} },
+      promptStore: { listPublishedMetadata: async () => [] },
+      modelRegistry,
+      logger: { info() {}, warn() {}, error() {} }
+    });
+    const committed = await workflow.adminResumeMediaProcessing({
+      run: buildFailedRun,
+      failedFromState: PRODUCTION_STATES.PACKAGING
+    });
+    expect(committed.state).toBe(PRODUCTION_STATES.PACKAGING);
+    expect(calls[0].job.name).toBe(JOB_NAMES.BUILD_PACKAGE);
+    expect(calls[0].run.state).toBe(PRODUCTION_STATES.PACKAGING);
   });
 });

@@ -636,20 +636,27 @@ class PostgresTransactionalWorkflowStore {
   }
 
   /**
-   * Administrator resume of a run that died at the seven-action media gate
-   * (`production_evidence_provenance_invalid` and its neighbours). Nothing is
-   * regenerated: the masters, the seven passed videos and their reports are
-   * all still on record, so the run simply returns to media_processing and a
-   * fresh process-media job is queued. The gate's dead execution row is
-   * retargeted at that job - one run-level execution per job name is what the
-   * worker's claim expects to find - and the project leaves `failed` with it.
+   * Administrator resume of a run that died on its way to a finished pack -
+   * either at the seven-action media gate (`production_evidence_provenance_
+   * invalid` and its neighbours) or at the build that follows it
+   * (`petpack_build_commit_failed`). Nothing is regenerated: the masters, the
+   * seven passed videos and their reports are all still on record, so the run
+   * returns to the state it fell out of and that step's job is queued again.
+   * Its dead execution row is retargeted at the new job - one run-level
+   * execution per job name is what the worker's claim expects to find - and the
+   * project leaves `failed` with it.
    */
   async commitAdminMediaProcessingResume({ previousRun = null, run, job } = {}) {
     if (!run || typeof run !== "object") throw new Error("Next production run is required");
     if (!previousRun || previousRun.id !== run.id) throw new Error("A packaging resume requires the persisted failed run");
     const safeJob = assertWorkflowJob(job);
-    if (safeJob.name !== JOB_NAMES.PROCESS_MEDIA || safeJob.data.runId !== run.id) {
-      throw new Error("The packaging resume must queue this run's process-media job");
+    // The resumed job must be the one for the state the run is going back to,
+    // or the retarget below would revive a step the run is not in.
+    const expectedJobName = run.state === PRODUCTION_STATES.PACKAGING
+      ? JOB_NAMES.BUILD_PACKAGE
+      : JOB_NAMES.PROCESS_MEDIA;
+    if (safeJob.name !== expectedJobName || safeJob.data.runId !== run.id) {
+      throw new Error(`The packaging resume must queue this run's ${expectedJobName} job`);
     }
     return this.database.transaction(async (transaction) => {
       const tx = requireTransactionQuery(transaction);
@@ -666,10 +673,10 @@ class PostgresTransactionalWorkflowStore {
             AND action_id IS NULL
             AND status = 'dead'
         RETURNING id`,
-        [committedRun.id, safeJob.options.jobId, JOB_NAMES.PROCESS_MEDIA]
+        [committedRun.id, safeJob.options.jobId, expectedJobName]
       );
       if (!Array.isArray(retargeted.rows) || retargeted.rows.length !== 1) {
-        throw new Error("The run has no dead media-gate execution to resume");
+        throw new Error(`The run has no dead ${expectedJobName} execution to resume`);
       }
       await tx.query(
         `UPDATE pet_project SET state = 'producing', updated_at = now()

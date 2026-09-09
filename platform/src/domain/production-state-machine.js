@@ -63,6 +63,28 @@ const ADMIN_RERUN_RESUME_STATES = Object.freeze({
   package: PRODUCTION_STATES.MEDIA_PROCESSING
 });
 
+// `package` is the one stage with two entry points, because the work after the
+// last video is two steps and either can die. A run refused at the media gate
+// has to freeze its snapshot again; a run that died building the archive has a
+// valid snapshot already and only needs the build queued. Both still hold every
+// master and video, so the resume returns the run to whichever it fell out of
+// rather than dragging it back through work that succeeded.
+const ADMIN_PACKAGE_RESUME_STATES = Object.freeze([
+  PRODUCTION_STATES.MEDIA_PROCESSING,
+  PRODUCTION_STATES.PACKAGING
+]);
+
+/**
+ * The state a rerun of `stage` resumes in, given where the run died, or null
+ * when this stage cannot be rerun from there.
+ */
+function adminRerunResumeState(stage, failedFromState) {
+  if (stage === "package") {
+    return ADMIN_PACKAGE_RESUME_STATES.includes(failedFromState) ? failedFromState : null;
+  }
+  return ADMIN_RERUN_RESUME_STATES[stage] === failedFromState ? failedFromState : null;
+}
+
 /**
  * An administrator authorizes exactly one extra generation for the stage a
  * failed run died in. No retry budgets are raised: if the granted generation
@@ -73,9 +95,11 @@ function adminRerunProductionRun(run, { stage, failedFromState } = {}) {
   if (!run || run.state !== PRODUCTION_STATES.FAILED) {
     throw adminRerunStageError("Only a failed production run can be rerun by an administrator");
   }
-  const resumeState = ADMIN_RERUN_RESUME_STATES[stage];
-  if (!resumeState) throw adminRerunStageError(`Administrator rerun does not support stage: ${stage}`);
-  if (failedFromState !== resumeState) {
+  if (!ADMIN_RERUN_RESUME_STATES[stage]) {
+    throw adminRerunStageError(`Administrator rerun does not support stage: ${stage}`);
+  }
+  const resumeState = adminRerunResumeState(stage, failedFromState);
+  if (!resumeState) {
     throw adminRerunStageError(`The run failed from ${failedFromState || "an unknown state"}, not from the ${stage} stage`);
   }
   if (stage === "front_master" || stage === "side_master") {
@@ -357,6 +381,8 @@ function canAdvanceFromVideoGeneration(run) {
 module.exports = {
   adminRedoDeliveredAction,
   ADMIN_RERUN_RESUME_STATES,
+  ADMIN_PACKAGE_RESUME_STATES,
+  adminRerunResumeState,
   CHARACTER_MASTER_VIEWS,
   MAX_USER_REGENERATIONS_PER_VIEW,
   ORDER_STATES,

@@ -1,6 +1,11 @@
 const { requireAdmin } = require("../auth/authorization");
 const { REQUIRED_ACTION_IDS } = require("../domain/action-catalog");
-const { PRODUCTION_STATES, ADMIN_RERUN_RESUME_STATES } = require("../domain/production-state-machine");
+const {
+  PRODUCTION_STATES,
+  ADMIN_RERUN_RESUME_STATES,
+  ADMIN_PACKAGE_RESUME_STATES,
+  adminRerunResumeState
+} = require("../domain/production-state-machine");
 const { createAdminOperationsView } = require("./admin-operations-service");
 
 const STAGE_PATTERN = /^(front_master|side_master|sleep_master|package|action:[a-z][a-z-]{0,31})$/;
@@ -164,9 +169,10 @@ function availableRescueStages(context) {
     else stages.push({ stage: "front_master", mode: "rerun" }, { stage: "side_master", mode: "rerun" });
   } else if (failedFrom === PRODUCTION_STATES.SLEEP_GENERATING) {
     stages.push({ stage: "sleep_master", mode: "rerun" });
-  } else if (failedFrom === PRODUCTION_STATES.MEDIA_PROCESSING) {
-    // Refused at the media gate: every master and video is still on record,
-    // so the only disposal is to queue packaging again.
+  } else if (ADMIN_PACKAGE_RESUME_STATES.includes(failedFrom)) {
+    // Refused at the media gate, or dead while building the archive: every
+    // master and video is still on record either way, so the only disposal is
+    // to queue the step it died in again.
     stages.push({ stage: "package", mode: "rerun" });
   } else if (failedFrom === PRODUCTION_STATES.VIDEO_GENERATING) {
     for (const action of context.actions) {
@@ -390,8 +396,11 @@ class AdminOrdersService {
     }
     // Stage validation happens where the run died, not by failure code, so
     // provider-error and budget-exhaustion failures are rescuable too.
-    const expectedResume = ADMIN_RERUN_RESUME_STATES[parsed.kind === "action" ? "action" : parsed.stage];
-    if (context.failedFromState !== expectedResume) {
+    const resumeState = adminRerunResumeState(
+      parsed.kind === "action" ? "action" : parsed.stage,
+      context.failedFromState
+    );
+    if (!resumeState) {
       throw stageUnavailableError(
         `The run failed from ${context.failedFromState || "an unknown state"}; the ${parsed.stage} stage cannot be rerun`
       );

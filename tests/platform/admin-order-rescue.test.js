@@ -427,9 +427,18 @@ describe("rescue helpers", () => {
     expect(summary).toEqual({ status: "failed", reasons: ["a", "b"] });
   });
 
-  it("offers no stages for a run that failed in packaging", () => {
-    const context = { ...baseContext(), failedFromState: PRODUCTION_STATES.PACKAGING };
-    expect(availableRescueStages(context)).toEqual([]);
+  it("offers the package resume for a run that failed in packaging", () => {
+    // This used to offer nothing, which left the first real delivered-pack redo
+    // stranded: it died at petpack_build_commit_failed with a valid frozen
+    // snapshot and no disposal to reach it. The resume covers both states the
+    // pack-building half can die in.
+    for (const failedFromState of [PRODUCTION_STATES.MEDIA_PROCESSING, PRODUCTION_STATES.PACKAGING]) {
+      expect(availableRescueStages({ ...baseContext(), failedFromState }))
+        .toEqual([{ stage: "package", mode: "rerun" }]);
+    }
+    // The steps after the build are not covered: a run that fails validation
+    // has a built pack that failed its checks, which is a different question.
+    expect(availableRescueStages({ ...baseContext(), failedFromState: PRODUCTION_STATES.VALIDATING })).toEqual([]);
   });
 });
 

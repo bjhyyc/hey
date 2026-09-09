@@ -700,10 +700,15 @@ class ProductionWorkflow {
   }
 
   /**
-   * Administrator resume of a run refused at the seven-action media gate. No
-   * provider call is made: the run returns to media_processing and a fresh
-   * process-media job is queued under a revision no earlier gate attempt used,
-   * so BullMQ accepts it and the retargeted execution row can be claimed.
+   * Administrator resume of a run that died on its way to a finished pack. No
+   * provider call is made: the run returns to the state it fell out of and that
+   * state's job is queued again under a revision no earlier attempt used, so
+   * BullMQ accepts it and the retargeted execution row can be claimed.
+   *
+   * A run refused at the seven-action media gate goes back to process-media. A
+   * run that died building the archive keeps the snapshot that gate froze - the
+   * build reads it from the database, not from the job - so it goes back to
+   * build-package and the frozen inputs are reused exactly as they were.
    */
   async adminResumeMediaProcessing({ run, failedFromState }) {
     if (typeof this.runStore.commitAdminMediaProcessingResume !== "function") {
@@ -711,7 +716,7 @@ class ProductionWorkflow {
     }
     const next = adminRerunProductionRun(run, { stage: "package", failedFromState });
     const job = createWorkflowJob({
-      name: JOB_NAMES.PROCESS_MEDIA,
+      name: next.state === PRODUCTION_STATES.PACKAGING ? JOB_NAMES.BUILD_PACKAGE : JOB_NAMES.PROCESS_MEDIA,
       run: next,
       inputRevision: `admin-resume:${Number(run.version)}`,
       attempts: 3
