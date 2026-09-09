@@ -201,7 +201,7 @@ export function NewProjectForm() {
     })()}
     <div className="workflow-notice">
       <p><strong>一次付费包含全部制作</strong>：形象生成与确认、睡姿、七个动作视频、抠图校正和打包下载。</p>
-      <p>两张形象母图各有 2 次免费重新生成机会；付款后上传照片，全程通常 10–20 分钟。付款遇到问题请勿重复下单。</p>
+      <p>正面与侧面两张形象各有 2 次免费重新生成机会；付款后上传照片，全程通常 10–20 分钟。付款遇到问题请勿重复下单。</p>
     </div>
     <label className="payment-name-field">宠物名字<input
       maxLength={120}
@@ -244,7 +244,7 @@ export function NewProjectForm() {
       <span>
         我已知悉：成品由 AI 依据我的照片重新绘制，会尽量贴近毛色与神态，但不是照片复刻；
         本商品为按我提供的照片定制的数字内容，交付后不适用七天无理由退货。
-        若文件损坏、无法导入或与我确认的母图明显不符，可免费重做或退款。
+        若文件损坏、无法导入或与我确认的形象明显不符，可免费重做或退款。
         详见<a href="/terms" target="_blank" rel="noopener noreferrer">服务协议</a>与<a href="/ai-content" target="_blank" rel="noopener noreferrer">AI 生成说明</a>。
       </span>
     </label>
