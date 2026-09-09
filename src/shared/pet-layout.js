@@ -22,6 +22,12 @@ const MAX_MEDIA_ASPECT = 4;
 
 const STUDIO_CANVAS_ASPECT = 854 / 480;
 const STUDIO_SUBJECT_HEIGHT_FRACTION = 0.45;
+// The size a freshly imported pack starts at. This was derived from the work
+// area for a while, which produced a pet sized right for a 1080p desktop and
+// too large on a Retina Mac, where the same logical pixels are physically
+// bigger. A fixed, modest default that the customer nudges from the Display
+// tab beat a formula that has to be right on every screen.
+const IMPORTED_STUDIO_DISPLAY_SCALE = 1.1;
 // A desk pet that reads well: its body about 22% of the work area height.
 // Calibrated against the size the first customer settled on by hand (scale
 // 1.86 on an 852 px work area) rather than picked from the air.
@@ -70,33 +76,6 @@ function computePetWindowSize({ scale = 1, aspect = 1 } = {}) {
   return { width, height };
 }
 
-/**
- * The display scale to start a freshly imported studio pack at: the pet's
- * body about 18% of the work area height, the window at most 60% of the work
- * area in either direction, and always inside the display tab's slider range.
- */
-function recommendStudioScale({
-  workAreaWidth,
-  workAreaHeight,
-  aspect = STUDIO_CANVAS_ASPECT,
-  subjectHeightFraction = STUDIO_SUBJECT_HEIGHT_FRACTION,
-  targetSubjectFraction = STUDIO_TARGET_SUBJECT_FRACTION
-} = {}) {
-  const height = Number(workAreaHeight);
-  const width = Number(workAreaWidth);
-  if (!Number.isFinite(height) || height <= 0) return 1;
-  const safeAspect = normalizeMediaAspect(aspect);
-  const subjectPixelsPerScale = PET_SPRITE_BASE_SIZE * subjectHeightFraction;
-  let scale = (targetSubjectFraction * height) / subjectPixelsPerScale;
-  scale = Math.min(scale, (MAX_WINDOW_WORK_AREA_FRACTION * height) / PET_WINDOW_BASE_SIZE);
-  if (Number.isFinite(width) && width > 0) {
-    const windowWidthPerScale = PET_SPRITE_BASE_SIZE * Math.max(1, safeAspect) + PET_WINDOW_HORIZONTAL_CHROME;
-    scale = Math.min(scale, (MAX_WINDOW_WORK_AREA_FRACTION * width) / windowWidthPerScale);
-  }
-  scale = Math.min(MAX_DISPLAY_SCALE, Math.max(MIN_DISPLAY_SCALE, scale));
-  return Math.round(scale * 100) / 100;
-}
-
 // Where the rendered sprite actually sits inside the pet window, as offsets
 // from the window's top-left. It mirrors what pet.css resolves the sprite box
 // to (height capped by the vertical padding, width by the side padding), so
@@ -125,6 +104,7 @@ function spriteBoxWithinWindow({ width, height } = {}) {
 }
 
 module.exports = {
+  IMPORTED_STUDIO_DISPLAY_SCALE,
   MAX_DISPLAY_SCALE,
   MIN_DISPLAY_SCALE,
   PET_SPRITE_BASE_SIZE,
@@ -134,6 +114,5 @@ module.exports = {
   computePetWindowSize,
   computeSpriteBox,
   normalizeMediaAspect,
-  recommendStudioScale,
   spriteBoxWithinWindow
 };

@@ -39,6 +39,7 @@ import {
   LIFECYCLE_EVENT_TYPES,
   shouldSuppressRuntimeEventDuringDrag,
   shouldSuppressRuntimeEventWhileAsleep
+  , shouldSuppressRightClickWhileAwake
 } from "./event-suppression.js";
 import {
   createOneShotEventLatch,
@@ -1615,6 +1616,10 @@ function evaluateRuntimeEvent(eventContext) {
       type: eventContext.type,
       eventSource: eventContext.eventSource
     });
+    return false;
+  }
+  if (shouldSuppressRightClickWhileAwake({ sleepActive: isSleepStateActive(), event: eventContext })) {
+    debugRulesLog("event:suppressed-right-click-awake", {});
     return false;
   }
 

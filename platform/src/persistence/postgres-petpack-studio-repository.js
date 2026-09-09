@@ -1790,7 +1790,8 @@ class PostgresPetPackStudioRepository {
       const rerunCount = oneRow(await tx.query(
         `SELECT COUNT(*)::int AS granted
            FROM audit_event
-          WHERE order_id = $1 AND event_type = 'admin_rerun_granted'`,
+          WHERE order_id = $1
+            AND event_type IN ('admin_rerun_granted', 'admin_delivered_action_redo')`,
         [safeOrderId]
       ), "Administrator rerun count could not be read");
 

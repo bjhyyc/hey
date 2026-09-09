@@ -25,3 +25,9 @@ export function shouldSuppressRuntimeEventWhileAsleep({
   if (LIFECYCLE_EVENT_TYPES.has(event.type)) return false;
   return true;
 }
+
+// The Hey contract reserves right-click exclusively for waking from sleep.
+// Do not let the same event reach ordinary rules while the pet is awake.
+export function shouldSuppressRightClickWhileAwake({ sleepActive = false, event = null } = {}) {
+  return Boolean(event && event.type === "rightClick" && !sleepActive);
+}

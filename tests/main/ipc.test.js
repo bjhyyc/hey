@@ -1142,7 +1142,7 @@ describe("registerIpc", () => {
     expect(petWindow.setBounds).not.toHaveBeenCalled();
   });
 
-  it("starts an imported studio pack at a display scale recommended for the screen", () => {
+  it("starts an imported studio pack at the fixed default display scale", () => {
     const { applyImportedStudioDisplayScale } = loadIpcModule();
     const packageDir = path.join(userDataDir, "packages", "hey-dog");
     fs.mkdirSync(packageDir, { recursive: true });
@@ -1154,25 +1154,20 @@ describe("registerIpc", () => {
     mockConfigStore.load.mockReturnValue({ ...DEFAULT_CONFIG, display: { ...DEFAULT_CONFIG.display, scale: 1 } });
     mockConfigStore.save.mockImplementation((config) => config);
 
-    const scale = applyImportedStudioDisplayScale({
-      userDataDir,
-      packageId: "hey-dog",
-      configStore: mockConfigStore,
-      getWindows,
-      workArea: { width: 1920, height: 1040 }
-    });
-
-    // 0.22 * 1040 / (232 * 0.45) = 2.19: a ~229 px pet on a 1080p desktop.
-    expect(scale).toBe(2.19);
+    // A fixed, modest starting size rather than one derived from the work area,
+    // which sized the pet right on a 1080p desktop and too large on a Retina Mac.
+    expect(applyImportedStudioDisplayScale({
+      userDataDir, packageId: "hey-dog", configStore: mockConfigStore, getWindows
+    })).toBe(1.1);
     expect(mockConfigStore.save).toHaveBeenCalledWith(expect.objectContaining({
-      display: expect.objectContaining({ scale: 2.19, x: DEFAULT_CONFIG.display.x })
+      display: expect.objectContaining({ scale: 1.1, x: DEFAULT_CONFIG.display.x })
     }));
-    expect(petWindow.webContents.send).toHaveBeenCalledWith("pet:display-updated", expect.objectContaining({ scale: 2.19 }));
+    expect(petWindow.webContents.send).toHaveBeenCalledWith("pet:display-updated", expect.objectContaining({ scale: 1.1 }));
 
-    // A pack without studio behaviour keeps whatever scale the user had.
+    // A pack without studio behaviour keeps whatever scale the customer had.
     fs.writeFileSync(path.join(packageDir, "manifest.json"), JSON.stringify({ schemaVersion: 1, packageId: "hey-dog" }));
     mockConfigStore.save.mockClear();
-    expect(applyImportedStudioDisplayScale({ userDataDir, packageId: "hey-dog", configStore: mockConfigStore, getWindows, workArea: { width: 1920, height: 1040 } })).toBeNull();
+    expect(applyImportedStudioDisplayScale({ userDataDir, packageId: "hey-dog", configStore: mockConfigStore, getWindows })).toBeNull();
     expect(mockConfigStore.save).not.toHaveBeenCalled();
   });
 

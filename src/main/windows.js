@@ -56,6 +56,11 @@ async function createPetWindow({ display = {}, mediaAspect = 1 } = {}) {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
+    // macOS spends a click on activating an unfocused window, so the pet's
+    // first right-click was swallowed and waking it appeared to need a double
+    // right-click. The pet is an always-on-top companion that is clicked
+    // without "entering" it first, so it takes the first mouse event.
+    acceptFirstMouse: true,
     webPreferences: {
       preload: path.join(__dirname, "..", "preload", "pet-preload.js"),
       contextIsolation: true,

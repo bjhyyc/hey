@@ -349,6 +349,13 @@ class AdminOrdersService {
     // The redo of a delivered clip is the one disposal that does not start
     // from a failed run, so it is decided before that guard.
     if (run.state === PRODUCTION_STATES.DELIVERABLE) {
+      // A redo generates a clip for real money, so it draws on the same
+      // per-order budget as any other authorized generation.
+      if (context.adminRerunCount >= this.maxAdminRerunsPerOrder) {
+        const error = new Error(`This order has reached the administrator rerun limit of ${this.maxAdminRerunsPerOrder}`);
+        error.code = "admin_rerun_limit_reached";
+        throw error;
+      }
       if (parsed.kind !== "action") {
         throw stageUnavailableError("A delivered pack can only have one of its actions redone");
       }

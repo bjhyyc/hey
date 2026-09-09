@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shouldSuppressRuntimeEventDuringDrag,
   shouldSuppressRuntimeEventWhileAsleep
+  , shouldSuppressRightClickWhileAwake
 } from "../../src/renderer/pet/event-suppression.js";
 
 describe("runtime event suppression", () => {

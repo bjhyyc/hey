@@ -28,23 +28,14 @@ describe("pet layout", () => {
     expect(layout.normalizeMediaAspect(0.1)).toBe(0.25);
   });
 
-  it("recommends the starting scale the first customer chose by hand", () => {
-    // The calibration point: on this 1440x852 logical work area the customer
-    // dragged the slider to 1.86; the recommendation lands within 4%.
-    const chosenByHand = 1.86;
-    const recommended = layout.recommendStudioScale({ workAreaWidth: 1440, workAreaHeight: 852 });
-    expect(recommended).toBe(1.8);
-    expect(Math.abs(recommended - chosenByHand) / chosenByHand).toBeLessThan(0.04);
-    // 1080p desktop: a ~229 px pet in a 1097x701 window.
-    expect(layout.recommendStudioScale({ workAreaWidth: 1920, workAreaHeight: 1040 })).toBe(2.19);
-    // 768 px laptop: a ~161 px pet.
-    expect(layout.recommendStudioScale({ workAreaWidth: 1366, workAreaHeight: 728 })).toBe(1.53);
-    // A narrow work area is capped by the window's width budget, not height.
-    expect(layout.recommendStudioScale({ workAreaWidth: 600, workAreaHeight: 2000 })).toBe(0.9);
-    // Never outside the display tab's slider range.
-    expect(layout.recommendStudioScale({ workAreaWidth: 200, workAreaHeight: 200 })).toBe(0.5);
-    expect(layout.recommendStudioScale({ workAreaWidth: 8000, workAreaHeight: 8000 })).toBe(3);
-    expect(layout.recommendStudioScale({ workAreaHeight: 0 })).toBe(1);
+  it("starts an imported pack at a fixed, modest size", () => {
+    // Derived from the work area for a while, which sized the pet right on a
+    // 1080p desktop and too large on a Retina Mac. A fixed default the
+    // customer nudges from the Display tab is the honest answer.
+    expect(layout.IMPORTED_STUDIO_DISPLAY_SCALE).toBe(1.1);
+    expect(layout.IMPORTED_STUDIO_DISPLAY_SCALE).toBeGreaterThanOrEqual(layout.MIN_DISPLAY_SCALE);
+    expect(layout.IMPORTED_STUDIO_DISPLAY_SCALE).toBeLessThanOrEqual(layout.MAX_DISPLAY_SCALE);
+    expect(layout.recommendStudioScale).toBeUndefined();
   });
 
   it("resolves the sprite rectangle inside the window for the hover tracker", () => {

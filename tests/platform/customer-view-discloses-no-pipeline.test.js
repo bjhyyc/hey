@@ -15,12 +15,17 @@ const { PRODUCTION_STATES } = stateMachineModule;
 
 // Vocabulary that describes how the pack is made rather than what the customer
 // is waiting for. None of it may appear in a customer payload.
+// What the pet will do is the product, and the waiting screen names it. What
+// stays private is how the pack is built: the clips it is assembled from, which
+// of them combine, the processing stages, and the quality-gate redos.
 const INTERNAL_VOCABULARY = [
   "awake_generating", "sleep_generating", "awaiting_prompt_gate", "video_generating",
   "media_processing", "packaging", "validating", "qa_passed", "qa_failed",
   "睡姿", "母图", "抠图", "提示词", "首尾帧", "绿幕", "质检", "重做", "PetPack",
-  "idle", "sneeze", "roll", "stretch", "hover-attention", "sleep-transition", "sleep-loop",
-  "打喷嚏", "打滚", "伸懒腰", "抬头看你", "入睡", "待机"
+  // The clip identifiers that would give away the composition. sneeze, roll and
+  // stretch are the abilities themselves and may appear; these three would say
+  // that one ability is built from two clips, and that idle is a clip at all.
+  "hover-attention", "sleep-transition", "sleep-loop", "actionId"
 ];
 
 const ACTIONS = [
@@ -63,14 +68,22 @@ describe("the customer project view keeps the pipeline private", () => {
     }
   });
 
-  it("reports animation progress as a rounded percentage, never a clip list", () => {
+  it("reports progress as the abilities the customer bought, not the clips", () => {
     const view = viewFor(PRODUCTION_STATES.VIDEO_GENERATING);
     expect(view.actions).toBeUndefined();
-    // Two of seven done rounds to the nearest 5%, so the exact segment count
-    // cannot be recovered from the number.
-    expect(view.actionProgress).toEqual({ percent: 30 });
-    expect(view.actionProgress.percent % 5).toBe(0);
-    expect(viewFor(PRODUCTION_STATES.AWAITING_PHOTOS).actionProgress.percent % 5).toBe(0);
+    const labels = view.actionProgress.items.map((item) => item.label);
+    expect(labels).toEqual(["打喷嚏", "打滚", "伸懒腰", "舔脚", "睡觉", "安静待机"]);
+    // Six abilities from seven clips: the two sleeping clips are one ability,
+    // and nothing in the payload says so.
+    expect(view.actionProgress.items).toHaveLength(6);
+    // idle and sneeze passed; roll has left the queue; the rest are waiting.
+    expect(view.actionProgress.items.find((item) => item.id === "sneeze").state).toBe("done");
+    expect(view.actionProgress.items.find((item) => item.id === "roll").state).toBe("working");
+    expect(view.actionProgress.items.find((item) => item.id === "sleep").state).toBe("waiting");
+    expect(view.actionProgress.percent).toBe(33);
+    // A quality-gate redo is invisible: sneeze was retried twice and still just
+    // reads as finished.
+    expect(JSON.stringify(view.actionProgress)).not.toMatch(/retry|redo|重做/i);
   });
 
   it("answers the character page's one question without naming a stage", () => {

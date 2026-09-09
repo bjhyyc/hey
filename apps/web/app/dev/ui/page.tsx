@@ -42,7 +42,14 @@ const FIXTURES: Record<string, ProjectView> = {
       { id: "p3", label: "生成七个动作", state: "active" },
       { id: "p4", label: "抠图与打包", state: "pending" },
     ],
-    actionProgress: { percent: 40 },
+    actionProgress: { percent: 40, items: [
+      { id: "sneeze", label: "打喷嚏", state: "done" },
+      { id: "roll", label: "打滚", state: "done" },
+      { id: "stretch", label: "伸懒腰", state: "working" },
+      { id: "lick", label: "舔脚", state: "waiting" },
+      { id: "sleep", label: "睡觉", state: "waiting" },
+      { id: "idle", label: "安静待机", state: "waiting" }
+    ] },
     downloadReady: false,
     failed: false,
   },
@@ -56,7 +63,14 @@ const FIXTURES: Record<string, ProjectView> = {
       { id: "p3", label: "生成七个动作", state: "active" },
       { id: "p4", label: "抠图与打包", state: "pending" },
     ],
-    actionProgress: { percent: 40 },
+    actionProgress: { percent: 40, items: [
+      { id: "sneeze", label: "打喷嚏", state: "done" },
+      { id: "roll", label: "打滚", state: "done" },
+      { id: "stretch", label: "伸懒腰", state: "working" },
+      { id: "lick", label: "舔脚", state: "waiting" },
+      { id: "sleep", label: "睡觉", state: "waiting" },
+      { id: "idle", label: "安静待机", state: "waiting" }
+    ] },
     downloadReady: false,
     failed: true,
   },
@@ -65,7 +79,14 @@ const FIXTURES: Record<string, ProjectView> = {
     order: { id: "o4", status: "paid", amountFen: 1 },
     characterCandidates: { front: null, side: null, canConfirm: false },
     progress: [],
-    actionProgress: { percent: 40 },
+    actionProgress: { percent: 40, items: [
+      { id: "sneeze", label: "打喷嚏", state: "done" },
+      { id: "roll", label: "打滚", state: "done" },
+      { id: "stretch", label: "伸懒腰", state: "working" },
+      { id: "lick", label: "舔脚", state: "waiting" },
+      { id: "sleep", label: "睡觉", state: "waiting" },
+      { id: "idle", label: "安静待机", state: "waiting" }
+    ] },
     downloadReady: true,
     failed: false,
   },
@@ -79,7 +100,14 @@ const FIXTURES: Record<string, ProjectView> = {
       { id: "p3", label: "生成七个动作", state: "completed" },
       { id: "p4", label: "抠图与打包", state: "completed" },
     ],
-    actionProgress: { percent: 40 },
+    actionProgress: { percent: 40, items: [
+      { id: "sneeze", label: "打喷嚏", state: "done" },
+      { id: "roll", label: "打滚", state: "done" },
+      { id: "stretch", label: "伸懒腰", state: "working" },
+      { id: "lick", label: "舔脚", state: "waiting" },
+      { id: "sleep", label: "睡觉", state: "waiting" },
+      { id: "idle", label: "安静待机", state: "waiting" }
+    ] },
     downloadReady: true,
     failed: false,
   },

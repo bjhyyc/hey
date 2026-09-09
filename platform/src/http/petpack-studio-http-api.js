@@ -614,11 +614,20 @@ function serializeProjectView(value) {
       label: safeString(step?.label, { maxLength: 256 }),
       state: safeString(step?.state, { maxLength: 32 })
     })) : [],
-    // Only how far along the animation work is. The clip list, each clip's
-    // state and the quality-gate redos used to travel to the browser, where
-    // anyone could read the pack's composition straight out of the response.
+    // The customer's own list of what their pet will do, and which of those is
+    // finished. Deliberately not the clip list: the pack's composition, the
+    // processing stages and the quality-gate redos stay out of the response.
     actionProgress: value?.actionProgress
-      ? compactObject({ percent: safeInteger(value.actionProgress.percent) })
+      ? compactObject({
+          percent: safeInteger(value.actionProgress.percent),
+          items: Array.isArray(value.actionProgress.items)
+            ? value.actionProgress.items.map((item) => compactObject({
+                id: safeString(item?.id, { maxLength: 32 }),
+                label: safeString(item?.label, { maxLength: 32 }),
+                state: safeString(item?.state, { maxLength: 16 })
+              }))
+            : []
+        })
       : undefined,
     downloadReady: safeBoolean(value?.downloadReady),
     failed: safeBoolean(value?.failed)

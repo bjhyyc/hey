@@ -23,7 +23,7 @@ const { SAMPLE_PETPACK_URL, installSamplePetpack } = require("./services/sample-
 const { checkForUpdates, getOfficialLink } = require("./services/app-updates");
 const { getLaunchAtLogin, setLaunchAtLogin } = require("./startup");
 const { validateManifest, validateCondition, validateAction } = require("../shared/manifest-validator");
-const { STUDIO_CANVAS_ASPECT, computePetWindowSize, recommendStudioScale } = require("../shared/pet-layout");
+const { IMPORTED_STUDIO_DISPLAY_SCALE, computePetWindowSize } = require("../shared/pet-layout");
 const { isSafeRelativePath } = require("../shared/path-safety");
 const { SUPPORTED_ASSET_EXTENSIONS } = require("../shared/schema");
 const { DEFAULT_CONFIG } = require("../shared/defaults");
@@ -191,39 +191,24 @@ function isStudioManifest(manifest) {
     typeof manifest.studioBehavior === "object" && manifest.studioBehavior.profile === "petpack-studio/v1");
 }
 
-function getPrimaryWorkArea() {
-  const primary = screen && typeof screen.getPrimaryDisplay === "function" ? screen.getPrimaryDisplay() : null;
-  const area = primary && (primary.workArea || primary.bounds);
-  if (area && Number.isFinite(area.width) && Number.isFinite(area.height) && area.width > 0 && area.height > 0) {
-    return { width: Math.round(area.width), height: Math.round(area.height) };
-  }
-  const first = getDisplayWorkAreas()[0];
-  return first ? { width: first.workArea.width, height: first.workArea.height } : null;
-}
-
 /**
- * A freshly imported studio pack starts at a display scale chosen for this
- * screen (see recommendStudioScale) instead of the classic 100%, which drew
- * its wide canvas at roughly 60 px of pet. The customer can still move the
- * slider afterwards; this only picks where it starts.
+ * A freshly imported studio pack starts at IMPORTED_STUDIO_DISPLAY_SCALE rather
+ * than the classic 100%, which drew its wide canvas at roughly 60 px of pet.
+ * The customer can still move the slider afterwards; this only picks where it
+ * starts.
  */
-function applyImportedStudioDisplayScale({ userDataDir, packageId, configStore, getWindows, workArea = getPrimaryWorkArea() } = {}) {
+function applyImportedStudioDisplayScale({ userDataDir, packageId, configStore, getWindows } = {}) {
   if (typeof packageId !== "string" || !isSafePackageId(packageId)) return null;
   const manifestResult = readJsonFile(path.join(userDataDir, "packages", packageId, "manifest.json"));
   if (!manifestResult.ok || !isStudioManifest(manifestResult.value)) return null;
-  if (!workArea) return null;
-  const scale = recommendStudioScale({
-    workAreaWidth: workArea.width,
-    workAreaHeight: workArea.height,
-    aspect: STUDIO_CANVAS_ASPECT
-  });
+  const scale = IMPORTED_STUDIO_DISPLAY_SCALE;
   const loadedConfig = configStore.load();
   const currentDisplay = loadedConfig && loadedConfig.display && typeof loadedConfig.display === "object"
     ? loadedConfig.display
     : {};
   if (Number(currentDisplay.scale) === scale) return scale;
   const savedConfig = configStore.save({ ...loadedConfig, display: { ...currentDisplay, scale } });
-  logger.info("Applied recommended display scale for imported studio pack", { packageId, scale, workArea });
+  logger.info("Applied the default display scale for an imported studio pack", { packageId, scale });
   if (typeof getWindows === "function") sendDisplayUpdate(getWindows, (savedConfig && savedConfig.display) || { ...currentDisplay, scale });
   return scale;
 }

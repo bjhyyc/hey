@@ -50,22 +50,45 @@ function getProgressStepState(runState) {
   }));
 }
 
+// What the customer bought, in their words. The pack is assembled from more
+// clips than this - how many, and which of them combine, is production detail -
+// so the waiting screen groups them into the things the pet will actually do.
+const CUSTOMER_ANIMATIONS = Object.freeze([
+  { id: "sneeze", label: "打喷嚏", clips: ["sneeze"] },
+  { id: "roll", label: "打滚", clips: ["roll"] },
+  { id: "stretch", label: "伸懒腰", clips: ["stretch"] },
+  { id: "lick", label: "舔脚", clips: ["hover-attention"] },
+  { id: "sleep", label: "睡觉", clips: ["sleep-transition", "sleep-loop"] },
+  { id: "idle", label: "安静待机", clips: ["idle"] }
+]);
+
 /**
- * How far the animation work has got, as a single percentage.
+ * How the animation work is going, as the customer's own list.
  *
- * It used to be a per-action list: every clip named, its own state, and a "重做"
- * badge whenever a quality gate rejected a take. That told the customer nothing
- * they could act on - they wait either way - while telling anyone reading the
- * response exactly how the pack is assembled and where it tends to fail. The
- * percentage is what the customer actually wants; the composition stays ours.
+ * Watching it happen is most of the fun of waiting, so this says which of the
+ * pet's abilities are finished and which is being made right now. What it does
+ * not say is how the pack is built: not how many clips there are, not which of
+ * them combine into one ability, not the processing stage a clip is in, and not
+ * whether a quality gate rejected a take and asked for another. A redo is
+ * normal and invisible - the ability simply stays "制作中" a little longer.
  */
 function createActionProgressSummary(actions) {
   const list = Array.isArray(actions) ? actions : [];
   if (list.length === 0) return null;
-  const done = list.filter((action) => action.state === "qa_passed").length;
-  // Rounded to a 5% step so the number cannot be used to count the segments.
-  const percent = Math.min(100, Math.max(0, Math.round((done / list.length) * 20) * 5));
-  return { percent };
+  const byId = new Map(list.map((action) => [action.actionId, action]));
+  const items = CUSTOMER_ANIMATIONS
+    .filter((animation) => animation.clips.some((clip) => byId.has(clip)))
+    .map((animation) => {
+      const present = animation.clips.map((clip) => byId.get(clip)).filter(Boolean);
+      const done = present.every((action) => action.state === "qa_passed");
+      // "Being made now" means any of its clips has left the queue: the
+      // customer sees movement without learning what the stages are.
+      const working = !done && present.some((action) => action.state !== "queued");
+      return { id: animation.id, label: animation.label, state: done ? "done" : (working ? "working" : "waiting") };
+    });
+  const done = items.filter((item) => item.state === "done").length;
+  const percent = items.length === 0 ? 0 : Math.round((done / items.length) * 100);
+  return { percent, items };
 }
 
 function createUserProjectView({ project, order, run, characterCandidates, delivery, actions } = {}) {

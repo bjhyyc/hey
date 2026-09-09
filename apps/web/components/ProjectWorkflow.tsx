@@ -207,10 +207,16 @@ export function ProjectWorkflow({ projectId, mode }: { projectId: string; mode: 
     {view.actionProgress ? (
       <div className="action-progress">
         <div className="action-progress-heading">
-          <p>动作制作　<strong>{view.actionProgress.percent}%</strong></p>
+          <p>正在教它这些动作　<strong>{view.actionProgress.percent}%</strong></p>
           <div aria-hidden="true" className="action-progress-bar"><i style={{ width: `${view.actionProgress.percent}%` }} /></div>
         </div>
-        <p className="action-progress-note">每个动作都会自动检查效果，不合格的会自动重做，所以进度偶尔会停一会儿。</p>
+        <ul>{view.actionProgress.items.map((item) => (
+          <li className={`tone-${item.state}`} key={item.id}>
+            <span><i aria-hidden="true" className={`action-dot dot-${item.state}`} />{item.label}</span>
+            <small>{item.state === "done" ? "已完成" : item.state === "working" ? "制作中" : "排队中"}</small>
+          </li>
+        ))}</ul>
+        <p className="action-progress-note">每个动作做完都会自动检查效果，不满意会自动重做，所以偶尔会多停一会儿。</p>
       </div>
     ) : null}
     {view.failed ? <p className="error-state">制作遇到问题，已转入内部处理，不需要重新付款。</p> : null}

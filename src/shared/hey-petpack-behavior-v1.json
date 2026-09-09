@@ -94,6 +94,7 @@
     },
     {
       "id": "right-click-wake",
+      "sleepOnly": true,
       "name": "Right click wake and stretch",
       "eventType": "rightClick",
       "priority": 400,

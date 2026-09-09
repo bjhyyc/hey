@@ -4,7 +4,6 @@ import { browserStudioRequest } from "./studio-gateway-core";
 export type ProjectSummary = {
   project: { id: string; displayName?: string; state?: string; updatedAt?: string };
   order: { id?: string; status?: string; paymentMethod?: string; amountFen?: number } | null;
-  productionState: string | null;
   downloadReady: boolean;
   failed: boolean;
   nextStep?: string;
@@ -39,9 +38,12 @@ export type ProjectView = {
   // (so "coming shortly") or is the run long past that step?
   regeneratingCharacter?: boolean;
   progress: Array<{ id?: string; label?: string; state?: string }>;
-  // How far the animation work has got. The server deliberately sends a
-  // rounded percentage rather than the clip list it used to send.
-  actionProgress?: { percent: number } | null;
+  // What the pet will be able to do, and which of those is finished. The
+  // server sends the customer's own list, never the clip composition.
+  actionProgress?: {
+    percent: number;
+    items: Array<{ id: string; label: string; state: "done" | "working" | "waiting" }>;
+  } | null;
   downloadReady: boolean;
   failed: boolean;
 };
