@@ -1,6 +1,6 @@
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
-import { CLIENT_DOWNLOAD_SHA256, CLIENT_DOWNLOAD_URL, CLIENT_VERSION } from "@/lib/support-channel";
+import { CLIENT_DOWNLOAD_SHA256, CLIENT_DOWNLOAD_URL, CLIENT_VERSION, MACOS_CLIENT_DOWNLOAD_URL } from "@/lib/support-channel";
 
 export default function DownloadClientPage() {
   return (
@@ -41,6 +41,9 @@ export default function DownloadClientPage() {
               客户端安装包准备后提供下载
             </button>
           )}
+          <div id="macos">
+            {MACOS_CLIENT_DOWNLOAD_URL ? <a className="primary-button form-submit" href={MACOS_CLIENT_DOWNLOAD_URL}>下载 macOS 客户端</a> : <p className="form-message">macOS 客户端安装包准备后提供下载。</p>}
+          </div>
         </div>
       </section>
     </PageShell>

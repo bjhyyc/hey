@@ -58,3 +58,4 @@ export const CLIENT_DOWNLOAD_SHA256 = (process.env.NEXT_PUBLIC_CLIENT_DOWNLOAD_S
 
 /** Installer version label shown next to the download button. */
 export const CLIENT_VERSION = (process.env.NEXT_PUBLIC_CLIENT_VERSION ?? "").trim();
+export const MACOS_CLIENT_DOWNLOAD_URL = (process.env.NEXT_PUBLIC_MACOS_CLIENT_DOWNLOAD_URL ?? "").trim();
