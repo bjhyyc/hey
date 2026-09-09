@@ -344,13 +344,14 @@ export function HomeUploadEntry() {
             </span>
           </span>
           <span className="home-upload-right">
-            {/* This used to name the two models and their versions. It read as
-                a credential, but the only people it informed were the ones
-                trying to reproduce the product; a customer cares that it is a
-                cat or a dog being drawn, not which model draws it. */}
-            <span className="home-models" aria-label="支持猫和狗">
-              <span className="home-model-tag"><PawIcon kind="cat" />猫</span>
-              <span className="home-model-tag"><PawIcon kind="dog" />狗</span>
+            {/* Named on purpose: the owner treats the models as a credibility
+                signal on the front page and accepts that it tells a competitor
+                which models to reach for. Everything about HOW they are used -
+                the prompts, the stage pipeline, the quality gates - stays
+                private, which is where the actual know-how lives. */}
+            <span className="home-models" aria-label="使用模型">
+              <span className="home-model-tag"><PawIcon kind="cat" />Seedream 5.0 Pro</span>
+              <span className="home-model-tag"><PawIcon kind="dog" />Seedance 2.0</span>
             </span>
             <button className="home-upload-action" disabled={!ready || busy} onClick={() => void startMaking()} type="button">
               <svg className="home-spark-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8c.8 4.7 2.5 6.4 7.2 7.2-4.7.8-6.4 2.5-7.2 7.2-.8-4.7-2.5-6.4-7.2-7.2 4.7-.8 6.4-2.5 7.2-7.2Z" /><path d="M19.1 15.4c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z" /></svg>
