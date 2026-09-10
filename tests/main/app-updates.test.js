@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const {
-  GITHUB_LATEST_RELEASE_API,
+  RELEASE_FEED_URL,
   OFFICIAL_LINKS,
   checkForUpdates,
   compareVersions,
@@ -20,39 +20,71 @@ describe("application updates", () => {
     expect(compareVersions("2.0.0", "1.9.9")).toBe(1);
   });
 
-  it("returns an available update from the latest GitHub release", async () => {
+  it("returns an available update from this product's release feed", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
-      tag_name: "v0.2.0",
-      name: "Desktop Pet v0.2.0"
+      version: "0.2.0",
+      name: "Hey v0.2.0"
     }), {
       status: 200,
       headers: { "content-type": "application/json" }
     }));
 
-    const result = await checkForUpdates({ fetchImpl, currentVersion: "0.1.0" });
+    const result = await checkForUpdates({
+      fetchImpl,
+      currentVersion: "0.1.0",
+      feedUrl: "https://example.test/client/latest.json"
+    });
 
     expect(result).toEqual({
       ok: true,
+      unavailable: false,
       currentVersion: "0.1.0",
       latestVersion: "0.2.0",
       updateAvailable: true,
-      releaseName: "Desktop Pet v0.2.0",
+      releaseName: "Hey v0.2.0",
       releaseUrl: OFFICIAL_LINKS.update
     });
-    expect(fetchImpl).toHaveBeenCalledWith(GITHUB_LATEST_RELEASE_API, expect.objectContaining({
-      headers: expect.objectContaining({ Accept: "application/vnd.github+json" }),
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.test/client/latest.json", expect.objectContaining({
+      headers: expect.objectContaining({ Accept: "application/json" }),
       signal: expect.any(AbortSignal)
     }));
   });
 
-  it("reports the current version as latest when versions match", async () => {
+  it("also reads a releases API, which reports the version as a tag", async () => {
     const result = await checkForUpdates({
       fetchImpl: vi.fn(async () => new Response(JSON.stringify({ tag_name: "v0.1.0" }), { status: 200 })),
-      currentVersion: "0.1.0"
+      currentVersion: "0.1.0",
+      feedUrl: "https://example.test/releases/latest"
     });
 
     expect(result.updateAvailable).toBe(false);
     expect(result.latestVersion).toBe("0.1.0");
+  });
+
+  it("says it cannot tell when no release feed is published", async () => {
+    // The shipped default. Reporting "up to date" here would assert something
+    // about releases nobody has looked at, so the check refuses to.
+    const fetchImpl = vi.fn();
+    const result = await checkForUpdates({ fetchImpl, currentVersion: "1.0.0", feedUrl: "" });
+
+    expect(result.ok).toBe(true);
+    expect(result.unavailable).toBe(true);
+    expect(result.updateAvailable).toBe(false);
+    expect(result.latestVersion).toBe("");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps every official link on this product's own site", () => {
+    // The client used to check for updates against the upstream project it
+    // derives from, and to offer that project's repository, website and
+    // changelog in its About panel. Nothing the customer can reach may point
+    // at another project again - least of all the update check, which compared
+    // this build against a different product's version line.
+    for (const [name, url] of Object.entries(OFFICIAL_LINKS)) {
+      expect(url, name).toMatch(/^https:\/\/(www\.)?heyirmy\.com(\/|$)/);
+    }
+    expect(JSON.stringify(OFFICIAL_LINKS)).not.toMatch(/duzexu|desktop-pet|github/i);
+    expect(RELEASE_FEED_URL).not.toMatch(/duzexu|desktop-pet/i);
   });
 
   it("only returns allowlisted official links", () => {

@@ -17,6 +17,11 @@ function renderUpdateStatus(updateCheck) {
   if (status === "latest") {
     return `<p class="about-update-status update-latest">${escapeHtml(t("system.about.latest", { version: updateCheck.currentVersion || "" }))}</p>`;
   }
+  // No release feed to read yet. Distinct from "latest" on purpose: claiming
+  // the build is current would be asserting something nobody has checked.
+  if (status === "unavailable") {
+    return `<p class="about-update-status muted">${t("system.about.unavailable")}</p>`;
+  }
   if (status === "error") {
     return `<p class="about-update-status update-error">${escapeHtml(t("system.about.checkFailed", { reason: updateCheck.error || t("common.error") }))}</p>`;
   }
@@ -83,14 +88,12 @@ export function renderSystem(state, config) {
       <div class="section-body">
         <div class="about-summary">
           <div>
-            <span class="field-label">Desktop Pet</span>
+            <span class="field-label">Hey</span>
             <strong class="about-version">v${escapeHtml(currentVersion)}</strong>
             <p class="muted">${t("system.about.description")}</p>
           </div>
           <div class="about-link-actions">
             <button type="button" data-action="open-official-link" data-target="website">${t("system.about.website")}</button>
-            <button type="button" data-action="open-official-link" data-target="github">GitHub</button>
-            <button type="button" data-action="open-official-link" data-target="changelog">${t("system.about.changelog")}</button>
           </div>
         </div>
         <div class="about-update-row">

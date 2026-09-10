@@ -25,15 +25,30 @@ const config = {
 };
 
 describe("system tab about section", () => {
-  it("shows version, official links, changelog, and update check actions", () => {
+  it("shows version, the official-site link, and the update check action", () => {
     const html = renderSystem(createState(), config);
 
     expect(html).toContain("About");
     expect(html).toContain("v0.1.0");
     expect(html).toContain('data-target="website"');
-    expect(html).toContain('data-target="github"');
-    expect(html).toContain('data-target="changelog"');
     expect(html).toContain('data-action="check-for-updates"');
+    expect(html).not.toContain('data-target="update"');
+    // The About panel used to offer the upstream project this client derives
+    // from - its repository, its changelog, its name - to paying customers.
+    expect(html).not.toContain('data-target="github"');
+    expect(html).not.toContain('data-target="changelog"');
+    expect(html).not.toContain("Desktop Pet");
+  });
+
+  it("says it cannot tell when no release feed is published", () => {
+    const html = renderSystem(createState({
+      updateCheck: { status: "unavailable", currentVersion: "0.1.0" }
+    }), config);
+
+    expect(html).toContain("Update information is unavailable.");
+    // Not the "up to date" line: that would assert something about releases
+    // nobody has looked at.
+    expect(html).not.toContain("is up to date.");
     expect(html).not.toContain('data-target="update"');
   });
 
@@ -60,7 +75,7 @@ describe("system tab about section", () => {
       }
     }), config);
 
-    expect(html).toContain("Desktop Pet v0.1.0 is up to date.");
+    expect(html).toContain("Hey v0.1.0 is up to date.");
     expect(html).not.toContain('data-target="update"');
   });
 });

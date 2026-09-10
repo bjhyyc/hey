@@ -323,7 +323,7 @@ describe("registerIpc", () => {
   });
 
   it("returns app information, opens allowlisted links, and checks for updates", async () => {
-    getOfficialLink.mockReturnValue("https://duzexu.github.io/desktop-pet/");
+    getOfficialLink.mockReturnValue("https://heyirmy.com");
     checkForUpdates.mockResolvedValue({
       ok: true,
       currentVersion: "0.1.0",
@@ -346,7 +346,7 @@ describe("registerIpc", () => {
       updateAvailable: true
     });
 
-    expect(openExternal).toHaveBeenCalledWith("https://duzexu.github.io/desktop-pet/");
+    expect(openExternal).toHaveBeenCalledWith("https://heyirmy.com");
     expect(checkForUpdates).toHaveBeenCalledWith({
       fetchImpl: globalThis.fetch,
       currentVersion: "0.1.0"

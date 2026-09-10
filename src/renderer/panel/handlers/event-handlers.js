@@ -1403,7 +1403,7 @@ export async function handleClickAction(event, state, api, saveConfig, render, r
         version: result.currentVersion
       };
       state.updateCheck = {
-        status: result.updateAvailable ? "available" : "latest",
+        status: result.unavailable ? "unavailable" : (result.updateAvailable ? "available" : "latest"),
         currentVersion: result.currentVersion,
         latestVersion: result.latestVersion,
         releaseName: result.releaseName || ""
