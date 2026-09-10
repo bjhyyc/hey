@@ -1631,7 +1631,12 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
   .primary-nav { gap: 12px; font-size: var(--text-small); }
 }
 
-/* Download page: the checksum is for verification, not decoration. */
+/* Download page: the checksum is for verification, not decoration. The two
+   platforms sit side by side so neither reads as the afterthought, and stack
+   before the buttons get too narrow to hold their own label. */
+.download-platforms { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 22px 30px; padding-top: 24px; border-top: 1px solid var(--ink-08); }
+.download-platform h3 { margin: 0 0 10px; display: flex; align-items: baseline; gap: 8px; color: var(--ink); font-size: var(--text-body); font-weight: var(--weight-label); letter-spacing: var(--track-lead); }
+.download-platform-version { color: var(--ink-52); font-size: var(--text-micro); font-weight: var(--weight-body); letter-spacing: 0; }
 .download-notes { margin-top: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .download-sha { padding: 2px 6px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; user-select: all; }
 .failed-card-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
