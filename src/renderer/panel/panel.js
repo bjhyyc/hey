@@ -1,5 +1,5 @@
 /**
- * Desktop Pet Control Panel
+ * Hey Control Panel
  * Main entry point and orchestration
  */
 

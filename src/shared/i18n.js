@@ -1,5 +1,5 @@
 /**
- * Internationalization (i18n) system for Desktop Pet
+ * Internationalization (i18n) system for Hey
  */
 
 const translations = {
@@ -91,7 +91,7 @@ const translations = {
     // First-run onboarding
     "onboarding.kicker": "First run",
     "onboarding.title": "Get your desktop pet moving",
-    "onboarding.description": "Import the Taotao sample petpack with one click. Desktop Pet downloads, validates, installs, and switches to it automatically.",
+    "onboarding.description": "Import the Taotao sample petpack with one click. Hey downloads, validates, installs, and switches to it automatically.",
     "onboarding.install": "Import sample petpack",
     "onboarding.installing": "Downloading and importing...",
     "onboarding.installFailed": "Could not import the sample petpack: {reason}",

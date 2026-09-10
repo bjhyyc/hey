@@ -57,7 +57,7 @@ function createTray({ createMenu, onOpenPanel } = {}) {
 
     icon.setTemplateImage(process.platform === "darwin");
     localTray = new Tray(icon);
-    localTray.setToolTip("Desktop Pet");
+    localTray.setToolTip("Hey");
     logger.info("Tray created");
   } catch (error) {
     logTrayFailure("create", error);
