@@ -42,7 +42,7 @@ describe("GitHub Pages landing page", () => {
       "Quiet can still feel like company.",
       "你的桌面就是它的新家",
       "Your desktop is its new home.",
-      "查看 GitHub"
+      "常见问题"
     ];
 
     const normalizedText = textContent(html);
@@ -51,11 +51,14 @@ describe("GitHub Pages landing page", () => {
       expect(normalizedText).toContain(copy.replace(/\s+/g, ""));
     }
 
-    expect(html).toContain("https://github.com/duzexu/desktop-pet");
     expect(html).toContain("下载 macOS");
     expect(html).toContain("下载 Windows");
-    expect(html).toContain("releases/latest/download/Desktop-Pet-mac.dmg");
-    expect(html).toContain("releases/latest/download/Desktop-Pet-windows.exe");
+    // Both platforms go to this product's own download page. They used to be
+    // asymmetric - macOS here, Windows straight at a binary published by the
+    // upstream project this client derives from - which handed a visitor
+    // someone else's application from a page selling ours.
+    expect(html).toContain('href="/download-client#macos"');
+    expect(html).toContain('href="/download-client#windows"');
     expect(html).toContain('class="download-actions"');
     expect(html).toContain('class="github-cta"');
     expect(html).toContain('class="primary-cta js-app-download"');
@@ -65,6 +68,8 @@ describe("GitHub Pages landing page", () => {
     expect(html).toContain("/src/styles.css");
     expect(html).toContain("hero-loop.mp4");
     expect((html.match(/class="story-section/g) || []).length).toBe(7);
+    // No link anywhere on the page may lead to another project's repository.
+    expect(html).not.toMatch(/duzexu|desktop-pet\/releases|github\.com/i);
   });
 
   test("keeps layout variants and scroll behavior explicit", () => {
