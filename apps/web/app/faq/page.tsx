@@ -81,10 +81,11 @@ export default function FaqPage() {
         </section>
 
         <section className="support-block" id="client">
-          <h2>安装客户端时提示“未知发布者”？</h2>
+          <h2>安装时提示“未知发布者”，或被系统拦下？</h2>
           <p>
-            安装包目前没有购买代码签名证书，Windows 会弹出 SmartScreen 提示，点「更多信息 → 仍要运行」即可。
-            下载页列出了安装包的 SHA-256 校验值，可以对照核验。客户端支持 Windows 10 / 11（64 位）。
+            安装包目前没有购买代码签名证书。Windows 会弹出 SmartScreen 提示，点「更多信息 → 仍要运行」即可；
+            macOS 请按下载页的终端命令安装，脚本会自动处理。下载页列出了安装包的 SHA-256 校验值，可以对照核验。
+            客户端支持 Windows 10 / 11（64 位）和 macOS（Apple Silicon 与 Intel 芯片）。
           </p>
         </section>
 
