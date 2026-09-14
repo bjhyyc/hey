@@ -1,22 +1,26 @@
 import type { ReactNode } from "react";
+import { InstallCommand } from "@/components/InstallCommand";
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
 import {
   CLIENT_DOWNLOAD_SHA256,
   CLIENT_DOWNLOAD_URL,
   CLIENT_VERSION,
-  MACOS_CLIENT_DOWNLOAD_SHA256,
-  MACOS_CLIENT_DOWNLOAD_URL,
+  MACOS_CLIENT_ARM64_SHA256,
+  MACOS_CLIENT_ARM64_URL,
   MACOS_CLIENT_NOTARIZED,
-  MACOS_CLIENT_VERSION
+  MACOS_CLIENT_VERSION,
+  MACOS_CLIENT_X64_SHA256,
+  MACOS_CLIENT_X64_URL,
+  MACOS_INSTALL_SCRIPT_URL
 } from "@/lib/support-channel";
 
-// Two platforms, one page, and the visitor picks. Each one carries the same
-// three things - a button, the version it is, and the checksum to verify it -
-// so neither reads as the afterthought. What differs is the warning, because
-// what the two systems do to an app they cannot attribute differs: Windows
-// interrupts once and takes "run anyway"; macOS refuses outright until the
-// customer goes and changes a setting.
+// Two platforms, one page, and the visitor picks. What differs between them is
+// what the two systems do to an app they cannot attribute. Windows interrupts
+// once and takes "run anyway". macOS, for a build with no Apple developer
+// account behind it, refuses outright and offers no way through from 系统设置 -
+// so on macOS the page leads with an install script that does the one thing a
+// double-click cannot, and says plainly what that is.
 
 type Platform = {
   id: string;
@@ -42,36 +46,28 @@ const WINDOWS: Platform = {
   pending: "Windows 版安装包还在准备中。"
 };
 
-const MACOS: Platform = {
-  id: "macos",
-  name: "macOS",
-  url: MACOS_CLIENT_DOWNLOAD_URL,
-  version: MACOS_CLIENT_VERSION,
-  sha256: MACOS_CLIENT_DOWNLOAD_SHA256,
-  // A notarized build opens with no prompt at all, so saying anything would
-  // only invite the customer to look for a problem that is not there.
-  note: MACOS_CLIENT_NOTARIZED ? null : (
-    <>
-      安装包暂未向 Apple 申请签名与公证，macOS 会拦下它。首次打开时如果提示无法验证开发者，请打开
-      “系统设置 → 隐私与安全性”，在页面下方点“仍要打开”，再确认一次即可。
-      （macOS 15 起，右键“打开”这个老办法已经不管用了。）
-    </>
-  ),
-  pending: "macOS 版安装包还在准备中。"
-};
+function Checksum({ value }: { value: string }) {
+  if (!value) return null;
+  return (
+    <p className="form-message download-notes">
+      文件校验值 SHA-256:<code className="download-sha">{value}</code>
+    </p>
+  );
+}
+
+function VersionLabel({ version }: { version: string }) {
+  return version ? <span className="download-platform-version">v{version}</span> : null;
+}
 
 function PlatformDownload({ platform }: { platform: Platform }) {
   return (
     <div className="download-platform" id={platform.id}>
       {/* The heading carries the version, so the button says what it does
-          rather than repeating it. */}
+          rather than repeating it. Only alongside a real download: a version
+          label on a build nobody can fetch reads as if the button broke. */}
       <h3>
         {platform.name}
-        {/* Only alongside a real download: a version label on a build nobody
-            can fetch reads as if something went wrong with the button. */}
-        {platform.url && platform.version ? (
-          <span className="download-platform-version">v{platform.version}</span>
-        ) : null}
+        {platform.url ? <VersionLabel version={platform.version} /> : null}
       </h3>
       {platform.url ? (
         <>
@@ -83,16 +79,78 @@ function PlatformDownload({ platform }: { platform: Platform }) {
             下载 {platform.name} 客户端
           </a>
           {platform.note ? <p className="form-message download-notes">{platform.note}</p> : null}
-          {platform.sha256 ? (
-            <p className="form-message download-notes">
-              文件校验值 SHA-256:<code className="download-sha">{platform.sha256}</code>
-            </p>
-          ) : null}
+          <Checksum value={platform.sha256} />
         </>
       ) : (
         // A disabled button is a control that does nothing; when there is
         // simply no build yet, say so in words instead.
         <p className="form-message">{platform.pending}</p>
+      )}
+    </div>
+  );
+}
+
+// The two archives, one per chip. Offered directly once the build is
+// notarized; until then they are the manual route under the script.
+const MAC_ARCHIVES = [
+  { id: "arm64", label: "Apple Silicon（M 系列芯片）", url: MACOS_CLIENT_ARM64_URL, sha256: MACOS_CLIENT_ARM64_SHA256 },
+  { id: "intel", label: "Intel 芯片", url: MACOS_CLIENT_X64_URL, sha256: MACOS_CLIENT_X64_SHA256 }
+].filter((archive) => archive.url);
+
+function MacDownload() {
+  const available = MACOS_CLIENT_NOTARIZED ? MAC_ARCHIVES.length > 0 : Boolean(MACOS_INSTALL_SCRIPT_URL);
+  return (
+    <div className="download-platform" id="macos">
+      <h3>
+        macOS
+        {available ? <VersionLabel version={MACOS_CLIENT_VERSION} /> : null}
+      </h3>
+      {!available ? (
+        <p className="form-message">macOS 版安装包还在准备中。</p>
+      ) : MACOS_CLIENT_NOTARIZED ? (
+        // A notarized build opens with no prompt at all, so it is offered like
+        // any other download and nothing is said about Gatekeeper.
+        MAC_ARCHIVES.map((archive) => (
+          <div key={archive.id} className="download-archive">
+            <a className="primary-button form-submit" href={archive.url}>下载 {archive.label} 版</a>
+            <Checksum value={archive.sha256} />
+          </div>
+        ))
+      ) : (
+        <>
+          <p className="form-message">
+            打开「终端」（在启动台搜索“终端”），粘贴下面这一行，回车：
+          </p>
+          <InstallCommand command={`bash -c "$(curl -fsSL ${MACOS_INSTALL_SCRIPT_URL})"`} />
+          <p className="form-message download-notes">
+            脚本会按你的芯片下载对应版本、校验文件完整性、装进「应用程序」并直接打开。
+            之所以用命令安装：安装包暂未取得 Apple 的开发者签名与公证，直接双击会被 macOS 拦下，
+            且无法从“系统设置”里放行。脚本做的每一步都能看到：
+            <a href={MACOS_INSTALL_SCRIPT_URL} target="_blank" rel="noopener noreferrer">查看脚本内容</a>。
+          </p>
+          {MAC_ARCHIVES.length > 0 ? (
+            <details className="download-manual">
+              <summary>手动下载（熟悉终端的用户）</summary>
+              <p className="form-message download-notes">
+                {MAC_ARCHIVES.map((archive, index) => (
+                  <span key={archive.id}>
+                    {index > 0 ? " · " : ""}
+                    <a href={archive.url}>{archive.label}</a>
+                  </span>
+                ))}
+              </p>
+              {MAC_ARCHIVES.map((archive) => (
+                <p key={archive.id} className="form-message download-notes">
+                  {archive.label} SHA-256:<code className="download-sha">{archive.sha256}</code>
+                </p>
+              ))}
+              <p className="form-message download-notes">
+                解压后把 Hey.app 拖进「应用程序」，再在终端执行一次：
+                <code className="download-sha">xattr -cr /Applications/Hey.app && codesign --force --deep --sign - /Applications/Hey.app</code>
+              </p>
+            </details>
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -123,7 +181,7 @@ export default function DownloadClientPage() {
             and side by side at full width neither platform looks secondary. */}
         <div className="download-platforms">
           <PlatformDownload platform={WINDOWS} />
-          <PlatformDownload platform={MACOS} />
+          <MacDownload />
         </div>
       </section>
     </PageShell>

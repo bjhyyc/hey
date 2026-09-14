@@ -30,3 +30,6 @@ ops/lighthouse/**/tls/
 ops/lighthouse/**/runtime-tls/
 *.zip
 final-delivery/
+
+# Upload staging for the macOS archives; the install script's home is ops/macos/.
+/macos/

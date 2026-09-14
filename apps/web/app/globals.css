@@ -1638,6 +1638,14 @@ main.shell-wide.page-main.narrow-page { width: min(calc(100% - 56px), 1920px); m
 .download-platform h3 { margin: 0 0 10px; display: flex; align-items: baseline; gap: 8px; color: var(--ink); font-size: var(--text-body); font-weight: var(--weight-label); letter-spacing: var(--track-lead); }
 .download-platform-version { color: var(--ink-52); font-size: var(--text-micro); font-weight: var(--weight-body); letter-spacing: 0; }
 .download-notes { margin-top: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+/* The macOS install command: block-shaped so the one line never wraps into
+   what looks like two commands, selectable as a whole, copy button beneath. */
+.install-command { display: grid; gap: 8px; margin: 10px 0 12px; padding: 12px 14px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.install-command code { display: block; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; user-select: all; }
+.install-command .ghost-button { justify-self: start; min-height: 30px; padding: 0 12px; font-size: var(--text-small); }
+.download-archive + .download-archive { margin-top: 14px; }
+.download-manual { margin-top: 12px; }
+.download-manual summary { cursor: pointer; color: var(--muted); font-size: var(--text-small); }
 .download-sha { padding: 2px 6px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; user-select: all; }
 .failed-card-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
 .site-footer .footer-inner { display: flex; flex-wrap: wrap; gap: 8px 24px; }

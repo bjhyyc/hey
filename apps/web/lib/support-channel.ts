@@ -59,26 +59,39 @@ export const CLIENT_DOWNLOAD_SHA256 = (process.env.NEXT_PUBLIC_CLIENT_DOWNLOAD_S
 /** Installer version label shown next to the download button. */
 export const CLIENT_VERSION = (process.env.NEXT_PUBLIC_CLIENT_VERSION ?? "").trim();
 
-/** Where the packaged macOS disk image lives (public COS/CDN URL). */
-export const MACOS_CLIENT_DOWNLOAD_URL = (process.env.NEXT_PUBLIC_MACOS_CLIENT_DOWNLOAD_URL ?? "").trim();
+/**
+ * macOS ships as two archives, one per chip, plus an install script. There is
+ * no Apple developer account behind the build, so a downloaded copy cannot be
+ * opened by double-clicking and cannot be let through from 系统设置 either; the
+ * script downloads the right archive for the machine, verifies it, installs
+ * it, and clears the quarantine that Gatekeeper acts on. All of these degrade
+ * the same way as the Windows values: unset means "not available yet".
+ */
+export const MACOS_INSTALL_SCRIPT_URL = (process.env.NEXT_PUBLIC_MACOS_INSTALL_SCRIPT_URL ?? "").trim();
 
-/** SHA-256 of the disk image, the macOS counterpart of CLIENT_DOWNLOAD_SHA256. */
-export const MACOS_CLIENT_DOWNLOAD_SHA256 = (process.env.NEXT_PUBLIC_MACOS_CLIENT_DOWNLOAD_SHA256 ?? "").trim();
+/** Apple Silicon archive and its SHA-256, the values the install script verifies against. */
+export const MACOS_CLIENT_ARM64_URL = (process.env.NEXT_PUBLIC_MACOS_CLIENT_ARM64_URL ?? "").trim();
+export const MACOS_CLIENT_ARM64_SHA256 = (process.env.NEXT_PUBLIC_MACOS_CLIENT_ARM64_SHA256 ?? "").trim();
 
-/** Disk-image version label shown next to the macOS download button. */
+/** Intel archive and its SHA-256. */
+export const MACOS_CLIENT_X64_URL = (process.env.NEXT_PUBLIC_MACOS_CLIENT_X64_URL ?? "").trim();
+export const MACOS_CLIENT_X64_SHA256 = (process.env.NEXT_PUBLIC_MACOS_CLIENT_X64_SHA256 ?? "").trim();
+
+/** Version label shown for the macOS build. */
 export const MACOS_CLIENT_VERSION = (process.env.NEXT_PUBLIC_MACOS_CLIENT_VERSION ?? "").trim();
 
 /**
  * Whether the macOS build is signed with a Developer ID *and* notarized by
- * Apple. This decides which instructions a Mac visitor is given, and the two
- * are not interchangeable: an un-notarized app needs the customer to walk
- * through 系统设置 → 隐私与安全性 by hand, while telling that to someone whose
- * app opens cleanly just makes them think something is wrong.
+ * Apple. While false the page leads with the install script, because a plain
+ * download cannot be opened; once true the archives are offered directly and
+ * the script and its explanation disappear, since a notarized app opens with
+ * no prompt at all and telling people otherwise only sends them looking for a
+ * problem that is not there.
  *
  * Defaults to false, because that is what a build produces when the signing
  * credentials are absent - electron-builder skips notarization silently rather
  * than failing, so a green build is no evidence at all. Only set this true
- * after `spctl -a -vvv --type install` accepts the stapled image and a Mac with
+ * after `spctl -a -vvv --type install` accepts the stapled build and a Mac with
  * no developer certificate has opened the downloaded copy without a prompt.
  */
 export const MACOS_CLIENT_NOTARIZED =
