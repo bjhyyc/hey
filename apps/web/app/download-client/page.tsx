@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { InstallCommand } from "@/components/InstallCommand";
+import { MacInstall } from "@/components/MacInstall";
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
 import {
@@ -118,19 +118,14 @@ function MacDownload() {
         ))
       ) : (
         <>
-          <p className="form-message">
-            打开「终端」（在启动台搜索“终端”），粘贴下面这一行，回车：
-          </p>
-          <InstallCommand command={`bash -c "$(curl -fsSL ${MACOS_INSTALL_SCRIPT_URL})"`} />
+          <MacInstall command={`bash -c "$(curl -fsSL ${MACOS_INSTALL_SCRIPT_URL})"`} />
           <p className="form-message download-notes">
-            脚本会按你的芯片下载对应版本、校验文件完整性、装进「应用程序」并直接打开。
-            之所以用命令安装：安装包暂未取得 Apple 的开发者签名与公证，直接双击会被 macOS 拦下，
-            且无法从“系统设置”里放行。脚本做的每一步都能看到：
-            <a href={MACOS_INSTALL_SCRIPT_URL} target="_blank" rel="noopener noreferrer">查看脚本内容</a>。
+            安装包未经 Apple 签名，双击会被拦下，所以用命令安装。
+            <a href={MACOS_INSTALL_SCRIPT_URL} target="_blank" rel="noopener noreferrer">查看脚本</a>
           </p>
           {MAC_ARCHIVES.length > 0 ? (
             <details className="download-manual">
-              <summary>手动下载（熟悉终端的用户）</summary>
+              <summary>手动下载（不推荐）</summary>
               <p className="form-message download-notes">
                 {MAC_ARCHIVES.map((archive, index) => (
                   <span key={archive.id}>
@@ -145,7 +140,7 @@ function MacDownload() {
                 </p>
               ))}
               <p className="form-message download-notes">
-                解压后把 Hey.app 拖进「应用程序」，再在终端执行一次：
+                解压，把 Hey.app 拖进「应用程序」，再在终端跑一次：
                 <code className="download-sha">xattr -cr /Applications/Hey.app && codesign --force --deep --sign - /Applications/Hey.app</code>
               </p>
             </details>
