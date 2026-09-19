@@ -18,9 +18,12 @@ function requireAdmin(actor) {
 
 function requireProjectOwner(actor, project) {
   const authenticated = requireActor(actor);
-  if (!project || typeof project.userId !== "string") throw new Error("Project is required");
+  // Someone else's project is reported exactly like one that does not
+  // exist. Telling them apart (400 for unknown, 403 for another owner's)
+  // answered "does this id exist?" to anyone who had picked one up.
+  if (!project || typeof project.userId !== "string") throw new Error("Project was not found");
   if (authenticated.role !== USER_ROLES.ADMIN && project.userId !== authenticated.id) {
-    throw new Error("Project access is denied");
+    throw new Error("Project was not found");
   }
   return project;
 }

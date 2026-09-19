@@ -1157,7 +1157,7 @@ function mapError(error) {
   if (/cloudbase identity verification timed out/i.test(message)) {
     return { status: 503, code: "auth_unavailable", message: "登录服务暂时不可用，请稍后重试" };
   }
-  if (/access is denied|administrator role is required|unsupported role/i.test(message)) {
+  if (/access is denied|administrator role is required|unsupported role|user is disabled/i.test(message)) {
     return { status: 403, code: "forbidden", message: "无权执行此操作" };
   }
   if (/not found|was not found/i.test(message)) {
