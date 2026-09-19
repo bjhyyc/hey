@@ -67,6 +67,13 @@ export function studioGatewayStatus(): { configured: boolean } {
   return { configured: readStudioGatewayConfiguration().configured };
 }
 
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
+const IPV6 = /^[0-9a-fA-F:]{2,45}$/;
+
+function isIpAddress(value: string): boolean {
+  return IPV4.test(value) || (value.includes(":") && IPV6.test(value));
+}
+
 export async function serverStudioRequest(
   path: string | readonly string[],
   request: Request,
@@ -96,10 +103,19 @@ export async function serverStudioRequest(
   // this header the platform's per-client throttling would see the whole
   // customer base as one client. The platform trusts the header only from
   // callers holding the internal bearer above.
-  const clientIp = request.headers.get("x-real-ip")
-    ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    ?? null;
-  if (clientIp && clientIp.length <= 64 && /^[0-9a-fA-F.:]+$/.test(clientIp)) {
+  //
+  // Which inbound header to believe was checked against the live ingress on
+  // 2026-09-18: CloudBase forwards a browser's own X-Real-IP and
+  // X-Forwarded-For untouched and appends the true peer to the END of
+  // X-Forwarded-For. So X-Real-IP and the first XFF entry are whatever the
+  // browser chose to send - rotating them per request defeated the throttle
+  // entirely - and only the last entry is the ingress's own word.
+  const forwarded = (request.headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const clientIp = forwarded.length > 0 ? forwarded[forwarded.length - 1] : null;
+  if (clientIp && clientIp.length <= 64 && isIpAddress(clientIp)) {
     headers.set("x-petpack-client-ip", clientIp);
   }
 

@@ -40,4 +40,26 @@ describe("server studio boundary", () => {
     const response = await serverStudioRequest(path, new Request("https://www.heyirmy.com/api/studio/auth/session", { headers: { cookie: "petpack_session=opaque" } }));
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
   });
+
+  it("attests the address the ingress appended, never one the browser supplied", async () => {
+    // Verified against the live ingress: CloudBase passes a browser's own
+    // X-Real-IP and X-Forwarded-For through and appends the true peer at the
+    // end of X-Forwarded-For. Rotating the front entries per request used to
+    // give every request its own throttle bucket.
+    vi.stubEnv("PETPACK_STUDIO_API_ORIGIN", "https://api.example.com/");
+    vi.stubEnv("PETPACK_STUDIO_INTERNAL_TOKEN", "internal-secret");
+    const attested: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, init: RequestInit) => {
+      attested.push(new Headers(init.headers).get("x-petpack-client-ip") ?? "(none)");
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const call = (headers: Record<string, string>) =>
+      serverStudioRequest("projects", new Request("https://www.heyirmy.com/api/studio/projects", { headers }));
+    await call({ "x-forwarded-for": "198.51.100.7, 203.0.113.9" });
+    await call({ "x-real-ip": "198.51.100.7", "x-forwarded-for": "203.0.113.9" });
+    await call({ "x-forwarded-for": "2001:db8::1, 2001:db8::9" });
+    await call({ "x-forwarded-for": "abc" });
+    await call({ "x-real-ip": "198.51.100.7" });
+    expect(attested).toEqual(["203.0.113.9", "203.0.113.9", "2001:db8::9", "(none)", "(none)"]);
+  });
 });
