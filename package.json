@@ -47,7 +47,7 @@
     "jszip": "^3.10.1"
   },
   "overrides": {
-    "fast-uri": "3.1.5"
+    "fast-uri": "3.1.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.45.0",
