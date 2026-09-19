@@ -115,6 +115,25 @@ describe("petpack", () => {
     expect(fs.existsSync(path.join(userDataDir, "escape.txt"))).toBe(false);
   });
 
+  it("rejects a manifest that decompresses past its budget", async () => {
+    // A few kilobytes on disk, megabytes once inflated: the shape of a pack
+    // built to crash whoever imports it.
+    const petpackPath = path.join(tempDir, "bomb.petpack");
+    const manifest = createManifest("bomb-pet");
+    manifest.padding = "x".repeat(2 * 1024 * 1024);
+    await writeZip(petpackPath, {
+      "manifest.json": JSON.stringify(manifest),
+      "preview.png": "preview",
+      "assets/idle.webm": "idle",
+      "assets/wave.webm": "wave"
+    });
+
+    const result = await importPetpack(petpackPath, userDataDir);
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).toMatch(/too large/);
+    expect(fs.existsSync(path.join(userDataDir, "packages", "bomb-pet"))).toBe(false);
+  });
+
   it("rejects petpacks missing manifest.json", async () => {
     const petpackPath = path.join(tempDir, "missing-manifest.petpack");
     await writeZip(petpackPath, {

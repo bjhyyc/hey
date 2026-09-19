@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Transform } = require("node:stream");
+const { Transform, Writable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 const JSZip = require("jszip");
 const { createLogger } = require("./logger");
@@ -153,14 +153,38 @@ async function writeZipEntryToFile(entry, targetPath, extractionState) {
   );
 }
 
+// A real manifest is a few kilobytes. The platform refuses to build one
+// past this, and the importer refuses to read one past it: a pack from a
+// stranger can compress gigabytes of JSON into a few kilobytes, and turning
+// that into a string took the whole main process down.
+const MAX_MANIFEST_BYTES = 256 * 1024;
+
 async function readManifestFromZip(zip) {
   const manifestEntry = zip.file("manifest.json");
   if (!manifestEntry) {
     return errorResult("manifest.json is required");
   }
 
+  const chunks = [];
   try {
-    return { ok: true, manifest: JSON.parse(await manifestEntry.async("string")) };
+    await pipeline(
+      manifestEntry.nodeStream("nodebuffer"),
+      createByteBudgetTransform({ writtenBytes: 0, budgetBytes: MAX_MANIFEST_BYTES }, "manifest.json is too large"),
+      new Writable({
+        write(chunk, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        }
+      })
+    );
+  } catch (error) {
+    return errorResult(error && error.message === "manifest.json is too large"
+      ? "manifest.json is too large"
+      : "manifest.json could not be read");
+  }
+
+  try {
+    return { ok: true, manifest: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
   } catch (_error) {
     return errorResult("manifest.json is not valid JSON");
   }
