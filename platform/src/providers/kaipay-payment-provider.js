@@ -446,10 +446,17 @@ class KaipayPaymentProvider {
       scene: notification && notification.scene
     };
     const notificationDigest = digestNotification(rawBytes);
+    // This route is reachable without a session and is exempt from the rate
+    // limiter (throttling the provider's callbacks would risk payment
+    // convergence), so what it persists per request has to be bounded by
+    // something other than the caller. A verified notification is keyed on
+    // the provider's event id. An unverifiable one collapses onto a single
+    // audit row per order - keying it on the body digest, as it once was,
+    // let anyone with a pending order file a fresh row per random body.
     await this.eventStore.appendIdempotent({
       idempotencyKey: verifiedNotification.valid && verifiedNotification.eventId
         ? `notification-received:${verifiedNotification.eventId}`
-        : `notification-received:${order.id}:${notificationDigest}`,
+        : `notification-received:${order.id}:invalid`,
       type: "payment_notification_received",
       platformOrderId: order.id,
       providerOrderId: verifiedNotification.providerOrderId || null,
@@ -466,15 +473,20 @@ class KaipayPaymentProvider {
       credentialVersion: order.paymentCredentialVersion || null,
       providerEventId: verifiedNotification.eventId || null
     });
-    await this.eventStore.storeEncryptedNotification({
-      idempotencyKey: `notification-raw:${order.id}:${notificationDigest}`,
-      platformOrderId: order.id,
-      providerOrderId: verifiedNotification.providerOrderId || null,
-      rawNotification: rawBytes,
-      provider: "KAIPAY",
-      adapterVersion: this.config.adapterVersion,
-      credentialVersion: order.paymentCredentialVersion || null
-    });
+    // The raw body (up to 1 MB, encrypted) is evidence worth keeping only
+    // when the signature says it came from Kaipay. Storing it for unverified
+    // bodies made the same route a write amplifier into the primary database.
+    if (verifiedNotification.valid) {
+      await this.eventStore.storeEncryptedNotification({
+        idempotencyKey: `notification-raw:${order.id}:${notificationDigest}`,
+        platformOrderId: order.id,
+        providerOrderId: verifiedNotification.providerOrderId || null,
+        rawNotification: rawBytes,
+        provider: "KAIPAY",
+        adapterVersion: this.config.adapterVersion,
+        credentialVersion: order.paymentCredentialVersion || null
+      });
+    }
     let queriedOrder = null;
     if (verifiedNotification.valid) {
       try {

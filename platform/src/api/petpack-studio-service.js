@@ -685,7 +685,17 @@ class PetPackStudioService {
     }
     const order = await this.repository.markOrderPaymentState({ platformOrderId, reconciliation });
     if (reconciliation.state === "paid" && order.productionRunNeeded) {
-      await this.workflow.startPaidOrder({ order, projectId: order.projectId, runId: order.productionRunId });
+      // The species has to travel here exactly as it does on the polling
+      // path: the run freezes it and it selects the prompt set. For an Alipay
+      // web payment this webhook is what starts the run - the customer is
+      // still on Alipay's page - so omitting it produced a cat's pack with
+      // the dog prompts.
+      await this.workflow.startPaidOrder({
+        order,
+        projectId: order.projectId,
+        runId: order.productionRunId,
+        species: order.species
+      });
     }
     return { accepted: true, acknowledgement: reconciliation.acknowledgement };
   }

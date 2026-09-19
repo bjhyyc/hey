@@ -289,6 +289,40 @@ describe("Kaipay payment contract", () => {
       .rejects.toThrow(/original bytes/);
   });
 
+  it("records an unverifiable notification once per order and never keeps its body", async () => {
+    // The notify route needs no session and is exempt from the rate limiter,
+    // so anyone holding a pending order can post to it freely. Each random
+    // body used to add two rows - one carrying the encrypted body, up to
+    // 1 MB - which made the route a write amplifier into the database.
+    const state = stores(order({ paymentPayMethod: null }));
+    const protocol = {
+      verify: vi.fn(async () => { throw new Error("signature mismatch"); }),
+      acknowledge: vi.fn(async () => ({ status: 400, contentType: "text/plain", body: "fail" }))
+    };
+    const client = { createCheckout: vi.fn(), queryOrder: vi.fn(), refund: vi.fn() };
+    const provider = new KaipayPaymentProvider({ config: productionConfig(), kaipayClient: client, notificationProtocol: protocol, ...state });
+    for (const body of ["garbage-1", "garbage-2", "x".repeat(4096)]) {
+      const result = await provider.handleNotification({
+        platformOrderId: "order-1",
+        rawNotification: Buffer.from(body),
+        notificationHeaders: { "x-kpay-api-version": "v3" }
+      });
+      expect(result.applyToOrder).toBe(false);
+    }
+    // Three bodies, two audit keys (received + reconciled): both are per
+    // order, neither is per body.
+    const keys = state.eventStore.appendIdempotent.mock.calls.map(([event]) => event.idempotencyKey);
+    expect(keys).toHaveLength(6);
+    const distinct = [...new Set(keys)];
+    expect(distinct).toHaveLength(2);
+    expect(distinct).toContain("notification-received:order-1:invalid");
+    expect(distinct.some((key) => key.startsWith("provider-audit:"))).toBe(true);
+    expect(state.eventStore.appendIdempotent).toHaveBeenCalledWith(expect.objectContaining({ signatureValid: false }));
+    expect(state.eventStore.storeEncryptedNotification).not.toHaveBeenCalled();
+    // And nothing unverified reaches the provider's query API either.
+    expect(client.queryOrder).not.toHaveBeenCalled();
+  });
+
   it("uses the frozen V3 credential for an authoritative status query when a webhook is missed", async () => {
     const state = stores(order({ paymentPayMethod: null }));
     const client = {
@@ -404,6 +438,7 @@ describe("Kaipay payment contract", () => {
     const paidOrder = {
       ...pendingOrder,
       status: "paid",
+      species: "cat",
       productionRunId: "run-1",
       productionRunNeeded: true
     };
@@ -445,7 +480,46 @@ describe("Kaipay payment contract", () => {
       reconciliation: expect.objectContaining({ state: "paid", applyToOrder: true })
     });
     expect(workflow.startPaidOrder).toHaveBeenCalledOnce();
-    expect(workflow.startPaidOrder).toHaveBeenCalledWith({ order: paidOrder, projectId: project.id, runId: "run-1" });
+    expect(workflow.startPaidOrder).toHaveBeenCalledWith({ order: paidOrder, projectId: project.id, runId: "run-1", species: "cat" });
+  });
+
+  it("starts the run with the order's species when the webhook, not the poll, confirms payment", async () => {
+    // For an Alipay web payment the webhook is what starts the run - the
+    // customer is still on Alipay's page - and it used to omit the species,
+    // so a cat's pack was generated with the dog prompt set.
+    const paidOrder = {
+      id: "order-1", projectId: "project-1", status: "paid", species: "cat",
+      productionRunId: "run-1", productionRunNeeded: true
+    };
+    const repository = Object.fromEntries([
+      "createProjectOrder", "listUserProjects", "reserveSourcePhoto", "getReservedSourcePhoto",
+      "acceptSourcePhoto", "getRunByProject", "getSourcePhotoRevision", "getCharacterCandidate",
+      "getCharacterCandidates", "getDeliveryForProject", "authorizeDeliveryDownload", "getProjectBundle",
+      "createPhotoPrecheck", "findPhotoPrecheckByFingerprint", "getPhotoPrecheck", "countRecentPhotoPrechecks"
+    ].map((name) => [name, vi.fn()]));
+    repository.markOrderPaymentState = vi.fn(async () => paidOrder);
+    const paymentProvider = {
+      createCheckout: vi.fn(),
+      queryStatus: vi.fn(),
+      handleNotification: vi.fn(async () => ({
+        state: "paid", applyToOrder: true, providerOrderId: "kp-order-1",
+        acknowledgement: { status: 204, contentType: "", body: "" }
+      }))
+    };
+    const objectStore = { createUploadGrant: vi.fn(), createDownloadGrant: vi.fn(), verifyUploadedObject: vi.fn() };
+    const workflow = {
+      startPaidOrder: vi.fn(), photosAccepted: vi.fn(), confirmCharacterMasters: vi.fn(), regenerateCharacterMaster: vi.fn()
+    };
+    const service = new PetPackStudioService({ repository, paymentProvider, objectStore, workflow });
+    const result = await service.handlePaymentNotification({
+      platformOrderId: "order-1",
+      rawNotification: Buffer.from("{}"),
+      notificationHeaders: { "x-kpay-api-version": "v3" }
+    });
+    expect(result.accepted).toBe(true);
+    expect(workflow.startPaidOrder).toHaveBeenCalledWith({
+      order: paidOrder, projectId: "project-1", runId: "run-1", species: "cat"
+    });
   });
 
   it("fails closed when signature, identity, query, amount, or canonical status cannot be proven", async () => {
