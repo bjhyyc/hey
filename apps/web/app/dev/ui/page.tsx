@@ -12,7 +12,8 @@ import type { ProjectView } from "@/lib/studio-browser-api";
 // Development-only state gallery. Most workflow states cannot be reached with a
 // real project - a finished run never shows "generating", a healthy run never
 // shows "redo" - so the components are fed fixtures here instead. Delete or
-// ignore in production; the route is excluded from the production build below.
+// ignore in production: apps/web/.dockerignore keeps app/dev out of the image,
+// and notFound() below covers a local production build.
 
 
 
