@@ -23,6 +23,12 @@ services:
       PETPACK_QUEUE_PREFIX: petpack
       PETPACK_QUEUE_WORKER_CONCURRENCY: "4"
       PETPACK_SESSION_SIGNING_KEY_FILE: /run/secrets/session_signing_key
+      # Same bearer the studio API requires: only our gateway may call the
+      # login exchange, and it is throttled like every other sensitive route.
+      PETPACK_STUDIO_INTERNAL_TOKEN_FILE: /run/secrets/studio_internal_token
+      PETPACK_HTTP_RATE_LIMIT_ENABLED: "true"
+      PETPACK_HTTP_RATE_LIMIT_RPM: "300"
+      PETPACK_HTTP_RATE_LIMIT_SENSITIVE_RPM: "12"
       PETPACK_SESSION_TTL_SECONDS: "2592000"
       PETPACK_SESSION_COOKIE_SECURE: "true"
       PETPACK_STUDIO_SESSION_COOKIE_NAME: petpack_session
@@ -36,6 +42,7 @@ services:
       - postgres_ca
       - redis_url
       - session_signing_key
+      - studio_internal_token
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
@@ -76,3 +83,5 @@ secrets:
     file: ./secrets/redis_url
   session_signing_key:
     file: ./secrets/session_signing_key
+  studio_internal_token:
+    file: ./secrets/studio_internal_token
