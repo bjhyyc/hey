@@ -1,8 +1,15 @@
 const { createStudioWorkerRuntime } = require("./create-studio-worker");
+
+// See start-studio-api.js: a container must name its mode.
+function requireExplicitMode(environment) {
+  const mode = typeof environment.PETPACK_PLATFORM_MODE === "string" ? environment.PETPACK_PLATFORM_MODE.trim() : "";
+  if (!mode) throw new Error("PETPACK_PLATFORM_MODE must be set explicitly for a container entrypoint");
+  return environment;
+}
 const { createRuntimeHeartbeatFromEnvironment } = require("./runtime-heartbeat");
 
 async function main({ environment = process.env, logger = console } = {}) {
-  const runtime = await createStudioWorkerRuntime({ environment, logger });
+  const runtime = await createStudioWorkerRuntime({ environment: requireExplicitMode(environment), logger });
   let heartbeat = null;
   let closing = false;
   const close = async (signal) => {

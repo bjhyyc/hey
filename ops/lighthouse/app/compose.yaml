@@ -44,8 +44,10 @@ services:
       - session_signing_key
       - studio_internal_token
     read_only: true
+    init: true
+    pids_limit: 128
     tmpfs:
-      - /tmp:size=32m,mode=1777
+      - /tmp:size=32m,mode=1777,noexec,nosuid,nodev
     security_opt:
       - no-new-privileges:true
     cap_drop:

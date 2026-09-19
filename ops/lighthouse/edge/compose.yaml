@@ -17,6 +17,15 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+    # The only internet-facing container: no capabilities beyond binding
+    # 80/443, and no way to gain more.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
     mem_limit: 256m
     logging:
       driver: json-file
