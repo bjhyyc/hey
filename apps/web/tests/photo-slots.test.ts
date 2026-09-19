@@ -17,8 +17,8 @@ describe("photo slot contract", () => {
     expect(PHOTO_SLOT_DEFINITIONS.map(({ label, required }) => ({ label, required }))).toEqual([
       { label: "正面 1", required: true },
       { label: "正面 2", required: true },
-      { label: "45° 1", required: true },
-      { label: "45° 2", required: false },
+      { label: "侧面 1", required: true },
+      { label: "侧面 2", required: false },
     ]);
 
     const slots = emptyPhotoSlots();

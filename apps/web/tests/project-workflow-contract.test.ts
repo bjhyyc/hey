@@ -26,11 +26,12 @@ describe("project workflow run-state handling", () => {
     expect(pollEffect).toContain("settled");
   });
 
-  it("does not poll once the run has failed or both candidates arrived", () => {
+  it("does not poll once the run has failed or the character can be confirmed", () => {
+    // Since 2026-09-09 the customer waits for "can I confirm now", which the
+    // server decides from both candidates; the page no longer counts them.
     const start = source.indexOf("const settled = ");
     const settled = source.slice(start, source.indexOf(";", start));
     expect(settled).toContain("view.failed");
-    expect(settled).toContain("characterCandidates.front");
-    expect(settled).toContain("characterCandidates.side");
+    expect(settled).toContain("characterCandidates.canConfirm");
   });
 });
