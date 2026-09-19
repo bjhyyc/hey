@@ -12,8 +12,15 @@
  * would risk payment convergence for no abuse-protection gain.
  */
 
+const net = require("node:net");
+
 const WINDOW_MS = 60_000;
 const SWEEP_THRESHOLD = 10_000;
+// Every distinct client costs two Map entries for a minute. Past this many the
+// limiter stops opening buckets and puts newcomers into one shared bucket
+// until a window expires: a flood of made-up addresses can then cost at most
+// a bounded amount of memory, never the process.
+const MAX_TRACKED_CLIENTS = 50_000;
 
 const EXEMPT_PATH_PREFIXES = Object.freeze(["/livez", "/readyz", "/healthz", "/api/payments/"]);
 const SENSITIVE_POST_PREFIXES = Object.freeze(["/api/auth/", "/api/photo-precheck", "/api/checkout"]);
@@ -30,7 +37,24 @@ function boundedRate(value, fallback, minimum, maximum, label) {
 function safeIpToken(value) {
   if (typeof value !== "string") return null;
   const first = value.split(",")[0].trim();
-  return first && first.length <= 64 && /^[0-9a-fA-F.:]+$/.test(first) ? first : null;
+  // A bucket key has to be an address. Accepting any short hex-ish string
+  // meant `abc`, `::`, `1.2` each opened their own bucket.
+  return first && first.length <= 64 && net.isIP(first) !== 0 ? first : null;
+}
+
+/**
+ * The router percent-decodes every path segment before matching, so the
+ * throttle has to look at the same path the router will see: `/api/%63heckout`
+ * reaches checkout, and was charged only to the default bucket. A path that
+ * cannot be decoded is returned as null and treated as sensitive.
+ */
+function normalizeRequestPath(raw) {
+  const path = typeof raw === "string" ? raw.split("?")[0].split("#")[0] : "";
+  try {
+    return path.split("/").map((segment) => decodeURIComponent(segment)).join("/");
+  } catch (_error) {
+    return null;
+  }
 }
 
 /**
@@ -63,24 +87,33 @@ function createRequestRateLimiter({
   enabled = true,
   requestsPerMinute = 300,
   sensitiveRequestsPerMinute = 12,
+  maxTrackedClients = MAX_TRACKED_CLIENTS,
   now = Date.now,
   logger = console
 } = {}) {
   const defaultLimit = boundedRate(requestsPerMinute, 300, 30, 100_000, "requestsPerMinute");
   const sensitiveLimit = boundedRate(sensitiveRequestsPerMinute, 12, 3, 10_000, "sensitiveRequestsPerMinute");
+  const trackedCap = boundedRate(maxTrackedClients, MAX_TRACKED_CLIENTS, 4, 10_000_000, "maxTrackedClients");
   if (typeof now !== "function") throw new Error("A clock function is required");
   const windows = new Map();
 
-  function sweep(current) {
-    if (windows.size < SWEEP_THRESHOLD) return;
+  function sweep(current, force = false) {
+    if (!force && windows.size < SWEEP_THRESHOLD) return;
     for (const [key, entry] of windows) {
       if (current - entry.windowStart >= WINDOW_MS) windows.delete(key);
     }
   }
 
-  function bump(key, limit, current) {
+  function bump(key, limit, current, overflow = false) {
     const entry = windows.get(key);
     if (!entry || current - entry.windowStart >= WINDOW_MS) {
+      if (!entry && !overflow && windows.size >= trackedCap) {
+        sweep(current, true);
+        if (windows.size >= trackedCap) {
+          // The `s:`/`d:` prefix keeps the shared bucket in the right tier.
+          return bump(`${key.slice(0, 2)}overflow`, limit, current, true);
+        }
+      }
       windows.set(key, { windowStart: current, count: 1 });
       return { allowed: true };
     }
@@ -96,12 +129,14 @@ function createRequestRateLimiter({
     enabled: enabled === true,
     check({ method, path, clientIp } = {}) {
       if (enabled !== true) return { allowed: true };
-      const safePath = typeof path === "string" ? path : "";
-      if (EXEMPT_PATH_PREFIXES.some((prefix) => safePath.startsWith(prefix))) return { allowed: true };
+      const decoded = normalizeRequestPath(path);
+      const safePath = decoded === null ? "" : decoded;
+      if (decoded !== null && EXEMPT_PATH_PREFIXES.some((prefix) => safePath.startsWith(prefix))) return { allowed: true };
       const ip = typeof clientIp === "string" && clientIp ? clientIp : "unknown";
       const current = now();
       sweep(current);
-      const sensitive = method === "POST" && SENSITIVE_POST_PREFIXES.some((prefix) => safePath.startsWith(prefix));
+      const sensitive = method === "POST" &&
+        (decoded === null || SENSITIVE_POST_PREFIXES.some((prefix) => safePath.startsWith(prefix)));
       if (sensitive) {
         const verdict = bump(`s:${ip}`, sensitiveLimit, current);
         if (!verdict.allowed) {
@@ -119,6 +154,9 @@ function createRequestRateLimiter({
 }
 
 module.exports = {
+  MAX_TRACKED_CLIENTS,
   createRequestRateLimiter,
-  resolveClientIp
+  normalizeRequestPath,
+  resolveClientIp,
+  safeIpToken
 };
