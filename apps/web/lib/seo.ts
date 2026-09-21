@@ -12,7 +12,7 @@ export const SITE_URL = "https://www.heyirmy.com";
 export const SITE_NAME = "Hey";
 export const PRICE_YUAN = 78;
 
-export const HOME_TITLE = "Hey｜用你家宠物的照片，做一只会动的桌面宠物";
+export const HOME_TITLE = "Hey — 桌面宠物制作";
 export const HOME_DESCRIPTION =
   "上传 3–4 张宠物照片，约 20 分钟做出一只会打喷嚏、打滚、伸懒腰、舔脚、睡觉的桌面宠物，一次买断，Windows 和 macOS 都能用。把思念带回桌面。";
 

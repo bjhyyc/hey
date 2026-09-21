@@ -6,6 +6,8 @@ import { SITE_URL } from "@/lib/seo";
 const PAGES: Array<{ path: string; priority: number; changeFrequency: "weekly" | "monthly" | "yearly" }> = [
   { path: "/", priority: 1, changeFrequency: "weekly" },
   { path: "/download-client", priority: 0.9, changeFrequency: "monthly" },
+  { path: "/guide/pet-photo-to-desktop-pet", priority: 0.9, changeFrequency: "monthly" },
+  { path: "/guide/install-desktop-pet-client", priority: 0.8, changeFrequency: "monthly" },
   { path: "/faq", priority: 0.8, changeFrequency: "monthly" },
   { path: "/support", priority: 0.5, changeFrequency: "monthly" },
   { path: "/ai-content", priority: 0.4, changeFrequency: "yearly" },

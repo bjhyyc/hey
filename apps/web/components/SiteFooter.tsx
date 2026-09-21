@@ -4,6 +4,7 @@ export function SiteFooter() {
   return (
     <footer className="site-footer">
       <div className="shell footer-inner">
+        <Link href="/guide/pet-photo-to-desktop-pet">使用指南</Link>
         <Link href="/faq">常见问题</Link>
         <Link href="/support">联系客服</Link>
         <Link href="/terms">服务协议</Link>
