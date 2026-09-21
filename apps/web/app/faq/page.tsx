@@ -1,11 +1,32 @@
 import type { Metadata } from "next";
+import { jsonLd, pageMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "常见问题",
-  description: "照片要求、制作时长、形象确认、素材包导入、桌宠玩法。"
+  description: "照片要求、制作时长、形象确认、素材包导入、桌宠玩法、安装提示与付款方式——从上传照片到桌宠动起来最常被问到的事。",
+  path: "/faq"
+});
+
+// The same questions the page answers, as data, so a search engine can show
+// them as such. Answers are short restatements, not the page text.
+const FAQ_LD = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: [
+    { q: "需要什么样的照片？", a: "3 张必选、第 4 张可选：两张正面照、一张侧面照，同一只宠物、同一时期，五官和花色清楚。上传前会先预检，通过才付款。" },
+    { q: "要等多久？", a: "全程约 20 分钟。付款后先确认正面与侧面形象图，之后动作全部自动生成，关掉页面也不会丢进度。" },
+    { q: "形象不像怎么办？", a: "正面、侧面各可免费重新生成 2 次，确认满意后再继续生成动作。" },
+    { q: "素材包怎么用？", a: "下载 .petpack 文件，安装 Hey 桌宠客户端，在概览页点「导入素材包」选中它即可。" },
+    { q: "桌宠会做什么？", a: "单击打喷嚏、双击打滚、右键伸懒腰、悬停舔脚、22 秒没人理就睡觉；睡着后只有右键能叫醒。" },
+    { q: "怎么付款？", a: "支付宝扫码，一次买断这一份素材包。" }
+  ].map(({ q, a }) => ({
+    "@type": "Question",
+    name: q,
+    acceptedAnswer: { "@type": "Answer", text: a }
+  }))
 };
 
 // Every answer here states what the system actually does today. When a rule
@@ -21,6 +42,7 @@ const INTERACTIONS: Array<[string, string]> = [
 export default function FaqPage() {
   return (
     <PageShell compact>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(FAQ_LD) }} />
       <PageIntro title="常见问题">从上传照片到桌宠动起来，最常被问到的事。</PageIntro>
       <div className="support-card faq-card">
         <section className="support-block" id="photos">

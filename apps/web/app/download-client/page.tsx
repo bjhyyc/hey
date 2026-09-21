@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { SOFTWARE_LD, jsonLd, pageMetadata } from "@/lib/seo";
 import type { ReactNode } from "react";
 import { MacInstall } from "@/components/MacInstall";
 import { PageIntro } from "@/components/PageIntro";
@@ -151,9 +153,16 @@ function MacDownload() {
   );
 }
 
+export const metadata: Metadata = pageMetadata({
+  title: '桌宠客户端下载（Windows / macOS）',
+  description: '下载 Hey 桌宠客户端，导入你的 .petpack 素材包，宠物就会出现在桌面上。支持 Windows 10/11 与 macOS（Apple Silicon 和 Intel）。',
+  path: '/download-client'
+});
+
 export default function DownloadClientPage() {
   return (
     <PageShell compact>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(SOFTWARE_LD) }} />
       <PageIntro title="桌宠客户端">安装后导入素材包即可使用。</PageIntro>
       <section className="download-card">
         <div className="client-window" aria-hidden="true">

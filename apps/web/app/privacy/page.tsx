@@ -1,6 +1,8 @@
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
 import { SUPPORT_QQ } from "@/lib/support-channel";
+import type { Metadata } from "next";
+import { pageMetadata } from "@/lib/seo";
 
 // Every claim below is a description of what the system actually does today,
 // checked against the code: the phone number really is never stored (migration
@@ -8,6 +10,12 @@ import { SUPPORT_QQ } from "@/lib/support-channel";
 // browser for the pre-check, the download window really is thirty days, and
 // deletion really is a manual request - the automatic cleanup policy still runs
 // in dry-run mode, so this page promises deletion on request, not on a timer.
+export const metadata: Metadata = pageMetadata({
+  title: '隐私政策',
+  description: 'Hey 如何处理你上传的宠物照片、账号与订单信息，保存多久，以及怎样申请删除。',
+  path: '/privacy'
+});
+
 export default function PrivacyPage() {
   const contact = SUPPORT_QQ ? `客服 QQ ${SUPPORT_QQ}` : "客服渠道（见页脚）";
   return (

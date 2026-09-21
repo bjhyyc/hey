@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { pageMetadata } from "@/lib/seo";
 import { CopyableValue } from "@/components/CopyableValue";
 import { QqChatButton } from "@/components/QqChatButton";
 import { PageIntro } from "@/components/PageIntro";
@@ -17,6 +19,12 @@ import {
 // URL answers "无法发起临时会话" for an ordinary number and strands exactly the
 // customer who most needs help. The channels below are the ones that actually
 // open a chat window today: join the group, or add the number as a friend.
+export const metadata: Metadata = pageMetadata({
+  title: '联系客服',
+  description: '订单、制作、素材包导入遇到问题？这里是 Hey 的客服联系方式与项目编号说明。',
+  path: '/support'
+});
+
 export default function SupportPage() {
   return (
     <PageShell compact>

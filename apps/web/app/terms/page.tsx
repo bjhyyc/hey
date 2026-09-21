@@ -1,6 +1,8 @@
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
 import { SUPPORT_QQ } from "@/lib/support-channel";
+import type { Metadata } from "next";
+import { pageMetadata } from "@/lib/seo";
 
 // The terms restate what the purchase screen already asked the customer to
 // confirm, rather than introducing obligations they meet for the first time
@@ -9,6 +11,12 @@ import { SUPPORT_QQ } from "@/lib/support-channel";
 // The account, retention and contact sections describe the behaviour that is
 // actually implemented (thirty-day delivery window the console can reopen,
 // account suspension for abuse, project code as the support handle).
+export const metadata: Metadata = pageMetadata({
+  title: '用户服务协议',
+  description: '使用 Hey 桌面宠物制作服务的条款：购买、交付、下载窗口、AI 生成内容与退款。',
+  path: '/terms'
+});
+
 export default function TermsPage() {
   const contact = SUPPORT_QQ ? `客服 QQ ${SUPPORT_QQ}` : "页脚的客服渠道";
   return (

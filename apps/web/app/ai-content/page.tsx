@@ -1,11 +1,19 @@
 import { PageIntro } from "@/components/PageIntro";
 import { PageShell } from "@/components/PageShell";
+import type { Metadata } from "next";
+import { pageMetadata } from "@/lib/seo";
 
 // The explicit AI-generated-content disclosure the regulations ask for
 // (生成式人工智能服务管理暂行办法 / 深度合成管理规定 / 生成合成内容标识办法).
 // It states only what the pipeline actually does: two image models draw the
 // masters, a video model animates them, the customer approves the masters
 // before any video is generated, and nothing here is a photograph.
+export const metadata: Metadata = pageMetadata({
+  title: 'AI 生成内容说明',
+  description: 'Hey 桌面宠物的形象与动作由 AI 依据你上传的照片重新绘制与生成，这里说明它如何生成、与真实宠物的差异以及使用边界。',
+  path: '/ai-content'
+});
+
 export default function AiContentPage() {
   return (
     <PageShell compact>
